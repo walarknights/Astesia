@@ -31,8 +31,11 @@ export const Fonts = Platform.select({
   ios: {
     /** iOS `UIFontDescriptorSystemDesignDefault` */
     sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
-    serif: 'ui-serif',
+    /** Custom IBM Plex Serif family loaded at app startup. */
+    serif: 'IBMPlexSerif-Regular',
+    serifBold: 'IBMPlexSerif-Bold',
+    serifItalic: 'IBMPlexSerif-Italic',
+    serifSemiBold: 'IBMPlexSerif-SemiBold',
     /** iOS `UIFontDescriptorSystemDesignRounded` */
     rounded: 'ui-rounded',
     /** iOS `UIFontDescriptorSystemDesignMonospaced` */
@@ -40,13 +43,19 @@ export const Fonts = Platform.select({
   },
   default: {
     sans: 'normal',
-    serif: 'serif',
+    serif: 'IBMPlexSerif-Regular',
+    serifBold: 'IBMPlexSerif-Bold',
+    serifItalic: 'IBMPlexSerif-Italic',
+    serifSemiBold: 'IBMPlexSerif-SemiBold',
     rounded: 'normal',
     mono: 'monospace',
   },
   web: {
     sans: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
-    serif: "Georgia, 'Times New Roman', serif",
+    serif: 'IBMPlexSerif-Regular',
+    serifBold: 'IBMPlexSerif-Bold',
+    serifItalic: 'IBMPlexSerif-Italic',
+    serifSemiBold: 'IBMPlexSerif-SemiBold',
     rounded: "'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif",
     mono: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
   },

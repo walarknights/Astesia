@@ -1,5 +1,5 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { StyleSheet, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import type { WeatherDashboard } from '@/services/type';
@@ -8,11 +8,25 @@ type Props = {
   dashboard: WeatherDashboard;
 };
 
+const FORECAST_TRACK_WIDTH = 112;
+
 export function WeatherOverviewSections({ dashboard }: Props) {
   const maxPrecip = Math.max(
     0.1,
     ...((dashboard.minutely?.items ?? []).map((item) => Number(item.precip)) || [0.1])
   );
+  const temperatureValues = dashboard.dailyForecasts.flatMap((item) => [
+    Number(item.tempMax),
+    Number(item.tempMin),
+  ]);
+  const validTemperatureValues = temperatureValues.filter((item) => !Number.isNaN(item));
+  const maxTemperature = validTemperatureValues.length
+    ? Math.max(...validTemperatureValues)
+    : 0;
+  const minTemperature = validTemperatureValues.length
+    ? Math.min(...validTemperatureValues)
+    : 0;
+  const temperatureRange = Math.max(maxTemperature - minTemperature, 1);
 
   return (
     <View style={styles.dataSection}>
@@ -40,6 +54,69 @@ export function WeatherOverviewSections({ dashboard }: Props) {
             </View>
           ))}
         </View>
+      </View>
+      
+        <View style={styles.dataCard}>
+        <View style={styles.cardHeaderRow}>
+          <ThemedText type="subtitle">近 7 日气温</ThemedText>
+          <MaterialIcons name="device-thermostat" size={18} color="#368bd5ff" />
+        </View>
+        <ThemedText style={styles.cardHeadline}>查看未来一周温度变化</ThemedText>
+        <ThemedText style={styles.cardDescription}>
+          横向滑动可查看每天的最高温、最低温和白天天气。
+        </ThemedText>
+        {dashboard.dailyForecasts.length ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.forecastScrollContent}>
+            {dashboard.dailyForecasts.map((item) => {
+              const maxTemp = Number(item.tempMax);
+              const minTemp = Number(item.tempMin);
+              const rangeStart = Number.isNaN(minTemp)
+                ? 0
+                : ((minTemp - minTemperature) / temperatureRange) * FORECAST_TRACK_WIDTH;
+              const rangeWidth = Number.isNaN(maxTemp) || Number.isNaN(minTemp)
+                ? 20
+                : Math.max(
+                    20,
+                    ((maxTemp - minTemp) / temperatureRange) * FORECAST_TRACK_WIDTH
+                  );
+
+              return (
+                <View key={item.date} style={styles.forecastCard}>
+                  <View style={styles.forecastHeader}>
+                    <ThemedText type="defaultSemiBold">{item.dayLabel}</ThemedText>
+                    <ThemedText style={styles.forecastDate}>
+                      {item.date.slice(5).replace('-', '/')}
+                    </ThemedText>
+                  </View>
+                  <ThemedText style={styles.forecastWeather}>{item.textDay}</ThemedText>
+                  <View style={styles.forecastTrack}>
+                    <View
+                      style={[
+                        styles.forecastRangeBar,
+                        { left: rangeStart, width: rangeWidth },
+                      ]}
+                    />
+                  </View>
+                  <View style={styles.forecastTempRow}>
+                    <View style={styles.forecastTempGroup}>
+                      <ThemedText style={styles.forecastTempLabel}>最低</ThemedText>
+                      <ThemedText style={styles.forecastMinTemp}>{item.tempMin}°</ThemedText>
+                    </View>
+                    <View style={styles.forecastTempGroup}>
+                      <ThemedText style={styles.forecastTempLabel}>最高</ThemedText>
+                      <ThemedText style={styles.forecastMaxTemp}>{item.tempMax}°</ThemedText>
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
+          </ScrollView>
+        ) : (
+          <ThemedText style={styles.cardDescription}>当前暂无近 7 日天气数据。</ThemedText>
+        )}
       </View>
 
       <View style={styles.dataCard}>
@@ -123,6 +200,8 @@ export function WeatherOverviewSections({ dashboard }: Props) {
           <ThemedText style={styles.cardDescription}>当前地区未来两小时暂无降水趋势数据。</ThemedText>
         )}
       </View>
+
+    
     </View>
   );
 }
@@ -257,5 +336,74 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontSize: 11,
     lineHeight: 14,
+  },
+  forecastScrollContent: {
+    gap: 12,
+    paddingRight: 4,
+  },
+  forecastCard: {
+    width: 148,
+    borderRadius: 18,
+    padding: 14,
+    backgroundColor: '#F8FAFC',
+    gap: 10,
+  },
+  forecastHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  forecastDate: {
+    color: '#64748B',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  forecastWeather: {
+    color: '#334155',
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+  },
+  forecastTrack: {
+    width: FORECAST_TRACK_WIDTH,
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: '#E2E8F0',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  forecastRangeBar: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    borderRadius: 999,
+    backgroundColor: '#368bd5ff',
+  },
+  forecastTempRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  forecastTempGroup: {
+    gap: 2,
+  },
+  forecastTempLabel: {
+    color: '#64748B',
+    fontSize: 11,
+    lineHeight: 14,
+  },
+  forecastMinTemp: {
+    color: '#2563EB',
+    fontSize: 18,
+    lineHeight: 22,
+    fontWeight: '700',
+  },
+  forecastMaxTemp: {
+    color: '#ea3c0cff',
+    fontSize: 18,
+    lineHeight: 22,
+    fontWeight: '700',
   },
 });

@@ -52,6 +52,14 @@ export type MinutelySnapshot = {
   }>;
 };
 
+export type DailyTemperatureSnapshot = {
+  date: string;
+  dayLabel: string;
+  tempMax: string;
+  tempMin: string;
+  textDay: string;
+};
+
 export type WeatherDashboard = {
   current: WeatherSnapshot;
   airQuality: AirQualitySnapshot | null;
@@ -59,6 +67,7 @@ export type WeatherDashboard = {
   alertAttributions: string[];
   indices: WeatherIndexSnapshot[];
   minutely: MinutelySnapshot | null;
+  dailyForecasts: DailyTemperatureSnapshot[];
 };
 
 export type QWeatherLocation = {
@@ -95,6 +104,7 @@ export type QWeatherDailyResponse = {
     fxDate: string;
     tempMax: string;
     tempMin: string;
+    textDay?: string;
   }>;
 };
 
@@ -157,4 +167,3 @@ export type QWeatherAlertResponse = {
     };
   }>;
 };
-

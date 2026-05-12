@@ -21,41 +21,6 @@ export default function WeatherOverviewScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.headerCard}>
-        <View style={styles.headerRow}>
-          <View style={styles.headerTextGroup}>
-            <ThemedText type="title" style={styles.title}>
-              今日概览
-            </ThemedText>
-            <ThemedText style={styles.description}>
-              空气质量、天气预警、生活指数和分钟降水统一收纳在这里。
-            </ThemedText>
-          </View>
-          <View style={styles.iconBadge}>
-            <MaterialIcons name="dashboard" size={22} color="#0F766E" />
-          </View>
-        </View>
-
-        <View style={styles.summaryStrip}>
-          <View style={styles.summaryItem}>
-            <ThemedText style={styles.summaryLabel}>城市</ThemedText>
-            <ThemedText type="defaultSemiBold">{dashboard?.current.city ?? '--'}</ThemedText>
-          </View>
-          <View style={styles.summaryItem}>
-            <ThemedText style={styles.summaryLabel}>天气</ThemedText>
-            <ThemedText type="defaultSemiBold">
-              {dashboard?.current.weatherLabel ?? '--'}
-            </ThemedText>
-          </View>
-          <View style={styles.summaryItem}>
-            <ThemedText style={styles.summaryLabel}>温度</ThemedText>
-            <ThemedText type="defaultSemiBold">
-              {dashboard?.current.temperature ?? '--'}
-            </ThemedText>
-          </View>
-        </View>
-      </View>
-
       {dashboard ? (
         <WeatherOverviewSections dashboard={dashboard} />
       ) : (

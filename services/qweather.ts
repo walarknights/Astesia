@@ -1,6 +1,19 @@
-import { AirQualitySnapshot, MinutelySnapshot,QWeatherLocation, WeatherSnapshot, QWeatherCityLookupResponse, 
-QWeatherDailyResponse, QWeatherIndicesResponse, QWeatherMinutelyResponse, QWeatherNowResponse, WeatherType, 
-QWeatherAlertResponse, QWeatherAirCurrentResponse, WeatherDashboard } from './type';
+import {
+  AirQualitySnapshot,
+  DailyTemperatureSnapshot,
+  MinutelySnapshot,
+  QWeatherAirCurrentResponse,
+  QWeatherAlertResponse,
+  QWeatherCityLookupResponse,
+  QWeatherDailyResponse,
+  QWeatherIndicesResponse,
+  QWeatherLocation,
+  QWeatherMinutelyResponse,
+  QWeatherNowResponse,
+  WeatherDashboard,
+  WeatherSnapshot,
+  WeatherType,
+} from './type';
 
 
 
@@ -106,11 +119,11 @@ async function getWeatherNow(location: string) {
 
   return result.now;
 }
-// 3天天气预报
-async function getWeatherDaily(location: string) {
+// 7天天气预报
+async function getWeatherDailyForecasts(location: string) {
   const { weatherHost } = getRequiredApiHost();
   const result = await requestQWeather<QWeatherDailyResponse>(
-    '/v7/weather/3d',
+    '/v7/weather/7d',
     {
       location,
       lang: 'zh',
@@ -123,7 +136,13 @@ async function getWeatherDaily(location: string) {
     throw new Error('获取天气预报失败。');
   }
 
-  return result.daily[0];
+  return result.daily.slice(0, 7).map((item) => ({
+    date: item.fxDate,
+    dayLabel: formatForecastDayLabel(item.fxDate),
+    tempMax: item.tempMax,
+    tempMin: item.tempMin,
+    textDay: item.textDay ?? '未知',
+  })) satisfies DailyTemperatureSnapshot[];
 }
 // 天气指数
 async function getWeatherIndices(location: string) {
@@ -284,6 +303,31 @@ function formatDateLabel(dateTime: string) {
   return `${date.getMonth() + 1}月${date.getDate()}日 ${weekDays[date.getDay()]}`;
 }
 
+function formatForecastDayLabel(dateText: string) {
+  const date = new Date(`${dateText}T00:00:00`);
+
+  if (Number.isNaN(date.getTime())) {
+    return '--';
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const diffTime = date.getTime() - today.getTime();
+  const diffDay = Math.round(diffTime / (24 * 60 * 60 * 1000));
+
+  if (diffDay === 0) {
+    return '今天';
+  }
+
+  if (diffDay === 1) {
+    return '明天';
+  }
+
+  const weekDays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  return weekDays[date.getDay()];
+}
+
 function formatTime(dateTime: string) {
   const date = new Date(dateTime);
 
@@ -319,7 +363,7 @@ function buildSuggestion(weatherText: string, temp: string) {
 function toSnapshot(
   location: QWeatherLocation,
   now: NonNullable<QWeatherNowResponse['now']>,
-  daily: NonNullable<QWeatherDailyResponse['daily']>[number],
+  daily: DailyTemperatureSnapshot,
   sourceLabel: string
 ): WeatherSnapshot {
   return {
@@ -340,22 +384,25 @@ function toSnapshot(
 }
 
 async function getWeatherDashboardByLocation(location: QWeatherLocation, sourceLabel: string) {
-  const [now, daily, indices, minutely, airQuality, warnings] = await Promise.all([
+  const [now, dailyForecasts, indices, minutely, airQuality, warnings] = await Promise.all([
     getWeatherNow(location.id),
-    getWeatherDaily(location.id),
+    getWeatherDailyForecasts(location.id),
     requestOptionalQWeather(() => getWeatherIndices(location.id)),
     requestOptionalQWeather(() => getMinutelyPrecipitation(location.lon, location.lat)),
     requestOptionalQWeather(() => getAirQuality(location.lat, location.lon)),
     requestOptionalQWeather(() => getWeatherAlerts(location.lat, location.lon)),
   ]);
 
+  const todayForecast = dailyForecasts[0];
+
   return {
-    current: toSnapshot(location, now, daily, sourceLabel),
+    current: toSnapshot(location, now, todayForecast, sourceLabel),
     airQuality,
     alerts: warnings?.alerts ?? [],
     alertAttributions: warnings?.alertAttributions ?? [],
     indices: indices ?? [],
     minutely,
+    dailyForecasts,
   } satisfies WeatherDashboard;
 }
 

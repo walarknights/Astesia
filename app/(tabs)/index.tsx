@@ -17,7 +17,10 @@ import {
 } from '@/services/type';
 import { getWeatherByCityName, getWeatherByCoordinates } from '@/services/qweather';
 import { consumePendingCitySelection } from '@/services/weather-city';
+import { useAppSettings } from '@/services/app-settings';
 
+
+// 占位天气数据
 const PLACEHOLDER_WEATHER: WeatherSnapshot = {
   city: '天气加载中',
   temperature: '--',
@@ -41,7 +44,11 @@ const PLACEHOLDER_DASHBOARD: WeatherDashboard = {
   alertAttributions: [],
   indices: [],
   minutely: null,
+  dailyForecasts: [],
 };
+
+
+// 天气背景图片
 
 const WEATHER_BACKGROUNDS: Record<WeatherType, string> = {
   sunny: require('../../assets/images/sunny.jpg'),
@@ -49,6 +56,8 @@ const WEATHER_BACKGROUNDS: Record<WeatherType, string> = {
   rainy: require('../../assets/images/rainy.jpg'),
 };
 
+
+// 功能卡片
 const FEATURE_CARDS = [
   {
     href: '/notes' as const,
@@ -75,23 +84,31 @@ const FEATURE_CARDS = [
     iconColor: '#4F46E5',
   },
 ];
-
+// 首页
 export default function HomeScreen() {
+  const { settings } = useAppSettings();
   const [dashboard, setDashboard] = useState<WeatherDashboard | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const displayDashboard = dashboard ?? PLACEHOLDER_DASHBOARD;
   const displayWeather = displayDashboard.current;
+  const displayFeatureCards = useMemo(
+    () => getDisplayFeatureCards(settings.homeLayout),
+    [settings.homeLayout]
+  );
 
   const weatherBackground = useMemo(
     () => WEATHER_BACKGROUNDS[displayWeather.weatherType],
     [displayWeather.weatherType]
   );
 
+
+  // 更新缓存天气数据
   useEffect(() => {
     setCachedWeatherDashboard(displayDashboard);
   }, [displayDashboard]);
 
+  // 初始化天气数据
   useEffect(() => {
     let cancelled = false;
 
@@ -187,7 +204,6 @@ export default function HomeScreen() {
 
             <View style={styles.weatherContent}>
               <View style={styles.headerTopRow}>
-           
                 {isLoading ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}
               </View>
 
@@ -245,24 +261,34 @@ export default function HomeScreen() {
             <View style={styles.errorBanner}>
               <MaterialIcons name="info-outline" size={18} color="#B45309" />
               <ThemedText style={styles.errorText}>{errorMessage}</ThemedText>
+              <Pressable
+                accessibilityLabel="关闭错误提示"
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() => setErrorMessage(null)}
+                style={styles.errorCloseButton}>
+                <MaterialIcons name="close" size={18} color="#B45309" />
+              </Pressable>
             </View>
           ) : null}
         </ThemedView>
 
         
         <View style={styles.featureList}>
-          {FEATURE_CARDS.map((feature) => (
-            <Link key={feature.href} href={feature.href} asChild>
-              <Pressable style={[styles.featureCard, { backgroundColor: feature.backgroundColor }]}>
-                <View style={[styles.featureIconWrapper, { backgroundColor: '#FFFFFFCC' }]}>
-                  <MaterialIcons name={feature.icon} size={34} color={feature.iconColor} />
-                </View>
-                <ThemedText type="subtitle" style={styles.featureTitle}>
-                  {feature.title}
-                </ThemedText>
-                <ThemedText style={styles.featureDescription}>{feature.description}</ThemedText>
-              </Pressable>
-            </Link>
+          {displayFeatureCards.map((feature) => (
+            <View key={feature.href} style={styles.featureCardShadow}>
+              <Link href={feature.href} asChild>
+                <Pressable style={[styles.featureCard, { backgroundColor: feature.backgroundColor }]}>
+                  <View style={[styles.featureIconWrapper, { backgroundColor: '#FFFFFFCC' }]}>
+                    <MaterialIcons name={feature.icon} size={34} color={feature.iconColor} />
+                  </View>
+                  <ThemedText type="subtitle" style={styles.featureTitle}>
+                    {feature.title}
+                  </ThemedText>
+                  <ThemedText style={styles.featureDescription}>{feature.description}</ThemedText>
+                </Pressable>
+              </Link>
+            </View>
           ))}
         </View>
       </ParallaxScrollView>
@@ -292,6 +318,16 @@ function getErrorMessage(error: unknown) {
   return '获取天气失败，请稍后重试。';
 }
 
+function getDisplayFeatureCards(homeLayout: string) {
+  const preferredFeature = FEATURE_CARDS.find((feature) => feature.href === `/${homeLayout}`);
+
+  if (!preferredFeature) {
+    return FEATURE_CARDS;
+  }
+
+  return [preferredFeature, ...FEATURE_CARDS.filter((feature) => feature !== preferredFeature)];
+}
+
 
 
 const styles = StyleSheet.create({
@@ -300,7 +336,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   weatherBackgroundImage: {
-    height: '100%',
+    height: '110%',
     width: '100%',
   },
   weatherOverlay: {
@@ -499,6 +535,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
+  errorCloseButton: {
+    padding: 2,
+  },
   dataSection: {
     gap: 16,
   },
@@ -631,26 +670,44 @@ const styles = StyleSheet.create({
   },
   featureList: {
     gap: 16,
-    alignItems: 'center',
+    paddingHorizontal: 24,
+
+    alignItems: 'stretch',
+    borderRadius: 24,
+  },
+  featureCardShadow: {
+    width: '100%',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
+    borderRadius: 28,
+    padding: 20,
+    backgroundColor: '#FFFFFF',
   },
   featureCard: {
     width: '100%',
-    maxWidth: 320,
     aspectRatio: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    padding: 32,
     borderRadius: 28,
-    padding: 24,
-    justifyContent: 'space-between',
+  
   },
   featureIconWrapper: {
     width: 64,
     height: 64,
     borderRadius: 20,
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'center',
   },
   featureTitle: {
-    fontSize: 24,
-    lineHeight: 28,
+    marginBottom: 12,
+    fontSize: 28,
+    lineHeight: 30,
   },
   featureDescription: {
     color: '#334155',
