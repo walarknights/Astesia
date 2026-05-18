@@ -1,0 +1,25 @@
+app/(tabs)/personal.tsx
+  e7cfc8a0ed29d1db 279
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "c78916a120e45815677429c877ba9c828d8e62c8",
+  "prompts": {
+    "e7cfc8a0ed29d1db": {
+      "agent_id": {
+        "tool": "trae-cue",
+        "id": "ai_tab-icr-6089cf68-ac7f-4bf0-bd1f-689d777ef993",
+        "model": "default"
+      },
+      "human_author": "renmeilin <renmeilin@bytedance.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
