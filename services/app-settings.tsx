@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   createContext,
   useCallback,
@@ -9,6 +8,11 @@ import {
   type PropsWithChildren,
 } from 'react';
 import { useColorScheme as useSystemColorScheme } from 'react-native';
+
+import { APP_SETTINGS_STORAGE_KEY } from '@/services/storage-keys';
+import { storage } from '@/services/storage';
+
+export { APP_SETTINGS_STORAGE_KEY } from '@/services/storage-keys';
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type FontSizeMode = 'small' | 'medium' | 'large';
@@ -30,8 +34,6 @@ type AppSettingsContextValue = {
   resetSettings: () => void;
 };
 
-export const APP_SETTINGS_STORAGE_KEY = 'astesia-app-settings';
-
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   themeMode: 'system',
   fontSize: 'medium',
@@ -51,7 +53,7 @@ export function AppSettingsProvider({ children }: PropsWithChildren) {
 
     const loadSettings = async () => {
       try {
-        const storedSettings = await AsyncStorage.getItem(APP_SETTINGS_STORAGE_KEY);
+        const storedSettings = await storage.getItem(APP_SETTINGS_STORAGE_KEY);
 
         if (!storedSettings || !isMounted) {
           return;
@@ -74,7 +76,7 @@ export function AppSettingsProvider({ children }: PropsWithChildren) {
     setSettings((currentSettings) => {
       const updatedSettings = normalizeSettings({ ...currentSettings, ...nextSettings });
 
-      void AsyncStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify(updatedSettings));
+      void storage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify(updatedSettings));
 
       return updatedSettings;
     });
@@ -82,7 +84,7 @@ export function AppSettingsProvider({ children }: PropsWithChildren) {
 
   const resetSettings = useCallback(() => {
     setSettings(DEFAULT_APP_SETTINGS);
-    void AsyncStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify(DEFAULT_APP_SETTINGS));
+    void storage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify(DEFAULT_APP_SETTINGS));
   }, []);
 
   const resolvedColorScheme = settings.themeMode === 'system'

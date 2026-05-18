@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import Constants from 'expo-constants';
 import { Image } from 'expo-image';
@@ -10,7 +9,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   TextInput,
   View,
 } from 'react-native';
@@ -19,6 +17,8 @@ import { AstesiaLogo } from '@/components/AstesiaLogo';
 import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
 import { Fonts } from '@/constants/theme';
+import { storage } from '@/services/storage';
+import { LOCAL_BACKUP_STORAGE_KEY } from '@/services/storage-keys';
 import {
   APP_SETTINGS_STORAGE_KEY,
   DEFAULT_APP_SETTINGS,
@@ -40,8 +40,6 @@ type DialogState = {
   content: string;
   editable?: boolean;
 };
-
-const LOCAL_BACKUP_STORAGE_KEY = 'astesia-local-backup';
 
 const BACKGROUND_IMAGES: Record<PersonalBackground, number> = {
   person: require('@/assets/images/personBack.jpg'),
@@ -151,8 +149,8 @@ export default function PersonalScreen() {
   const handleApplyImport = async () => {
     try {
       const parsedData = JSON.parse(importText);
-      const storage = getImportStorage(parsedData);
-      const entries = Object.entries(storage).filter(
+      const importedStorage = getImportStorage(parsedData);
+      const entries = Object.entries(importedStorage).filter(
         (entry): entry is [string, string] => typeof entry[1] === 'string'
       );
 
@@ -161,10 +159,12 @@ export default function PersonalScreen() {
         return;
       }
 
-      await AsyncStorage.multiSet(entries);
+      await storage.multiSet(entries);
 
-      if (typeof storage[APP_SETTINGS_STORAGE_KEY] === 'string') {
-        updateSettings(JSON.parse(storage[APP_SETTINGS_STORAGE_KEY]) as Partial<AppSettings>);
+      if (typeof importedStorage[APP_SETTINGS_STORAGE_KEY] === 'string') {
+        updateSettings(
+          JSON.parse(importedStorage[APP_SETTINGS_STORAGE_KEY]) as Partial<AppSettings>
+        );
       }
 
       setDialog(null);
@@ -178,7 +178,7 @@ export default function PersonalScreen() {
   const handleBackupData = async () => {
     try {
       const exportedData = await collectStorageSnapshot([LOCAL_BACKUP_STORAGE_KEY]);
-      await AsyncStorage.setItem(LOCAL_BACKUP_STORAGE_KEY, JSON.stringify(exportedData));
+      await storage.setItem(LOCAL_BACKUP_STORAGE_KEY, JSON.stringify(exportedData));
       Alert.alert('备份完成', '已在本机保存一份本地备份。');
     } catch {
       Alert.alert('备份失败', '暂时无法写入本地备份。');
@@ -192,22 +192,24 @@ export default function PersonalScreen() {
         text: '恢复',
         onPress: async () => {
           try {
-            const backup = await AsyncStorage.getItem(LOCAL_BACKUP_STORAGE_KEY);
+            const backup = await storage.getItem(LOCAL_BACKUP_STORAGE_KEY);
 
             if (!backup) {
               Alert.alert('暂无备份', '还没有找到本机备份，请先执行“本地备份”。');
               return;
             }
 
-            const storage = getImportStorage(JSON.parse(backup));
-            const entries = Object.entries(storage).filter(
+            const importedStorage = getImportStorage(JSON.parse(backup));
+            const entries = Object.entries(importedStorage).filter(
               (entry): entry is [string, string] => typeof entry[1] === 'string'
             );
 
-            await AsyncStorage.multiSet(entries);
+            await storage.multiSet(entries);
 
-            if (typeof storage[APP_SETTINGS_STORAGE_KEY] === 'string') {
-              updateSettings(JSON.parse(storage[APP_SETTINGS_STORAGE_KEY]) as Partial<AppSettings>);
+            if (typeof importedStorage[APP_SETTINGS_STORAGE_KEY] === 'string') {
+              updateSettings(
+                JSON.parse(importedStorage[APP_SETTINGS_STORAGE_KEY]) as Partial<AppSettings>
+              );
             }
 
             Alert.alert('恢复完成', '备份数据已恢复到本机。');
@@ -225,11 +227,11 @@ export default function PersonalScreen() {
       {
         text: '清理',
         onPress: async () => {
-          const keys = await AsyncStorage.getAllKeys();
+          const keys = await storage.getAllKeys();
           const cacheKeys = keys.filter((key) => key.includes('cache') || key.includes('pending'));
 
           if (cacheKeys.length > 0) {
-            await AsyncStorage.multiRemove(cacheKeys);
+            await storage.multiRemove(cacheKeys);
           }
 
           Alert.alert('清理完成', cacheKeys.length > 0 ? '缓存已清理。' : '当前没有可清理的缓存。');
@@ -245,13 +247,13 @@ export default function PersonalScreen() {
         text: '确认清空',
         style: 'destructive',
         onPress: async () => {
-          const keys = await AsyncStorage.getAllKeys();
+          const keys = await storage.getAllKeys();
           const dataKeys = keys.filter(
             (key) => key !== APP_SETTINGS_STORAGE_KEY && key !== LOCAL_BACKUP_STORAGE_KEY
           );
 
           if (dataKeys.length > 0) {
-            await AsyncStorage.multiRemove(dataKeys);
+            await storage.multiRemove(dataKeys);
           }
 
           Alert.alert('已清空', dataKeys.length > 0 ? '本地正式数据已清空。' : '当前没有正式数据需要清空。');
@@ -274,7 +276,7 @@ export default function PersonalScreen() {
   };
 
   const handleFeedback = async () => {
-    const mailUrl = 'mailto:feedback@example.com?subject=Astesia%20Feedback';
+    const mailUrl = 'mailto:13062323959@163.com?subject=Astesia%20Feedback';
     const canOpen = await Linking.canOpenURL(mailUrl);
 
     if (canOpen) {
@@ -282,7 +284,7 @@ export default function PersonalScreen() {
       return;
     }
 
-    Alert.alert('意见反馈', '请发送邮件到 feedback@example.com。');
+    Alert.alert('意见反馈', '请发送邮件到 13062323959@163.com。');
   };
 
   return (
@@ -318,7 +320,7 @@ export default function PersonalScreen() {
         </View>
 
         <SettingSection title="外观设置">
-          <SettingButton
+          {/* <SettingButton
             icon="palette"
             title="主题设置"
             description={`当前：${getOptionLabel(THEME_OPTIONS, settings.themeMode)}`}
@@ -327,7 +329,7 @@ export default function PersonalScreen() {
                 updateSettings({ themeMode })
               )
             }
-          />
+          /> */}
           <SettingButton
             icon="format-size"
             title="字体大小"
@@ -395,21 +397,21 @@ export default function PersonalScreen() {
             description="当前暂无在线更新服务"
             onPress={() => Alert.alert('检查更新', `当前版本 ${version}，暂未接入在线更新服务。`)}
           />
-          <View style={styles.switchRow}>
+          {/* <View style={styles.switchRow}>
             <View style={styles.switchCopy}>
               <View style={[styles.iconBadge, { backgroundColor: '#F3E8FF' }]}>
                 <MaterialIcons name="science" size={22} color="#7C3AED" />
               </View>
-              <View style={styles.switchTextGroup}>
-                <ThemedText style={styles.settingTitle}>实验功能</ThemedText>
-                <ThemedText style={styles.settingDescription}>预留后续功能入口</ThemedText>
-              </View>
+                <View style={styles.switchTextGroup}>
+                  <ThemedText style={styles.settingTitle}>实验功能</ThemedText>
+                  <ThemedText style={styles.settingDescription}>预留后续功能入口</ThemedText>
+                </View> 
             </View>
             <Switch
               value={settings.experimentalFeatures}
               onValueChange={(experimentalFeatures) => updateSettings({ experimentalFeatures })}
             />
-          </View>
+          </View> */}
           <SettingButton
             icon="info-outline"
             title="关于应用"
@@ -498,7 +500,7 @@ function SettingButton({
   return (
     <Pressable accessibilityRole="button" style={styles.settingRow} onPress={onPress}>
       <View style={[styles.iconBadge, danger ? styles.dangerIconBadge : undefined]}>
-        <MaterialIcons name={icon} size={22} color={danger ? '#DC2626' : '#0F766E'} />
+        <MaterialIcons name={icon} size={22} color={danger ? '#DC2626' : '#ffffffff'} />
       </View>
       <View style={styles.settingCopy}>
         <ThemedText style={[styles.settingTitle, danger ? styles.dangerText : undefined]}>{title}</ThemedText>
@@ -510,8 +512,8 @@ function SettingButton({
 }
 
 async function collectStorageSnapshot(excludedKeys: string[] = []) {
-  const keys = (await AsyncStorage.getAllKeys()).filter((key) => !excludedKeys.includes(key));
-  const pairs = await AsyncStorage.multiGet(keys);
+  const keys = (await storage.getAllKeys()).filter((key) => !excludedKeys.includes(key));
+  const pairs = await storage.multiGet(keys);
 
   return {
     app: 'Astesia',
@@ -644,7 +646,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#CCFBF1',
+    backgroundColor: '#268bf0ff',
   },
   dangerIconBadge: {
     backgroundColor: '#FEE2E2',

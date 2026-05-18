@@ -1,9 +1,10 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  PENDING_CITY_SELECTION_STORAGE_KEY,
+  RECENT_CITIES_STORAGE_KEY,
+} from '@/services/storage-keys';
+import { storage } from '@/services/storage';
 
 export const CITY_OPTIONS = ['上海', '广州', '深圳'];
-
-const RECENT_CITIES_STORAGE_KEY = 'recent-weather-cities';
-const PENDING_CITY_SELECTION_STORAGE_KEY = 'pending-weather-city-selection';
 
 export function mergeRecentCities(currentCities: string[], cityName: string) {
   const normalizedCity = cityName.trim();
@@ -17,7 +18,7 @@ export function mergeRecentCities(currentCities: string[], cityName: string) {
 
 export async function loadRecentCities() {
   try {
-    const storedValue = await AsyncStorage.getItem(RECENT_CITIES_STORAGE_KEY);
+    const storedValue = await storage.getItem(RECENT_CITIES_STORAGE_KEY);
 
     if (!storedValue) {
       return [];
@@ -38,9 +39,9 @@ export async function loadRecentCities() {
 
 export async function saveRecentCities(cities: string[]) {
   try {
-    await AsyncStorage.setItem(RECENT_CITIES_STORAGE_KEY, JSON.stringify(cities));
+    await storage.setItem(RECENT_CITIES_STORAGE_KEY, JSON.stringify(cities));
   } catch {
-    // AsyncStorage native module may be unavailable before the client fully reloads.
+    // Ignore storage bootstrap errors during early app startup.
   }
 }
 
@@ -54,7 +55,7 @@ export async function addRecentCity(cityName: string) {
 
 export async function savePendingCitySelection(cityName: string) {
   try {
-    await AsyncStorage.setItem(PENDING_CITY_SELECTION_STORAGE_KEY, cityName.trim());
+    await storage.setItem(PENDING_CITY_SELECTION_STORAGE_KEY, cityName.trim());
   } catch {
     // Ignore storage errors and let the caller continue to navigate back.
   }
@@ -62,13 +63,13 @@ export async function savePendingCitySelection(cityName: string) {
 
 export async function consumePendingCitySelection() {
   try {
-    const cityName = await AsyncStorage.getItem(PENDING_CITY_SELECTION_STORAGE_KEY);
+    const cityName = await storage.getItem(PENDING_CITY_SELECTION_STORAGE_KEY);
 
     if (!cityName) {
       return null;
     }
 
-    await AsyncStorage.removeItem(PENDING_CITY_SELECTION_STORAGE_KEY);
+    await storage.removeItem(PENDING_CITY_SELECTION_STORAGE_KEY);
     return cityName.trim() || null;
   } catch {
     return null;
