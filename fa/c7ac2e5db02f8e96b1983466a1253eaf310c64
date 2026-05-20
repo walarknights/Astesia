@@ -1,0 +1,181 @@
+app/accounting-entry.tsx
+  97a3fbda55aacff8 466-496 gitai:{"mixed_line_ranges":[{"Range":[467,468]},{"Single":496}],"operations":[]}
+  12443ac7a88fb735 800-804
+app/accounting.tsx
+  ad523f1527eab2b2 214-236 gitai:{"mixed_line_ranges":[{"Single":214},{"Single":236}],"operations":[]}
+  fde090a6c8c306cc 424
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "fac7ac2e5db02f8e96b1983466a1253eaf310c64",
+  "prompts": {
+    "12443ac7a88fb735": {
+      "agent_id": {
+        "tool": "trae-cue",
+        "id": "ai_tab-icr-aa336168-b382-49f4-9c4d-bf0c348bc59d",
+        "model": "default"
+      },
+      "human_author": "renmeilin <renmeilin@bytedance.com>",
+      "messages": [],
+      "total_additions": 5,
+      "total_deletions": 1,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    },
+    "1ff4a2c33ada6fc8": {
+      "agent_id": {
+        "tool": "trae-cue",
+        "id": "ai_tab-icr-3300f3e1-743d-4ec1-b541-38b7fa2c387b",
+        "model": "default"
+      },
+      "human_author": "renmeilin <renmeilin@bytedance.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "36a16b268c3864b2": {
+      "agent_id": {
+        "tool": "trae-cue",
+        "id": "ai_tab-icr-aa6d688c-b6b7-4f0b-bb2a-d2ce75da3daa",
+        "model": "default"
+      },
+      "human_author": "renmeilin <renmeilin@bytedance.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "379e4b77e33b6f35": {
+      "agent_id": {
+        "tool": "trae-cue",
+        "id": "ai_tab-icr-f0d7aefe-be64-4825-ad0d-9e3c1d1bdd26",
+        "model": "default"
+      },
+      "human_author": "renmeilin <renmeilin@bytedance.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "45dd48161b3dc88e": {
+      "agent_id": {
+        "tool": "trae-cue",
+        "id": "ai_tab-icr-b85f673b-770e-40a7-aa57-478f8aae7abc",
+        "model": "default"
+      },
+      "human_author": "renmeilin <renmeilin@bytedance.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "4eb98527b2ccdb7e": {
+      "agent_id": {
+        "tool": "trae-cue",
+        "id": "ai_tab-icr-4b659f19-c011-4c01-8cc7-238da1fcb485",
+        "model": "default"
+      },
+      "human_author": "renmeilin <renmeilin@bytedance.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 0,
+      "overriden_lines": 0
+    },
+    "97a3fbda55aacff8": {
+      "agent_id": {
+        "tool": "trae-cue",
+        "id": "ai_tab-icr-dd65b499-858b-4b28-a1c4-83f6b20fe1ba",
+        "model": "default"
+      },
+      "human_author": "renmeilin <renmeilin@bytedance.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 3
+    },
+    "ad523f1527eab2b2": {
+      "agent_id": {
+        "tool": "trae-cue",
+        "id": "ai_tab-icr-0adb2d19-1574-4c83-b61d-372569807f84",
+        "model": "default"
+      },
+      "human_author": "renmeilin <renmeilin@bytedance.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 0,
+      "overriden_lines": 2
+    },
+    "fde090a6c8c306cc": {
+      "agent_id": {
+        "tool": "trae-cue",
+        "id": "ai_tab-icr-dc7e7354-51e0-4923-9d8c-0c767ee8954a",
+        "model": "default"
+      },
+      "human_author": "renmeilin <renmeilin@bytedance.com>",
+      "messages": [],
+      "total_additions": 1,
+      "total_deletions": 1,
+      "accepted_lines": 1,
+      "overriden_lines": 0
+    }
+  },
+  "attestation_metadata": {
+    "app/accounting-entry.tsx": [
+      {
+        "hash": "97a3fbda55aacff8",
+        "line_ranges": [
+          {
+            "Range": [
+              466,
+              496
+            ]
+          }
+        ],
+        "mixed_line_ranges": [
+          {
+            "Range": [
+              467,
+              468
+            ]
+          },
+          {
+            "Single": 496
+          }
+        ],
+        "operations": []
+      }
+    ],
+    "app/accounting.tsx": [
+      {
+        "hash": "ad523f1527eab2b2",
+        "line_ranges": [
+          {
+            "Range": [
+              214,
+              236
+            ]
+          }
+        ],
+        "mixed_line_ranges": [
+          {
+            "Single": 214
+          },
+          {
+            "Single": 236
+          }
+        ],
+        "operations": []
+      }
+    ]
+  },
+  "remote_transcripts": {}
+}
