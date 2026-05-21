@@ -19,6 +19,8 @@ export type AccountingMonthlyBudgetRecord = {
   monthLeftDay: number;
   monthLabel: string;
   setDate: string;
+  dailyAverage: number;
+  dailyAverageDateKey: string;
 };
 
 function isAccountingEntryRecord(value: unknown): value is AccountingEntryRecord {
@@ -43,6 +45,12 @@ function formatMonthLabel(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function formatDateKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
+    date.getDate()
+  ).padStart(2, '0')}`;
+}
+
 /**
  * 计算传入日期所在月份还剩余多少天，包含当天。
  *
@@ -60,12 +68,15 @@ function getRemainingDaysIncludingToday(date: Date) {
 
 function createMonthlyBudgetRecord(value: number, referenceDate: Date): AccountingMonthlyBudgetRecord {
   const normalizedAmount = Number.isFinite(value) && value > 0 ? value : 0;
+  const monthLeftDay = getRemainingDaysIncludingToday(referenceDate);
 
   return {
     amount: normalizedAmount,
-    monthLeftDay: getRemainingDaysIncludingToday(referenceDate),
+    monthLeftDay,
     monthLabel: formatMonthLabel(referenceDate),
     setDate: referenceDate.toISOString(),
+    dailyAverage: normalizedAmount > 0 ? normalizedAmount / monthLeftDay : 0,
+    dailyAverageDateKey: formatDateKey(referenceDate),
   };
 }
 
@@ -150,6 +161,14 @@ export async function loadAccountingMonthlyBudget(referenceDate: Date = new Date
               : getRemainingDaysIncludingToday(referenceDate),
           monthLabel: parsedValue.monthLabel,
           setDate: parsedValue.setDate,
+          dailyAverage:
+            typeof parsedValue.dailyAverage === 'number' && Number.isFinite(parsedValue.dailyAverage)
+              ? parsedValue.dailyAverage
+              : parsedValue.amount / getRemainingDaysIncludingToday(referenceDate),
+          dailyAverageDateKey:
+            typeof parsedValue.dailyAverageDateKey === 'string'
+              ? parsedValue.dailyAverageDateKey
+              : '',
         };
       }
     }
@@ -171,4 +190,9 @@ export async function saveAccountingMonthlyBudget(value: number, referenceDate: 
 
   await storage.setItem(ACCOUNTING_MONTHLY_BUDGET_STORAGE_KEY, JSON.stringify(nextBudgetRecord));
   return nextBudgetRecord;
+}
+
+export async function saveAccountingMonthlyBudgetRecord(record: AccountingMonthlyBudgetRecord) {
+  await storage.setItem(ACCOUNTING_MONTHLY_BUDGET_STORAGE_KEY, JSON.stringify(record));
+  return record;
 }

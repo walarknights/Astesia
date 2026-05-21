@@ -1,7 +1,9 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect } from '@react-navigation/native';
+import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 import { Stack, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { Image } from 'expo-image';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
@@ -13,9 +15,14 @@ import {
   loadAccountingMonthlyBudget,
   loadAccountingEntries,
   saveAccountingMonthlyBudget,
+  saveAccountingMonthlyBudgetRecord,
   type AccountingMonthlyBudgetRecord,
   type AccountingEntryRecord,
 } from '@/services/accounting-entry-storage';
+import {
+  loadAccountingHeroImageUri,
+  persistAccountingHeroImage,
+} from '@/services/accounting-hero-image-storage';
 
 const HERO_IMAGE = require('@/assets/images/cloudy.jpg');
 const WEEK_DAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'] as const;
@@ -148,16 +155,22 @@ export default function AccountingScreen() {
     monthLeftDay: getRemainingDaysInMonth(new Date()),
     monthLabel: formatMonthLabel(new Date()),
     setDate: new Date().toISOString(),
+    dailyAverage: 0,
+    dailyAverageDateKey: formatDateKey(new Date()),
   }));
   const [budgetInput, setBudgetInput] = useState('');
   const [budgetInputError, setBudgetInputError] = useState('');
   const [isBudgetModalVisible, setIsBudgetModalVisible] = useState(false);
   const [isBudgetDailyHelpVisible, setIsBudgetDailyHelpVisible] = useState(false);
   const [isSavingBudget, setIsSavingBudget] = useState(false);
+  const [heroImageUri, setHeroImageUri] = useState<string | null>(null);
+  const [isHeroImageModalVisible, setIsHeroImageModalVisible] = useState(false);
+  const [isSavingHeroImage, setIsSavingHeroImage] = useState(false);
   const currentMonthRange = useMemo(() => getMonthRange(currentDate), [currentDate]);
   const currentWeekDays = useMemo(() => getCurrentWeekDays(currentDate), [currentDate]);
   const currentMonthLabel = formatMonthLabel(currentDate);
   const monthlyBudget = monthlyBudgetRecord.amount;
+  const heroImageSource = heroImageUri ? { uri: heroImageUri } : HERO_IMAGE;
 
   useFocusEffect(
     useCallback(() => {
@@ -169,11 +182,13 @@ export default function AccountingScreen() {
           loadAccountingEntries(),
           loadAccountingMonthlyBudget(nextCurrentDate),
         ]);
+        const storedHeroImageUri = await loadAccountingHeroImageUri();
 
         if (active) {
           setCurrentDate(nextCurrentDate);
           setEntries(storedEntries);
           setMonthlyBudgetRecord(storedMonthlyBudget);
+          setHeroImageUri(storedHeroImageUri);
         }
       };
 
@@ -211,15 +226,11 @@ export default function AccountingScreen() {
   const monthlyBalance = monthlySummary.income - monthlySummary.expense;
   const monthlySummaryText = `月收入: ¥${monthlySummary.income.toFixed(2)}  月支出: ¥${monthlySummary.expense.toFixed(2)}`;
   const budgetLeft = monthlyBudget - monthlySummary.expense;
-  const budgetMonthLeftDay =
-    monthlyBudgetRecord.monthLabel === currentMonthLabel
-      ? monthlyBudgetRecord.monthLeftDay
-      : getRemainingDaysInMonth(currentDate);
+  const currentDateKey = formatDateKey(currentDate);
+  const currentMonthRemainingDays = getRemainingDaysInMonth(currentDate);
   // 格式化: 账单列表 → 筛选出当前日期的支出并累加 → 当日支出金额
-  // 说明: 用于计算预算卡片中的剩余日均
+  // 说明: 用于计算预算卡片中的当日剩余可用
   const todayExpense = useMemo(() => {
-    const currentDateKey = formatDateKey(currentDate);
-
     return entries.reduce((total, entry) => {
       if (entry.incomeExpenseType !== '支出') {
         return total;
@@ -229,13 +240,34 @@ export default function AccountingScreen() {
         ? total + (Number(entry.amount) || 0)
         : total;
     }, 0);
-  }, [currentDate, entries]);
-  // [变更] 修改前: 使用预算剩余额度除以当前自然月剩余天数
-  // [变更] 修改后: 使用月预算除以设置预算当天记录的 monthLeftDay，再减去当日支出
-  // [原因] 让剩余日均与预算设置当天的分摊规则保持一致
-  const budgetDailyLeft = monthlyBudget > 0 ? monthlyBudget / budgetMonthLeftDay - todayExpense : 0;
+  }, [currentDateKey, entries]);
+  const dailyAverage = monthlyBudget > 0 ? monthlyBudgetRecord.dailyAverage : 0;
+  // [变更] 修改前: “剩余日均”会随预算剩余和当日支出变化
+  // [变更] 修改后: “当日日均”每日只在日期变更后刷新一次，当天不再随记账变化
+  // [原因] 固定当天可用额度基准，新增“当日剩余可用”承载实时扣减
+  const dailyRemainingAvailable = dailyAverage - todayExpense;
+  const dailyAverageFormula = `${budgetLeft.toFixed(2)} ÷ ${currentMonthRemainingDays}`;
   const budgetProgress =
     monthlyBudget > 0 ? Math.min(Math.max(monthlySummary.expense / monthlyBudget, 0), 1) : 0;
+
+  useEffect(() => {
+    if (monthlyBudget <= 0 || monthlyBudgetRecord.dailyAverageDateKey === currentDateKey) {
+      return;
+    }
+
+    const nextDailyAverage = budgetLeft / currentMonthRemainingDays;
+    const nextBudgetRecord = {
+      ...monthlyBudgetRecord,
+      dailyAverage: nextDailyAverage,
+      dailyAverageDateKey: currentDateKey,
+    };
+
+    void saveAccountingMonthlyBudgetRecord(nextBudgetRecord)
+      .then(setMonthlyBudgetRecord)
+      .catch(() => {
+        Alert.alert('更新失败', '当日日均暂未刷新成功，请稍后重试');
+      });
+  }, [budgetLeft, currentDateKey, currentMonthRemainingDays, monthlyBudget, monthlyBudgetRecord]);
 
   const weeklyExpenses = useMemo(() => {
     const weeklyExpenseMap = new Map(currentWeekDays.map((item) => [item.dateKey, 0]));
@@ -267,6 +299,18 @@ export default function AccountingScreen() {
     setBudgetInput(monthlyBudget > 0 ? String(monthlyBudget) : '');
     setBudgetInputError('');
     setIsBudgetModalVisible(true);
+  };
+
+  const openHeroImageModal = () => {
+    setIsHeroImageModalVisible(true);
+  };
+
+  const closeHeroImageModal = () => {
+    if (isSavingHeroImage) {
+      return;
+    }
+
+    setIsHeroImageModalVisible(false);
   };
 
   const closeEntryActionModal = () => {
@@ -363,6 +407,71 @@ export default function AccountingScreen() {
     }
   };
 
+  const saveHeroImageFromPicker = async (asset: { uri: string; name?: string | null; mimeType?: string | null }) => {
+    try {
+      setIsSavingHeroImage(true);
+      const nextHeroImageUri = await persistAccountingHeroImage(asset);
+      setHeroImageUri(nextHeroImageUri);
+      setIsHeroImageModalVisible(false);
+    } catch (error) {
+      const isUnsupportedImage = error instanceof Error && error.message === 'UNSUPPORTED_IMAGE_FORMAT';
+      Alert.alert(
+        isUnsupportedImage ? '图片格式不支持' : '保存失败',
+        isUnsupportedImage
+          ? '请选择 jpg、png、webp、gif、heic 或 heif 格式的图片'
+          : '背景图片暂未保存成功，请稍后重试'
+      );
+    } finally {
+      setIsSavingHeroImage(false);
+    }
+  };
+
+  const handleOpenGallery = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permission.granted) {
+      Alert.alert('无法打开图库', '请允许访问系统图库后再选择背景图片');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      allowsEditing: false,
+      allowsMultipleSelection: false,
+      mediaTypes: ['images'],
+      quality: 1,
+    });
+
+    if (result.canceled || !result.assets[0]) {
+      return;
+    }
+
+    const [asset] = result.assets;
+    await saveHeroImageFromPicker({
+      uri: asset.uri,
+      name: asset.fileName,
+      mimeType: asset.mimeType,
+    });
+  };
+
+  const handleOpenFile = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      multiple: false,
+      type: 'image/*',
+    });
+
+    if (result.canceled || !result.assets[0]) {
+      return;
+    }
+
+    const [asset] = result.assets;
+    await saveHeroImageFromPicker({
+      uri: asset.uri,
+      name: asset.name,
+      mimeType: asset.mimeType,
+    });
+  };
+
   const transactionGroups = useMemo<TransactionGroup[]>(() => {
     const sortedEntries = [...entries].sort(
       (left, right) => parseEntryDate(right).getTime() - parseEntryDate(left).getTime()
@@ -440,7 +549,7 @@ export default function AccountingScreen() {
             </View>
 
             <View style={styles.heroCard}>
-              <Image source={HERO_IMAGE} contentFit="cover" style={styles.heroImage} />
+              <Image source={heroImageSource} contentFit="cover" style={styles.heroImage} />
               <View style={styles.heroOverlay} />
 
               <View style={styles.heroContent}>
@@ -450,10 +559,23 @@ export default function AccountingScreen() {
                     <ThemedText style={styles.heroBalance}>¥{monthlyBalance.toFixed(2)}</ThemedText>
                   </View>
 
-                  <View style={styles.heroTag}>
-                    <ThemedText style={styles.heroTagText}>细碎生活</ThemedText>
+                  {/*
+                   * 渲染位置: 顶部背景卡片右上角
+                   * 展示内容: 背景设置入口，点击后打开图片来源选择对话框
+                   * 数据来源: useState 中的 heroImageUri 与内置 HERO_IMAGE
+                   */}
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={isSavingHeroImage}
+                    onPress={openHeroImageModal}
+                    style={({ pressed }) => [
+                      styles.heroTag,
+                      pressed && styles.heroTagPressed,
+                      isSavingHeroImage && styles.heroTagDisabled,
+                    ]}>
+                    <ThemedText style={styles.heroTagText}>背景设置</ThemedText>
                     <MaterialIcons name="chevron-right" size={16} color="#525252" />
-                  </View>
+                  </Pressable>
                 </View>
 
                 <ThemedText style={styles.heroSummary}>{monthlySummaryText}</ThemedText>
@@ -476,21 +598,24 @@ export default function AccountingScreen() {
               <View style={styles.budgetSummaryRow}>
                 {/*
                  * 渲染位置: 预算卡片底部左侧
-                 * 展示内容: 预算剩余额度、剩余日均以及计算说明入口
+                 * 展示内容: 预算剩余额度、当日日均、当日剩余可用以及计算说明入口
                  * 数据来源: monthlyBudgetRecord、monthlySummary、entries、currentDate
                  */}
                 <View style={styles.budgetInfoGroup}>
                   <ThemedText style={styles.mutedText}>剩余:{budgetLeft.toFixed(2)}</ThemedText>
                   <View style={styles.budgetDailyLeftRow}>
-                    <ThemedText style={styles.mutedText}>剩余日均:{budgetDailyLeft.toFixed(2)}</ThemedText>
+                    <ThemedText style={styles.mutedText}>当日日均:{dailyAverage.toFixed(2)}</ThemedText>
                     <Pressable
-                      accessibilityLabel="查看剩余日均计算逻辑"
+                      accessibilityLabel="查看当日日均计算逻辑"
                       hitSlop={8}
                       onPress={showBudgetDailyLeftHelp}
                       style={styles.budgetHelpButton}>
                       <ThemedText style={styles.budgetHelpText}>?</ThemedText>
                     </Pressable>
                   </View>
+                  <ThemedText style={styles.mutedText}>
+                    当日剩余可用:{dailyRemainingAvailable.toFixed(2)}
+                  </ThemedText>
                 </View>
                 <ThemedText style={styles.mutedText}>总额:{monthlyBudget.toFixed(2)}</ThemedText>
               </View>
@@ -677,19 +802,22 @@ export default function AccountingScreen() {
           <Pressable style={StyleSheet.absoluteFill} onPress={closeBudgetDailyLeftHelp} />
           {/*
            * 渲染位置: 账单页中部说明弹层
-           * 展示内容: 剩余日均的计算公式、monthLeftDay 说明以及当前代入值
-           * 数据来源: monthlyBudget、budgetMonthLeftDay、todayExpense、budgetDailyLeft
+           * 展示内容: 当日日均每日刷新逻辑、当日剩余可用公式以及当前代入值
+           * 数据来源: budgetLeft、currentMonthRemainingDays、dailyAverage、todayExpense、dailyRemainingAvailable
            */}
           <View style={styles.modalCard}>
-            <ThemedText style={styles.modalTitle}>剩余日均计算逻辑</ThemedText>
+            <ThemedText style={styles.modalTitle}>当日日均计算逻辑</ThemedText>
             <ThemedText style={styles.modalDescription}>
-              剩余日均 = 月预算 ÷ monthLeftDay - 当日支出
+              当日日均每日只在凌晨后首次打开应用时更新一次，当日后续记账不再改变当日日均。
               {'\n\n'}
-              monthLeftDay 为设置本月预算当天起，到本月结束的剩余天数（包含设置当天）。例如 4 月 15
-              日设置预算时，monthLeftDay = 16。
+              当日日均 = 前一日预算剩余 ÷ 当月剩余日期。
               {'\n\n'}
-              当前计算: {monthlyBudget.toFixed(2)} ÷ {budgetMonthLeftDay} - {todayExpense.toFixed(2)} ={' '}
-              {budgetDailyLeft.toFixed(2)}
+              当日剩余可用 = 当日日均 - 当日支出。
+              {'\n\n'}
+              当前当日日均:{dailyAverage.toFixed(2)}
+              {'\n'}
+              当前当日剩余可用: {dailyAverage.toFixed(2)} - {todayExpense.toFixed(2)} ={' '}
+              {dailyRemainingAvailable.toFixed(2)}
             </ThemedText>
             <View style={styles.modalActions}>
               <Pressable style={styles.modalConfirmButton} onPress={closeBudgetDailyLeftHelp}>
@@ -730,6 +858,43 @@ export default function AccountingScreen() {
                   {isSavingBudget ? '保存中...' : '保存'}
                 </ThemedText>
               </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        visible={isHeroImageModalVisible}
+        animationType="fade"
+        onRequestClose={closeHeroImageModal}>
+        <View style={styles.modalBackdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={closeHeroImageModal} />
+          {/*
+           * 渲染位置: 账单页中部背景图设置弹层
+           * 展示内容: “更改当前图片”标题，以及取消、打开图库、打开文件三个操作
+           * 数据来源: isHeroImageModalVisible、isSavingHeroImage
+           */}
+          <View style={styles.modalCard}>
+            <ThemedText style={styles.modalTitle}>更改当前图片</ThemedText>
+            <View style={styles.heroImageDialogActions}>
+              <Pressable style={styles.modalCancelButton} onPress={closeHeroImageModal}>
+                <ThemedText style={styles.modalCancelText}>取消</ThemedText>
+              </Pressable>
+              <View style={styles.heroImageDialogRightActions}>
+                <Pressable
+                  disabled={isSavingHeroImage}
+                  style={[styles.modalConfirmButton, isSavingHeroImage && styles.modalButtonDisabled]}
+                  onPress={() => void handleOpenGallery()}>
+                  <ThemedText style={styles.modalConfirmText}>打开图库</ThemedText>
+                </Pressable>
+                <Pressable
+                  disabled={isSavingHeroImage}
+                  style={[styles.modalConfirmButton, isSavingHeroImage && styles.modalButtonDisabled]}
+                  onPress={() => void handleOpenFile()}>
+                  <ThemedText style={styles.modalConfirmText}>打开文件</ThemedText>
+                </Pressable>
+              </View>
             </View>
           </View>
         </View>
@@ -829,6 +994,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 9,
     backgroundColor: 'rgba(255, 255, 255, 0.92)',
+  },
+  heroTagPressed: {
+    backgroundColor: 'rgba(255, 255, 255, 0.78)',
+  },
+  heroTagDisabled: {
+    opacity: 0.6,
   },
   heroTagText: {
     fontSize: 15,
@@ -1287,6 +1458,19 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     gap: 10,
     marginTop: 20,
+  },
+  heroImageDialogActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginTop: 28,
+  },
+  heroImageDialogRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 10,
   },
   modalCancelButton: {
     borderRadius: 999,
