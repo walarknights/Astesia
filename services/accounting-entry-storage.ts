@@ -1,6 +1,7 @@
 import {
   ACCOUNTING_ENTRIES_STORAGE_KEY,
   ACCOUNTING_MONTHLY_BUDGET_STORAGE_KEY,
+  ACCOUNTING_TOTAL_ASSET_STORAGE_KEY,
 } from '@/services/storage-keys';
 import { storage } from '@/services/storage';
 
@@ -195,4 +196,26 @@ export async function saveAccountingMonthlyBudget(value: number, referenceDate: 
 export async function saveAccountingMonthlyBudgetRecord(record: AccountingMonthlyBudgetRecord) {
   await storage.setItem(ACCOUNTING_MONTHLY_BUDGET_STORAGE_KEY, JSON.stringify(record));
   return record;
+}
+
+export async function loadAccountingTotalAsset() {
+  try {
+    const storedValue = await storage.getItem(ACCOUNTING_TOTAL_ASSET_STORAGE_KEY);
+
+    if (!storedValue) {
+      return null;
+    }
+
+    const parsedValue = JSON.parse(storedValue);
+    return typeof parsedValue === 'number' && Number.isFinite(parsedValue) ? parsedValue : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveAccountingTotalAsset(value: number) {
+  const normalizedValue = Number.isFinite(value) ? value : 0;
+
+  await storage.setItem(ACCOUNTING_TOTAL_ASSET_STORAGE_KEY, JSON.stringify(normalizedValue));
+  return normalizedValue;
 }
