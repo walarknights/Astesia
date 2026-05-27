@@ -28,6 +28,13 @@ import {
   loadAccountingHeroImageUri,
   persistAccountingHeroImage,
 } from '@/services/accounting-hero-image-storage';
+import {
+  loadSecurityTrend,
+  searchSecurities,
+  type AssetRangeLabel,
+  type SecuritySearchResult,
+  type SecurityTrendResult,
+} from '@/services/akshare';
 
 const HERO_IMAGE = require('@/assets/images/cloudy.jpg');
 const WEEK_DAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'] as const;
@@ -36,7 +43,7 @@ const ASSET_RANGE_OPTIONS = ['近7日', '近一个月', '近1年'] as const;
 const STOCK_CHART_WIDTH = 300;
 const STOCK_CHART_HEIGHT = 132;
 
-const SECURITY_OPTIONS = [
+const SECURITY_OPTIONS: SecurityTrendResult[] = [
   {
     code: 'AAPL',
     name: '苹果公司',
@@ -73,7 +80,7 @@ const SECURITY_OPTIONS = [
       近1年: [3.58, 3.66, 3.72, 3.7, 3.86, 3.94, 4.02, 4.12, 4.18],
     },
   },
-] as const;
+];
 
 type AccountingTab = 'bill' | 'asset';
 type BillQueryScope = 'month' | 'year';
@@ -96,8 +103,6 @@ type EntryActionTarget = {
   id: string;
   title: string;
 };
-
-type SecurityOption = (typeof SECURITY_OPTIONS)[number];
 
 function getValidDate(input: string) {
   const normalizedInput = input.trim().replace(' ', 'T');
@@ -268,6 +273,24 @@ function buildChartPoints(values: readonly number[]) {
     .join(' ');
 }
 
+function getFallbackSecurityOptions(keyword: string) {
+  const normalizedKeyword = keyword.trim().toLowerCase();
+
+  if (!normalizedKeyword) {
+    return SECURITY_OPTIONS;
+  }
+
+  // 格式化: 搜索关键字 + 本地兜底标的 → 按名称/代码/类型过滤 → 兜底搜索结果
+  // 说明: AkShare 服务不可用时仍保留基础演示和页面可用性
+  return SECURITY_OPTIONS.filter((security) => {
+    return (
+      security.name.toLowerCase().includes(normalizedKeyword) ||
+      security.code.toLowerCase().includes(normalizedKeyword) ||
+      security.type.toLowerCase().includes(normalizedKeyword)
+    );
+  });
+}
+
 export default function AccountingScreen() {
   const router = useRouter();
   const [currentDate, setCurrentDate] = useState(() => new Date());
@@ -302,9 +325,13 @@ export default function AccountingScreen() {
   const [isAssetModalVisible, setIsAssetModalVisible] = useState(false);
   const [isSavingAsset, setIsSavingAsset] = useState(false);
   const [assetSearchKeyword, setAssetSearchKeyword] = useState('');
-  const [selectedAssetRange, setSelectedAssetRange] =
-    useState<(typeof ASSET_RANGE_OPTIONS)[number]>('近7日');
-  const [selectedSecurity, setSelectedSecurity] = useState<SecurityOption | null>(null);
+  const [selectedAssetRange, setSelectedAssetRange] = useState<AssetRangeLabel>('近7日');
+  const [selectedSecurity, setSelectedSecurity] = useState<SecurityTrendResult | null>(null);
+  const [securitySearchResults, setSecuritySearchResults] =
+    useState<SecuritySearchResult[]>(SECURITY_OPTIONS);
+  const [securitySearchError, setSecuritySearchError] = useState('');
+  const [isSearchingSecurities, setIsSearchingSecurities] = useState(false);
+  const [isLoadingSecurityTrend, setIsLoadingSecurityTrend] = useState(false);
   const [isAssetSearchModalVisible, setIsAssetSearchModalVisible] = useState(false);
   const currentMonthRange = useMemo(() => getMonthRange(currentDate), [currentDate]);
   const currentYearRange = useMemo(() => getYearRange(currentDate), [currentDate]);
@@ -393,23 +420,7 @@ export default function AccountingScreen() {
     () => new Set(entries.map((entry) => formatDateKey(parseEntryDate(entry)))).size,
     [entries]
   );
-  const filteredSecurityOptions = useMemo(() => {
-    const keyword = assetSearchKeyword.trim().toLowerCase();
-
-    if (!keyword) {
-      return SECURITY_OPTIONS;
-    }
-
-    // 格式化: 搜索关键字 + 股票/基金候选列表 → 按名称/代码/类型过滤 → 搜索结果列表
-    // 说明: 当前为本地模拟搜索，后续接 API 时可替换为接口返回的候选项
-    return SECURITY_OPTIONS.filter((security) => {
-      return (
-        security.name.toLowerCase().includes(keyword) ||
-        security.code.toLowerCase().includes(keyword) ||
-        security.type.toLowerCase().includes(keyword)
-      );
-    });
-  }, [assetSearchKeyword]);
+  const filteredSecurityOptions = securitySearchResults;
   const selectedSecurityTrend = selectedSecurity?.trend[selectedAssetRange] ?? [];
   const selectedSecurityChartPoints = selectedSecurityTrend.length > 0 ? buildChartPoints(selectedSecurityTrend) : '';
   const selectedSecurityTrendStart = selectedSecurityTrend[0] ?? 0;
@@ -418,6 +429,11 @@ export default function AccountingScreen() {
   const selectedSecurityChartEndY =
     selectedSecurityChartPointList[selectedSecurityChartPointList.length - 1]?.split(',')[1] ??
     String(STOCK_CHART_HEIGHT / 2);
+  const selectedSecurityPriceText =
+    selectedSecurity?.price !== null && selectedSecurity?.price !== undefined
+      ? `¥${selectedSecurity.price.toFixed(2)}`
+      : '加载中';
+  const selectedSecurityChangeRate = selectedSecurity?.changeRate ?? 0;
   const availableYearOptions = useMemo(() => {
     const currentYear = new Date().getFullYear();
     const yearSet = new Set([currentYear - 1, currentYear, currentYear + 1]);
@@ -471,6 +487,84 @@ export default function AccountingScreen() {
   const dailyRemainingAvailable = dailyAverage - todayExpense;
   const budgetProgress =
     monthlyBudget > 0 ? Math.min(Math.max(currentBudgetMonthExpense / monthlyBudget, 0), 1) : 0;
+
+  useEffect(() => {
+    if (!isAssetSearchModalVisible) {
+      return;
+    }
+
+    let active = true;
+
+    const syncSecuritySearch = async () => {
+      try {
+        setIsSearchingSecurities(true);
+        setSecuritySearchError('');
+        const nextResults = await searchSecurities(assetSearchKeyword);
+
+        if (active) {
+          setSecuritySearchResults(nextResults.length > 0 ? nextResults : getFallbackSecurityOptions(assetSearchKeyword));
+        }
+      } catch {
+        if (active) {
+          setSecuritySearchError('AkShare 服务不可用，当前展示本地兜底结果');
+          setSecuritySearchResults(getFallbackSecurityOptions(assetSearchKeyword));
+        }
+      } finally {
+        if (active) {
+          setIsSearchingSecurities(false);
+        }
+      }
+    };
+
+    void syncSecuritySearch();
+
+    return () => {
+      active = false;
+    };
+  }, [assetSearchKeyword, isAssetSearchModalVisible]);
+
+  useEffect(() => {
+    if (!selectedSecurity || selectedSecurity.trend[selectedAssetRange].length > 0) {
+      return;
+    }
+
+    let active = true;
+
+    const syncSelectedSecurityTrend = async () => {
+      try {
+        setIsLoadingSecurityTrend(true);
+        const nextSecurity = await loadSecurityTrend(selectedSecurity, selectedAssetRange);
+
+        if (active) {
+          setSelectedSecurity((currentSecurity) => {
+            if (!currentSecurity || currentSecurity.code !== nextSecurity.code || currentSecurity.type !== nextSecurity.type) {
+              return currentSecurity;
+            }
+
+            return {
+              ...currentSecurity,
+              price: nextSecurity.price,
+              changeRate: nextSecurity.changeRate,
+              trend: {
+                ...currentSecurity.trend,
+                [selectedAssetRange]: nextSecurity.trend[selectedAssetRange],
+              },
+            };
+          });
+        }
+      } finally {
+        if (active) {
+          setIsLoadingSecurityTrend(false);
+        }
+      }
+    };
+
+    void syncSelectedSecurityTrend();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedAssetRange, selectedSecurity]);
 
   useEffect(() => {
     if (monthlyBudget <= 0 || monthlyBudgetRecord.dailyAverageDateKey === currentDateKey) {
@@ -546,11 +640,29 @@ export default function AccountingScreen() {
     setIsAssetSearchModalVisible(false);
   };
 
-  const handleSelectSecurity = (security: SecurityOption) => {
-    setSelectedSecurity(security);
+  const handleSelectSecurity = async (security: SecuritySearchResult) => {
     setSecurityName(security.name);
     setAssetSearchKeyword('');
     setIsAssetSearchModalVisible(false);
+
+    try {
+      setIsLoadingSecurityTrend(true);
+      const nextSecurity = await loadSecurityTrend(security, selectedAssetRange);
+      setSelectedSecurity(nextSecurity);
+    } catch {
+      const fallbackSecurity = SECURITY_OPTIONS.find(
+        (item) => item.code === security.code && item.type === security.type
+      );
+
+      if (fallbackSecurity) {
+        setSelectedSecurity(fallbackSecurity);
+        return;
+      }
+
+      Alert.alert('行情加载失败', 'AkShare 服务暂时不可用，请确认本地行情服务已启动');
+    } finally {
+      setIsLoadingSecurityTrend(false);
+    }
   };
 
   const openBillPeriodModal = (scope: BillQueryScope) => {
@@ -967,16 +1079,16 @@ export default function AccountingScreen() {
                           </ThemedText>
                         </View>
                         <View style={styles.assetTrendPriceGroup}>
-                          <ThemedText style={styles.assetTrendPrice}>¥{selectedSecurity.price.toFixed(2)}</ThemedText>
+                          <ThemedText style={styles.assetTrendPrice}>{selectedSecurityPriceText}</ThemedText>
                           <ThemedText
                             style={[
                               styles.assetTrendRate,
-                              selectedSecurity.changeRate < 0
+                              selectedSecurityChangeRate < 0
                                 ? styles.assetBalanceNegative
                                 : styles.assetBalancePositive,
                             ]}>
-                            {selectedSecurity.changeRate > 0 ? '+' : ''}
-                            {selectedSecurity.changeRate.toFixed(2)}%
+                            {selectedSecurityChangeRate > 0 ? '+' : ''}
+                            {selectedSecurityChangeRate.toFixed(2)}%
                           </ThemedText>
                         </View>
                       </View>
@@ -985,7 +1097,7 @@ export default function AccountingScreen() {
                           <Polyline
                             points={selectedSecurityChartPoints}
                             fill="none"
-                            stroke={selectedSecurity.changeRate < 0 ? '#DC2626' : '#2563EB'}
+                            stroke={selectedSecurityChangeRate < 0 ? '#DC2626' : '#2563EB'}
                             strokeWidth="4"
                             strokeLinecap="round"
                             strokeLinejoin="round"
@@ -994,13 +1106,13 @@ export default function AccountingScreen() {
                             cx={STOCK_CHART_WIDTH}
                             cy={selectedSecurityChartEndY}
                             r="5"
-                            fill={selectedSecurity.changeRate < 0 ? '#DC2626' : '#2563EB'}
+                            fill={selectedSecurityChangeRate < 0 ? '#DC2626' : '#2563EB'}
                           />
                         </Svg>
                       </View>
                       <View style={styles.assetTrendFooter}>
                         <ThemedText style={styles.assetTrendFooterText}>
-                          起点 ¥{selectedSecurityTrendStart.toFixed(2)}
+                          {isLoadingSecurityTrend ? 'AkShare 行情加载中...' : `起点 ¥${selectedSecurityTrendStart.toFixed(2)}`}
                         </ThemedText>
                         <ThemedText style={styles.assetTrendFooterText}>
                           终点 ¥{selectedSecurityTrendEnd.toFixed(2)}
@@ -1447,6 +1559,12 @@ export default function AccountingScreen() {
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.assetSearchResultList}>
+              {isSearchingSecurities ? (
+                <ThemedText style={styles.assetSearchEmptyText}>正在从 AkShare 查询...</ThemedText>
+              ) : null}
+              {securitySearchError ? (
+                <ThemedText style={styles.assetSearchEmptyText}>{securitySearchError}</ThemedText>
+              ) : null}
               {filteredSecurityOptions.length > 0 ? (
                 filteredSecurityOptions.map((security) => (
                   <Pressable
@@ -1459,7 +1577,9 @@ export default function AccountingScreen() {
                         {security.type} · {security.code}
                       </ThemedText>
                     </View>
-                    <ThemedText style={styles.assetSearchResultPrice}>¥{security.price.toFixed(2)}</ThemedText>
+                    <ThemedText style={styles.assetSearchResultPrice}>
+                      {security.price === null ? '点选查看' : `¥${security.price.toFixed(2)}`}
+                    </ThemedText>
                   </Pressable>
                 ))
               ) : (
