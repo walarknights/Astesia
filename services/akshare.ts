@@ -10,8 +10,23 @@ export type SecuritySearchResult = {
   changeRate: number | null;
 };
 
+export type SecurityCandle = {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number | null;
+  amount: number | null;
+  amplitude: number | null;
+  changeRate: number | null;
+  changeAmount: number | null;
+  turnoverRate: number | null;
+};
+
 export type SecurityTrendResult = SecuritySearchResult & {
   trend: Record<AssetRangeLabel, number[]>;
+  candles: Record<AssetRangeLabel, SecurityCandle[]>;
 };
 
 const AKSHARE_API_HOST = (process.env.EXPO_PUBLIC_AKSHARE_API_HOST ?? 'http://127.0.0.1:8765').replace(/\/$/, '');
@@ -49,6 +64,7 @@ export async function loadSecurityTrend(security: SecuritySearchResult, range: A
     price: number;
     changeRate: number;
     trend: number[];
+    candles: SecurityCandle[];
   }>(`/api/securities/trend?${searchParams.toString()}`);
 
   return {
@@ -59,6 +75,11 @@ export async function loadSecurityTrend(security: SecuritySearchResult, range: A
       近7日: range === '近7日' ? data.trend : [],
       近一个月: range === '近一个月' ? data.trend : [],
       近1年: range === '近1年' ? data.trend : [],
+    },
+    candles: {
+      近7日: range === '近7日' ? data.candles : [],
+      近一个月: range === '近一个月' ? data.candles : [],
+      近1年: range === '近1年' ? data.candles : [],
     },
   } satisfies SecurityTrendResult;
 }

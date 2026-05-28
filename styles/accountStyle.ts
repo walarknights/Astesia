@@ -341,6 +341,42 @@ export const styles = StyleSheet.create({
     lineHeight: 16,
     color: '#6B7280',
   },
+  assetCandleDetailCard: {
+    marginTop: 12,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+  },
+  assetCandleDetailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  assetCandleDetailTitle: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  assetCandleDetailRate: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '800',
+  },
+  assetCandleDetailGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: 6,
+  },
+  assetCandleDetailText: {
+    width: '50%',
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: '#64748B',
+  },
   assetTrendEmpty: {
     alignItems: 'center',
     justifyContent: 'center',

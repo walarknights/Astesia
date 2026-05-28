@@ -4,12 +4,12 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { Image } from 'expo-image';
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Svg, { Circle, Polyline } from 'react-native-svg';
+import Svg, { Line, Rect } from 'react-native-svg';
 import { styles } from '@/styles/accountStyle';
 
 import { ThemedText } from '@/components/themed-text';
@@ -32,6 +32,7 @@ import {
   loadSecurityTrend,
   searchSecurities,
   type AssetRangeLabel,
+  type SecurityCandle,
   type SecuritySearchResult,
   type SecurityTrendResult,
 } from '@/services/akshare';
@@ -55,6 +56,11 @@ const SECURITY_OPTIONS: SecurityTrendResult[] = [
       近一个月: [174.2, 176.8, 181.6, 179.5, 185.2, 188.9, 190.4, 193.6, 196.45],
       近1年: [142.1, 151.4, 148.8, 160.2, 169.5, 166.7, 177.9, 184.3, 196.45],
     },
+    candles: {
+      近7日: [],
+      近一个月: [],
+      近1年: [],
+    },
   },
   {
     code: 'TSLA',
@@ -67,6 +73,11 @@ const SECURITY_OPTIONS: SecurityTrendResult[] = [
       近一个月: [233.8, 238.2, 241.9, 245.4, 243.8, 249.6, 252.1, 248.5, 247.11],
       近1年: [189.4, 204.5, 198.2, 215.8, 230.2, 226.1, 242.9, 254.7, 247.11],
     },
+    candles: {
+      近7日: [],
+      近一个月: [],
+      近1年: [],
+    },
   },
   {
     code: '510300',
@@ -78,6 +89,11 @@ const SECURITY_OPTIONS: SecurityTrendResult[] = [
       近7日: [4.08, 4.11, 4.09, 4.12, 4.15, 4.16, 4.18],
       近一个月: [3.92, 3.96, 4.01, 3.98, 4.05, 4.1, 4.13, 4.17, 4.18],
       近1年: [3.58, 3.66, 3.72, 3.7, 3.86, 3.94, 4.02, 4.12, 4.18],
+    },
+    candles: {
+      近7日: [],
+      近一个月: [],
+      近1年: [],
     },
   },
 ];
@@ -248,29 +264,94 @@ function calculateRangeBalance(sourceEntries: AccountingEntryRecord[], start: Da
 }
 
 /**
- * 将行情价格序列转换为 SVG 折线路径点位。
+ * 将收盘价序列转换为可展示的兜底 K 线。
  *
- * @param {readonly number[]} values - 股票/基金价格序列
- * @returns {string} SVG polyline points 字符串
+ * @param {readonly number[]} values - 股票/基金收盘价序列
+ * @returns {SecurityCandle[]} 由相邻收盘价推导出的 K 线数据
  * @example
- *   buildChartPoints([1, 2, 3]) // => '0,132 150,66 300,0'
+ *   buildFallbackCandles([1, 2]) // => [{ open: 1, close: 1 }, { open: 1, close: 2 }]
  */
-function buildChartPoints(values: readonly number[]) {
-  const minValue = Math.min(...values);
-  const maxValue = Math.max(...values);
-  const valueRange = maxValue - minValue || 1;
-  const xStep = values.length > 1 ? STOCK_CHART_WIDTH / (values.length - 1) : STOCK_CHART_WIDTH;
+function buildFallbackCandles(values: readonly number[]): SecurityCandle[] {
+  return values.map((close, index) => {
+    const open = index === 0 ? close : values[index - 1];
 
-  // 格式化: 行情价格数组 → 归一化为 SVG 坐标 → 走势图折线点位
-  // 说明: 在未接真实行情 API 前，使用同一转换逻辑渲染模拟和未来接口数据
-  return values
-    .map((value, index) => {
-      const x = index * xStep;
-      const y = STOCK_CHART_HEIGHT - ((value - minValue) / valueRange) * (STOCK_CHART_HEIGHT - 18) - 9;
+    return {
+      date: String(index + 1),
+      open,
+      high: Math.max(open, close),
+      low: Math.min(open, close),
+      close,
+      volume: null,
+      amount: null,
+      amplitude: open ? (Math.abs(close - open) / open) * 100 : 0,
+      changeRate: open ? ((close - open) / open) * 100 : 0,
+      changeAmount: close - open,
+      turnoverRate: null,
+    };
+  });
+}
 
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(' ');
+/**
+ * 将 K 线数据转换为 SVG 绘制坐标。
+ *
+ * @param {readonly SecurityCandle[]} candles - AkShare 返回的开高低收数据
+ * @returns {Array} SVG 蜡烛图元素所需坐标
+ * @example
+ *   buildCandlestickShapes([{ open: 1, high: 2, low: 1, close: 2, date: '1', volume: null }])
+ */
+function buildCandlestickShapes(candles: readonly SecurityCandle[]) {
+  const highValue = Math.max(...candles.map((candle) => candle.high));
+  const lowValue = Math.min(...candles.map((candle) => candle.low));
+  const valueRange = highValue - lowValue || 1;
+  const padding = 8;
+  const plotHeight = STOCK_CHART_HEIGHT - padding * 2;
+  const xStep = candles.length > 1 ? STOCK_CHART_WIDTH / (candles.length - 1) : STOCK_CHART_WIDTH / 2;
+  const bodyWidth = Math.max(3, Math.min(12, STOCK_CHART_WIDTH / Math.max(candles.length, 1) * 0.58));
+  const yOf = (value: number) => padding + ((highValue - value) / valueRange) * plotHeight;
+
+  // 格式化: OHLC 行情数组 → 归一化为 SVG 坐标 → K 线蜡烛图绘制数据
+  // 说明: 股票使用真实开高低收，基金使用净值序列推导出可视化蜡烛
+  return candles.map((candle, index) => {
+    const x = candles.length > 1 ? index * xStep : STOCK_CHART_WIDTH / 2;
+    const openY = yOf(candle.open);
+    const closeY = yOf(candle.close);
+    const bodyTop = Math.min(openY, closeY);
+    const bodyHeight = Math.max(2, Math.abs(closeY - openY));
+
+    return {
+      ...candle,
+      x,
+      openY,
+      closeY,
+      highY: yOf(candle.high),
+      lowY: yOf(candle.low),
+      bodyX: x - bodyWidth / 2,
+      bodyTop,
+      bodyHeight,
+      bodyWidth,
+      isRising: candle.close >= candle.open,
+    };
+  });
+}
+
+function formatMarketValue(value: number | null | undefined, digits = 2) {
+  return value === null || value === undefined ? '--' : value.toFixed(digits);
+}
+
+function formatLargeMarketValue(value: number | null | undefined) {
+  if (value === null || value === undefined) {
+    return '--';
+  }
+
+  if (Math.abs(value) >= 100000000) {
+    return `${(value / 100000000).toFixed(2)}亿`;
+  }
+
+  if (Math.abs(value) >= 10000) {
+    return `${(value / 10000).toFixed(2)}万`;
+  }
+
+  return value.toFixed(2);
 }
 
 function getFallbackSecurityOptions(keyword: string) {
@@ -332,6 +413,7 @@ export default function AccountingScreen() {
   const [securitySearchError, setSecuritySearchError] = useState('');
   const [isSearchingSecurities, setIsSearchingSecurities] = useState(false);
   const [isLoadingSecurityTrend, setIsLoadingSecurityTrend] = useState(false);
+  const [selectedSecurityCandle, setSelectedSecurityCandle] = useState<SecurityCandle | null>(null);
   const [isAssetSearchModalVisible, setIsAssetSearchModalVisible] = useState(false);
   const currentMonthRange = useMemo(() => getMonthRange(currentDate), [currentDate]);
   const currentYearRange = useMemo(() => getYearRange(currentDate), [currentDate]);
@@ -346,8 +428,6 @@ export default function AccountingScreen() {
   const monthlyBudget = monthlyBudgetRecord.amount;
   const heroImageSource = heroImageUri ? { uri: heroImageUri } : HERO_IMAGE;
   const [securityName, setSecurityName] = useState('股票/基金名称');
-
-
 
 
   useFocusEffect(
@@ -421,19 +501,39 @@ export default function AccountingScreen() {
     [entries]
   );
   const filteredSecurityOptions = securitySearchResults;
-  const selectedSecurityTrend = selectedSecurity?.trend[selectedAssetRange] ?? [];
-  const selectedSecurityChartPoints = selectedSecurityTrend.length > 0 ? buildChartPoints(selectedSecurityTrend) : '';
+  const selectedSecurityTrend = useMemo(
+    () => selectedSecurity?.trend[selectedAssetRange] ?? [],
+    [selectedAssetRange, selectedSecurity]
+  );
+  const selectedSecurityCandles = useMemo(
+    () => selectedSecurity?.candles[selectedAssetRange] ?? [],
+    [selectedAssetRange, selectedSecurity]
+  );
+  const selectedSecurityDisplayCandles = useMemo(() => {
+    if (selectedSecurityCandles.length > 0) {
+      return selectedSecurityCandles;
+    }
+
+    return buildFallbackCandles(selectedSecurityTrend);
+  }, [selectedSecurityCandles, selectedSecurityTrend]);
+  const selectedSecurityKLineShapes = useMemo(
+    () => buildCandlestickShapes(selectedSecurityDisplayCandles),
+    [selectedSecurityDisplayCandles]
+  );
   const selectedSecurityTrendStart = selectedSecurityTrend[0] ?? 0;
   const selectedSecurityTrendEnd = selectedSecurityTrend[selectedSecurityTrend.length - 1] ?? 0;
-  const selectedSecurityChartPointList = selectedSecurityChartPoints.split(' ');
-  const selectedSecurityChartEndY =
-    selectedSecurityChartPointList[selectedSecurityChartPointList.length - 1]?.split(',')[1] ??
-    String(STOCK_CHART_HEIGHT / 2);
-  const selectedSecurityPriceText =
-    selectedSecurity?.price !== null && selectedSecurity?.price !== undefined
+  const selectedSecurityLatestCandle =
+    selectedSecurityDisplayCandles[selectedSecurityDisplayCandles.length - 1] ?? null;
+  const selectedSecurityRangeChangeRate =
+    selectedSecurityTrendStart > 0
+      ? ((selectedSecurityTrendEnd - selectedSecurityTrendStart) / selectedSecurityTrendStart) * 100
+      : selectedSecurity?.changeRate ?? 0;
+  const selectedSecurityPriceText = selectedSecurityLatestCandle
+    ? `¥${selectedSecurityLatestCandle.close.toFixed(2)}`
+    : selectedSecurity?.price !== null && selectedSecurity?.price !== undefined
       ? `¥${selectedSecurity.price.toFixed(2)}`
       : '加载中';
-  const selectedSecurityChangeRate = selectedSecurity?.changeRate ?? 0;
+  const selectedSecurityChangeRate = selectedSecurityRangeChangeRate;
   const availableYearOptions = useMemo(() => {
     const currentYear = new Date().getFullYear();
     const yearSet = new Set([currentYear - 1, currentYear, currentYear + 1]);
@@ -549,6 +649,10 @@ export default function AccountingScreen() {
                 ...currentSecurity.trend,
                 [selectedAssetRange]: nextSecurity.trend[selectedAssetRange],
               },
+              candles: {
+                ...currentSecurity.candles,
+                [selectedAssetRange]: nextSecurity.candles[selectedAssetRange],
+              },
             };
           });
         }
@@ -640,10 +744,16 @@ export default function AccountingScreen() {
     setIsAssetSearchModalVisible(false);
   };
 
+  const handleSelectAssetRange = (range: AssetRangeLabel) => {
+    setSelectedAssetRange(range);
+    setSelectedSecurityCandle(null);
+  };
+
   const handleSelectSecurity = async (security: SecuritySearchResult) => {
     setSecurityName(security.name);
     setAssetSearchKeyword('');
     setIsAssetSearchModalVisible(false);
+    setSelectedSecurityCandle(null);
 
     try {
       setIsLoadingSecurityTrend(true);
@@ -1049,7 +1159,7 @@ export default function AccountingScreen() {
                     {ASSET_RANGE_OPTIONS.map((option) => (
                       <Pressable
                         key={option}
-                        onPress={() => setSelectedAssetRange(option)}
+                        onPress={() => handleSelectAssetRange(option)}
                         style={[
                           styles.assetRangeChip,
                           selectedAssetRange === option && styles.assetRangeChipActive,
@@ -1066,8 +1176,8 @@ export default function AccountingScreen() {
                   </View>
                   {/*
                    * 渲染位置: 资产页股票/基金搜索卡片底部
-                   * 展示内容: 当前选中股票/基金的模拟走势图和区间价格信息
-                   * 数据来源: selectedSecurity、selectedAssetRange、SECURITY_OPTIONS 常量
+                   * 展示内容: 当前选中股票/基金的 K 线图和区间价格信息
+                   * 数据来源: selectedSecurity、selectedAssetRange、AkShare 行情接口
                    */}
                   {selectedSecurity ? (
                     <View style={styles.assetTrendPanel}>
@@ -1094,22 +1204,94 @@ export default function AccountingScreen() {
                       </View>
                       <View style={styles.assetTrendChart}>
                         <Svg width="100%" height={STOCK_CHART_HEIGHT} viewBox={`0 0 ${STOCK_CHART_WIDTH} ${STOCK_CHART_HEIGHT}`}>
-                          <Polyline
-                            points={selectedSecurityChartPoints}
-                            fill="none"
-                            stroke={selectedSecurityChangeRate < 0 ? '#DC2626' : '#2563EB'}
-                            strokeWidth="4"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                          <Circle
-                            cx={STOCK_CHART_WIDTH}
-                            cy={selectedSecurityChartEndY}
-                            r="5"
-                            fill={selectedSecurityChangeRate < 0 ? '#DC2626' : '#2563EB'}
-                          />
+                          {selectedSecurityKLineShapes.map((candle) => {
+                            const candleColor = candle.isRising ? '#DC2626' : '#16A34A';
+                            const isSelectedCandle =
+                              selectedSecurityCandle?.date === candle.date &&
+                              selectedSecurityCandle?.close === candle.close;
+
+                            return (
+                              <Fragment key={`${candle.date}-${candle.x}`}>
+                                <Rect
+                                  x={candle.bodyX - 6}
+                                  y={0}
+                                  width={candle.bodyWidth + 12}
+                                  height={STOCK_CHART_HEIGHT}
+                                  fill="transparent"
+                                  onPress={() => setSelectedSecurityCandle(candle)}
+                                />
+                                <Line
+                                  x1={candle.x}
+                                  x2={candle.x}
+                                  y1={candle.highY}
+                                  y2={candle.lowY}
+                                  stroke={candleColor}
+                                  strokeWidth="1.4"
+                                  strokeLinecap="round"
+                                />
+                                <Rect
+                                  x={candle.bodyX}
+                                  y={candle.bodyTop}
+                                  width={candle.bodyWidth}
+                                  height={candle.bodyHeight}
+                                  rx="1.4"
+                                  fill={candleColor}
+                                  stroke={isSelectedCandle ? '#0F172A' : candleColor}
+                                  strokeWidth={isSelectedCandle ? '1.6' : '0'}
+                                  onPress={() => setSelectedSecurityCandle(candle)}
+                                />
+                              </Fragment>
+                            );
+                          })}
                         </Svg>
                       </View>
+                      {/*
+                       * 渲染位置: K 线图下方明细卡
+                       * 展示内容: 用户点击某根蜡烛后的日期、开高低收、涨跌额、涨跌幅等行情明细
+                       * 数据来源: selectedSecurityCandle，来自 AkShare candles 数据
+                       */}
+                      {selectedSecurityCandle ? (
+                        <View style={styles.assetCandleDetailCard}>
+                          <View style={styles.assetCandleDetailHeader}>
+                            <ThemedText style={styles.assetCandleDetailTitle}>{selectedSecurityCandle.date}</ThemedText>
+                            <ThemedText
+                              style={[
+                                styles.assetCandleDetailRate,
+                                (selectedSecurityCandle.changeRate ?? 0) < 0
+                                  ? styles.assetBalanceNegative
+                                  : styles.assetBalancePositive,
+                              ]}>
+                              {formatMarketValue(selectedSecurityCandle.changeRate)}%
+                            </ThemedText>
+                          </View>
+                          <View style={styles.assetCandleDetailGrid}>
+                            <ThemedText style={styles.assetCandleDetailText}>
+                              开 {formatMarketValue(selectedSecurityCandle.open)}
+                            </ThemedText>
+                            <ThemedText style={styles.assetCandleDetailText}>
+                              收 {formatMarketValue(selectedSecurityCandle.close)}
+                            </ThemedText>
+                            <ThemedText style={styles.assetCandleDetailText}>
+                              高 {formatMarketValue(selectedSecurityCandle.high)}
+                            </ThemedText>
+                            <ThemedText style={styles.assetCandleDetailText}>
+                              低 {formatMarketValue(selectedSecurityCandle.low)}
+                            </ThemedText>
+                            <ThemedText style={styles.assetCandleDetailText}>
+                              涨跌额 {formatMarketValue(selectedSecurityCandle.changeAmount)}
+                            </ThemedText>
+                            <ThemedText style={styles.assetCandleDetailText}>
+                              振幅 {formatMarketValue(selectedSecurityCandle.amplitude)}%
+                            </ThemedText>
+                            <ThemedText style={styles.assetCandleDetailText}>
+                              成交量 {formatLargeMarketValue(selectedSecurityCandle.volume)}
+                            </ThemedText>
+                            <ThemedText style={styles.assetCandleDetailText}>
+                              成交额 {formatLargeMarketValue(selectedSecurityCandle.amount)}
+                            </ThemedText>
+                          </View>
+                        </View>
+                      ) : null}
                       <View style={styles.assetTrendFooter}>
                         <ThemedText style={styles.assetTrendFooterText}>
                           {isLoadingSecurityTrend ? 'AkShare 行情加载中...' : `起点 ¥${selectedSecurityTrendStart.toFixed(2)}`}
@@ -1568,7 +1750,7 @@ export default function AccountingScreen() {
               {filteredSecurityOptions.length > 0 ? (
                 filteredSecurityOptions.map((security) => (
                   <Pressable
-                    key={security.code}
+                    key={`${security.type}-${security.code}`}
                     style={styles.assetSearchResultItem}
                     onPress={() => handleSelectSecurity(security)}>
                     <View>

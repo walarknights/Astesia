@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 import akshare as ak
 
 
-HOST = os.environ.get("AKSHARE_HOST", "127.0.0.1")
+HOST = os.environ.get("AKSHARE_HOST", "0.0.0.0")
 PORT = int(os.environ.get("AKSHARE_PORT", "8765"))
 RANGE_DAYS = {
     "近7日": 7,
@@ -113,6 +113,67 @@ def search_securities(keyword: str, limit: int) -> list[dict[str, Any]]:
     return (_search_stocks(keyword, stock_limit) + _search_funds(keyword, fund_limit))[:limit]
 
 
+def _normalize_candles(records: list[dict[str, Any]], column_map: dict[str, str]) -> list[dict[str, Any]]:
+    candles: list[dict[str, Any]] = []
+
+    for row in records:
+        volume_key = column_map.get("volume")
+        amount_key = column_map.get("amount")
+        amplitude_key = column_map.get("amplitude")
+        change_rate_key = column_map.get("changeRate")
+        change_amount_key = column_map.get("changeAmount")
+        turnover_rate_key = column_map.get("turnoverRate")
+        candle = {
+            "date": str(row.get(column_map["date"], "")),
+            "open": _safe_number(row.get(column_map["open"])),
+            "high": _safe_number(row.get(column_map["high"])),
+            "low": _safe_number(row.get(column_map["low"])),
+            "close": _safe_number(row.get(column_map["close"])),
+            "volume": _safe_number(row.get(volume_key)) if volume_key else None,
+            "amount": _safe_number(row.get(amount_key)) if amount_key else None,
+            "amplitude": _safe_number(row.get(amplitude_key)) if amplitude_key else None,
+            "changeRate": _safe_number(row.get(change_rate_key)) if change_rate_key else None,
+            "changeAmount": _safe_number(row.get(change_amount_key)) if change_amount_key else None,
+            "turnoverRate": _safe_number(row.get(turnover_rate_key)) if turnover_rate_key else None,
+        }
+
+        if all(candle[key] is not None for key in ("open", "high", "low", "close")):
+            open_price = float(candle["open"])
+            close_price = float(candle["close"])
+            high_price = float(candle["high"])
+            low_price = float(candle["low"])
+
+            if candle["changeAmount"] is None:
+                candle["changeAmount"] = close_price - open_price
+
+            if candle["changeRate"] is None:
+                candle["changeRate"] = ((close_price - open_price) / open_price * 100) if open_price else 0
+
+            if candle["amplitude"] is None:
+                candle["amplitude"] = ((high_price - low_price) / open_price * 100) if open_price else 0
+
+            candles.append(candle)
+
+    return candles
+
+
+def _trend_response(candles: list[dict[str, Any]]) -> dict[str, Any]:
+    if not candles:
+        raise ValueError("行情数据为空")
+
+    trend = [float(candle["close"]) for candle in candles]
+    first_price = trend[0]
+    latest_price = trend[-1]
+    change_rate = ((latest_price - first_price) / first_price * 100) if first_price else 0
+
+    return {
+        "price": latest_price,
+        "changeRate": change_rate,
+        "trend": trend,
+        "candles": candles,
+    }
+
+
 def _daily_symbol(symbol: str) -> str:
     if symbol.startswith("6"):
         return f"sh{symbol}"
@@ -135,30 +196,38 @@ def _stock_trend(symbol: str, range_label: str) -> dict[str, Any]:
             end_date=end_date.strftime("%Y%m%d"),
             adjust="qfq",
         )
-        close_column = "收盘"
+        candles = _normalize_candles(
+            hist_df.to_dict("records"),
+            {
+                "date": "日期",
+                "open": "开盘",
+                "high": "最高",
+                "low": "最低",
+                "close": "收盘",
+                "volume": "成交量",
+                "amount": "成交额",
+                "amplitude": "振幅",
+                "changeRate": "涨跌幅",
+                "changeAmount": "涨跌额",
+                "turnoverRate": "换手率",
+            },
+        )
     except Exception:
         hist_df = ak.stock_zh_a_daily(symbol=_daily_symbol(symbol))
         hist_df = hist_df[hist_df["date"] >= start_date.date()]
-        close_column = "close"
+        candles = _normalize_candles(
+            hist_df.to_dict("records"),
+            {
+                "date": "date",
+                "open": "open",
+                "high": "high",
+                "low": "low",
+                "close": "close",
+                "volume": "volume",
+            },
+        )
 
-    if hist_df.empty:
-        raise ValueError("股票历史行情为空")
-
-    close_values = [_safe_number(value) for value in hist_df[close_column].tolist()]
-    trend = [value for value in close_values if value is not None]
-
-    if not trend:
-        raise ValueError("股票收盘价为空")
-
-    first_price = trend[0]
-    latest_price = trend[-1]
-    change_rate = ((latest_price - first_price) / first_price * 100) if first_price else 0
-
-    return {
-        "price": latest_price,
-        "changeRate": change_rate,
-        "trend": trend,
-    }
+    return _trend_response(candles)
 
 
 def _fund_trend(symbol: str, range_label: str) -> dict[str, Any]:
@@ -176,15 +245,35 @@ def _fund_trend(symbol: str, range_label: str) -> dict[str, Any]:
     if not trend:
         raise ValueError("基金净值为空")
 
-    first_price = trend[0]
-    latest_price = trend[-1]
-    change_rate = ((latest_price - first_price) / first_price * 100) if first_price else 0
+    date_column = "净值日期" if "净值日期" in recent_df.columns else recent_df.columns[0]
+    candles: list[dict[str, Any]] = []
+    previous_close = trend[0]
 
-    return {
-        "price": latest_price,
-        "changeRate": change_rate,
-        "trend": trend,
-    }
+    for row, close_price in zip(recent_df.to_dict("records"), trend, strict=False):
+        open_price = previous_close
+        high_price = max(open_price, close_price)
+        low_price = min(open_price, close_price)
+        change_amount = close_price - open_price
+        change_rate = (change_amount / open_price * 100) if open_price else 0
+        amplitude = ((high_price - low_price) / open_price * 100) if open_price else 0
+        candles.append(
+            {
+                "date": str(row.get(date_column, "")),
+                "open": open_price,
+                "high": high_price,
+                "low": low_price,
+                "close": close_price,
+                "volume": None,
+                "amount": None,
+                "amplitude": amplitude,
+                "changeRate": change_rate,
+                "changeAmount": change_amount,
+                "turnoverRate": None,
+            }
+        )
+        previous_close = close_price
+
+    return _trend_response(candles)
 
 
 def security_trend(symbol: str, security_type: str, range_label: str) -> dict[str, Any]:
