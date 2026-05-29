@@ -59,6 +59,7 @@ function RootNavigator() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
         <Stack.Screen name="notes" options={{ title: '笔记' }} />
+        <Stack.Screen name="note-editor" options={{ title: '编写笔记' }} />
         <Stack.Screen name="accounting" options={{ title: '记账' }} />
         <Stack.Screen name="accounting-entry" options={{ title: '账单录入' }} />
         <Stack.Screen name="todo" options={{ title: '待办' }} />

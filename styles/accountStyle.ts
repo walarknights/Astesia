@@ -3,16 +3,10 @@ import { StyleSheet } from 'react-native';
 export const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  assetSafeArea: {
     backgroundColor: 'transparent',
   },
   screen: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
-  assetScreen: {
     backgroundColor: 'transparent',
   },
   assetGradientBackground: {

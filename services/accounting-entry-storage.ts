@@ -81,6 +81,29 @@ function createMonthlyBudgetRecord(value: number, referenceDate: Date): Accounti
   };
 }
 
+function calculateEntryAssetDelta(entry: AccountingEntryRecord | null | undefined) {
+  if (!entry) {
+    return 0;
+  }
+
+  const amount = Number(entry.amount) || 0;
+  return entry.incomeExpenseType === '收入' ? amount : -amount;
+}
+
+async function applyAccountingTotalAssetDelta(delta: number) {
+  if (delta === 0) {
+    return null;
+  }
+
+  const currentTotalAsset = await loadAccountingTotalAsset();
+
+  if (currentTotalAsset === null) {
+    return null;
+  }
+
+  return saveAccountingTotalAsset(currentTotalAsset + delta);
+}
+
 function isAccountingMonthlyBudgetRecord(value: unknown): value is AccountingMonthlyBudgetRecord {
   if (!value || typeof value !== 'object') {
     return false;
@@ -116,6 +139,7 @@ export async function saveAccountingEntry(entry: AccountingEntryRecord) {
   const nextEntries = [entry, ...currentEntries];
 
   await storage.setItem(ACCOUNTING_ENTRIES_STORAGE_KEY, JSON.stringify(nextEntries));
+  await applyAccountingTotalAssetDelta(calculateEntryAssetDelta(entry));
   return nextEntries;
 }
 
@@ -126,17 +150,25 @@ export async function loadAccountingEntryById(entryId: string) {
 
 export async function deleteAccountingEntry(entryId: string) {
   const currentEntries = await loadAccountingEntries();
+  const deletedEntry = currentEntries.find((entry) => entry.id === entryId);
   const nextEntries = currentEntries.filter((entry) => entry.id !== entryId);
 
   await storage.setItem(ACCOUNTING_ENTRIES_STORAGE_KEY, JSON.stringify(nextEntries));
+  await applyAccountingTotalAssetDelta(-calculateEntryAssetDelta(deletedEntry));
   return nextEntries;
 }
 
 export async function updateAccountingEntry(nextEntry: AccountingEntryRecord) {
   const currentEntries = await loadAccountingEntries();
+  const previousEntry = currentEntries.find((entry) => entry.id === nextEntry.id);
   const nextEntries = currentEntries.map((entry) => (entry.id === nextEntry.id ? nextEntry : entry));
 
   await storage.setItem(ACCOUNTING_ENTRIES_STORAGE_KEY, JSON.stringify(nextEntries));
+  if (previousEntry) {
+    await applyAccountingTotalAssetDelta(
+      calculateEntryAssetDelta(nextEntry) - calculateEntryAssetDelta(previousEntry)
+    );
+  }
   return nextEntries;
 }
 

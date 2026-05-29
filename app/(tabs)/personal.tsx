@@ -64,7 +64,6 @@ const HOME_LAYOUT_OPTIONS: ChoiceOption<HomeLayout>[] = [
   { label: '天气首页', value: 'weather' },
   { label: '笔记优先', value: 'notes' },
   { label: '记账优先', value: 'accounting' },
-  { label: '待办优先', value: 'todo' },
 ];
 
 const BACKGROUND_OPTIONS: ChoiceOption<PersonalBackground>[] = [
@@ -84,7 +83,7 @@ const UPDATE_ANNOUNCEMENT = [
 
 const HELP_CONTENT = [
   '使用帮助',
-  '1. 笔记用于记录灵感、备忘和长文本内容。',
+  '1. 笔记入口用于记录灵感、备忘和长文本内容，并可在页面底部切换到待办。',
   '2. 记账用于记录收入、支出和消费备注。',
   '3. 待办用于拆解计划和跟踪完成状态。',
   '4. 设置页的数据导出和本地备份可用于换机前的手动备份。',

@@ -62,7 +62,7 @@ const FEATURE_CARDS = [
   {
     href: '/notes' as const,
     title: '笔记',
-    description: '记录灵感和日常备忘',
+    description: '记录灵感，也可切换待办',
     icon: 'edit-note' as const,
     backgroundColor: '#FFF7ED',
     iconColor: '#EA580C',
@@ -74,14 +74,6 @@ const FEATURE_CARDS = [
     icon: 'account-balance-wallet' as const,
     backgroundColor: '#ECFDF5',
     iconColor: '#059669',
-  },
-  {
-    href: '/todo' as const,
-    title: '待办',
-    description: '拆解计划，跟踪事项进度',
-    icon: 'checklist' as const,
-    backgroundColor: '#EEF2FF',
-    iconColor: '#4F46E5',
   },
 ];
 // 首页

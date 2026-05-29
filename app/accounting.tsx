@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Line, Rect } from 'react-native-svg';
 import { styles } from '@/styles/accountStyle';
 
+import { BottomSwitchBar } from '@/components/BottomSwitchBar';
 import { ThemedText } from '@/components/themed-text';
 import {
   deleteAccountingEntry,
@@ -848,7 +849,9 @@ export default function AccountingScreen() {
       // [变更] 修改后: 先展示自定义操作列表，再通过自定义确认框删除并同步更新列表
       // [原因] 支持“更改/删除”双操作，并满足弹层圆角与阴影样式要求
       const nextEntries = await deleteAccountingEntry(entryPendingDelete.id);
+      const nextTotalAsset = await loadAccountingTotalAsset();
       setEntries(nextEntries);
+      setTotalAsset(nextTotalAsset);
       closeDeleteConfirmModal();
     } catch {
       Alert.alert('删除失败', '账单暂未删除成功，请稍后重试');
@@ -1045,24 +1048,20 @@ export default function AccountingScreen() {
     <>
       <Stack.Screen options={{ headerShown: false }} />
       <StatusBar style={activeTab === 'asset' ? 'light' : 'dark'} />
-      <SafeAreaView style={[styles.safeArea, activeTab === 'asset' && styles.assetSafeArea]} edges={['top', 'bottom']}>
-        {activeTab === 'asset' ? (
-          <>
-            {/*
-             * 渲染位置: 资产页安全区与内容区最底层
-             * 展示内容: 覆盖顶部系统区域在内的整屏纵向渐变背景
-             * 数据来源: LinearGradient 固定渐变色配置
-             */}
-            <LinearGradient
-              colors={['#59A8FF', '#8FC7FF', '#CFEDFA']}
-              start={{ x: 0.5, y: 0 }}
-              end={{ x: 0.5, y: 1 }}
-              pointerEvents="none"
-              style={styles.assetGradientBackground}
-            />
-          </>
-        ) : null}
-        <View style={[styles.screen, activeTab === 'asset' && styles.assetScreen]}>
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+        {/*
+         * 渲染位置: 记账页与资产页安全区和内容区最底层
+         * 展示内容: 与资产页一致的整屏纵向渐变背景
+         * 数据来源: LinearGradient 固定渐变色配置
+         */}
+        <LinearGradient
+          colors={['#59A8FF', '#8FC7FF', '#CFEDFA']}
+          start={{ x: 0.5, y: 0 }}
+          end={{ x: 0.5, y: 1 }}
+          pointerEvents="none"
+          style={styles.assetGradientBackground}
+        />
+        <View style={styles.screen}>
           <ScrollView
             showsVerticalScrollIndicator={false}
             contentContainerStyle={[
@@ -1501,33 +1500,21 @@ export default function AccountingScreen() {
             )}
           </ScrollView>
 
-          <View style={styles.bottomBar}>
-            <Pressable style={styles.bottomTab} onPress={() => setActiveTab('bill')}>
-              <MaterialIcons
-                name="receipt-long"
-                size={24}
-                color={activeTab === 'bill' ? '#3B82F6' : '#9CA3AF'}
-              />
-              <ThemedText style={[styles.bottomTabLabel, activeTab === 'bill' && styles.bottomTabLabelActive]}>
-                账单
-              </ThemedText>
-            </Pressable>
-
-            <Pressable style={styles.addButton} onPress={() => router.push('/accounting-entry')}>
-              <MaterialIcons name="add" size={34} color="#FFFFFF" />
-            </Pressable>
-
-            <Pressable style={styles.bottomTab} onPress={() => setActiveTab('asset')}>
-              <MaterialIcons
-                name="account-balance-wallet"
-                size={24}
-                color={activeTab === 'asset' ? '#3B82F6' : '#9CA3AF'}
-              />
-              <ThemedText style={[styles.bottomTabLabel, activeTab === 'asset' && styles.bottomTabLabelActive]}>
-                资产
-              </ThemedText>
-            </Pressable>
-          </View>
+          <BottomSwitchBar
+            leftTab={{
+              icon: 'receipt-long',
+              label: '账单',
+              active: activeTab === 'bill',
+              onPress: () => setActiveTab('bill'),
+            }}
+            rightTab={{
+              icon: 'account-balance-wallet',
+              label: '资产',
+              active: activeTab === 'asset',
+              onPress: () => setActiveTab('asset'),
+            }}
+            onPressAdd={() => router.push('/accounting-entry')}
+          />
         </View>
       </SafeAreaView>
 
