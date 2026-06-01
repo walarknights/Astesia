@@ -17,7 +17,7 @@ export { APP_SETTINGS_STORAGE_KEY } from '@/services/storage-keys';
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type FontSizeMode = 'small' | 'medium' | 'large';
 export type HomeLayout = 'weather' | 'notes' | 'accounting' | 'todo';
-export type PersonalBackground = 'person' | 'sunny' | 'cloudy' | 'rainy';
+export type PersonalBackground = 'person' | 'sunny' | 'cloudy' | 'rainy' | 'custom';
 
 export type AppSettings = {
   themeMode: ThemeMode;
@@ -156,5 +156,5 @@ function isHomeLayout(value: unknown): value is HomeLayout {
 }
 
 function isPersonalBackground(value: unknown): value is PersonalBackground {
-  return value === 'person' || value === 'sunny' || value === 'cloudy' || value === 'rainy';
+  return value === 'person' || value === 'sunny' || value === 'cloudy' || value === 'rainy' || value === 'custom';
 }

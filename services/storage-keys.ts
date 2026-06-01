@@ -7,6 +7,7 @@ export const ACCOUNTING_MONTHLY_BUDGET_STORAGE_KEY = 'astesia-accounting-monthly
 export const ACCOUNTING_HERO_IMAGE_STORAGE_KEY = 'astesia-accounting-hero-image';
 export const ACCOUNTING_TOTAL_ASSET_STORAGE_KEY = 'astesia-accounting-total-asset';
 export const NOTES_STORAGE_KEY = 'astesia-notes';
+export const PERSONAL_BACKGROUND_IMAGE_STORAGE_KEY = 'astesia-personal-background-image';
 
 export const KNOWN_STORAGE_KEYS = [
   APP_SETTINGS_STORAGE_KEY,
@@ -18,4 +19,5 @@ export const KNOWN_STORAGE_KEYS = [
   ACCOUNTING_HERO_IMAGE_STORAGE_KEY,
   ACCOUNTING_TOTAL_ASSET_STORAGE_KEY,
   NOTES_STORAGE_KEY,
+  PERSONAL_BACKGROUND_IMAGE_STORAGE_KEY,
 ];

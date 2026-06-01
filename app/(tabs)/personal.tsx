@@ -1,7 +1,9 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import Constants from 'expo-constants';
+import * as DocumentPicker from 'expo-document-picker';
 import { Image } from 'expo-image';
-import { useMemo, useState } from 'react';
+import * as ImagePicker from 'expo-image-picker';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Linking,
@@ -17,6 +19,10 @@ import { AstesiaLogo } from '@/components/AstesiaLogo';
 import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
 import { Fonts } from '@/constants/theme';
+import {
+  loadPersonalBackgroundImageUri,
+  persistPersonalBackgroundImage,
+} from '@/services/personal-background-image-storage';
 import { storage } from '@/services/storage';
 import { LOCAL_BACKUP_STORAGE_KEY } from '@/services/storage-keys';
 import {
@@ -41,7 +47,9 @@ type DialogState = {
   editable?: boolean;
 };
 
-const BACKGROUND_IMAGES: Record<PersonalBackground, number> = {
+type BuiltInPersonalBackground = Exclude<PersonalBackground, 'custom'>;
+
+const BACKGROUND_IMAGES: Record<BuiltInPersonalBackground, number> = {
   person: require('@/assets/images/personBack.jpg'),
   sunny: require('@/assets/images/sunny.jpg'),
   cloudy: require('@/assets/images/cloudy.jpg'),
@@ -71,6 +79,7 @@ const BACKGROUND_OPTIONS: ChoiceOption<PersonalBackground>[] = [
   { label: '晴天背景', value: 'sunny' },
   { label: '多云背景', value: 'cloudy' },
   { label: '雨天背景', value: 'rainy' },
+  { label: '自定义背景', value: 'custom' },
 ];
 
 const UPDATE_ANNOUNCEMENT = [
@@ -100,9 +109,33 @@ export default function PersonalScreen() {
   const { settings, updateSettings, resetSettings } = useAppSettings();
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [importText, setImportText] = useState('');
+  const [customBackgroundImageUri, setCustomBackgroundImageUri] = useState<string | null>(null);
+  const [isBackgroundModalVisible, setIsBackgroundModalVisible] = useState(false);
+  const [isSavingBackgroundImage, setIsSavingBackgroundImage] = useState(false);
   const version = Constants.expoConfig?.version ?? '1.0.0';
-  const backgroundImage = BACKGROUND_IMAGES[settings.personalBackground];
+  const selectedBuiltInBackground = settings.personalBackground === 'custom' ? 'person' : settings.personalBackground;
+  const backgroundImage = settings.personalBackground === 'custom' && customBackgroundImageUri
+    ? { uri: customBackgroundImageUri }
+    : BACKGROUND_IMAGES[selectedBuiltInBackground];
   const fontScale = useMemo(() => getFontScale(settings.fontSize), [settings.fontSize]);
+
+  useEffect(() => {
+    let active = true;
+
+    const syncPersonalBackgroundImage = async () => {
+      const storedUri = await loadPersonalBackgroundImageUri();
+
+      if (active) {
+        setCustomBackgroundImageUri(storedUri);
+      }
+    };
+
+    void syncPersonalBackgroundImage();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleSelect = <T extends string,>(
     title: string,
@@ -274,6 +307,85 @@ export default function PersonalScreen() {
     ]);
   };
 
+  const closeBackgroundModal = () => {
+    if (isSavingBackgroundImage) {
+      return;
+    }
+
+    setIsBackgroundModalVisible(false);
+  };
+
+  const handleSelectBuiltInBackground = (personalBackground: BuiltInPersonalBackground) => {
+    updateSettings({ personalBackground });
+    setIsBackgroundModalVisible(false);
+  };
+
+  const saveBackgroundImageFromPicker = async (asset: { uri: string; name?: string | null; mimeType?: string | null }) => {
+    try {
+      setIsSavingBackgroundImage(true);
+      const nextBackgroundImageUri = await persistPersonalBackgroundImage(asset);
+      setCustomBackgroundImageUri(nextBackgroundImageUri);
+      updateSettings({ personalBackground: 'custom' });
+      setIsBackgroundModalVisible(false);
+    } catch (error) {
+      const isUnsupportedImage = error instanceof Error && error.message === 'UNSUPPORTED_IMAGE_FORMAT';
+      Alert.alert(
+        isUnsupportedImage ? '图片格式不支持' : '保存失败',
+        isUnsupportedImage
+          ? '请选择 jpg、png、webp、gif、heic 或 heif 格式的图片'
+          : '背景图片暂未保存成功，请稍后重试'
+      );
+    } finally {
+      setIsSavingBackgroundImage(false);
+    }
+  };
+
+  const handleOpenBackgroundGallery = async () => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!permission.granted) {
+      Alert.alert('无法打开图库', '请允许访问系统图库后再选择背景图片');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      allowsEditing: false,
+      allowsMultipleSelection: false,
+      mediaTypes: ['images'],
+      quality: 1,
+    });
+
+    if (result.canceled || !result.assets[0]) {
+      return;
+    }
+
+    const [asset] = result.assets;
+    await saveBackgroundImageFromPicker({
+      uri: asset.uri,
+      name: asset.fileName,
+      mimeType: asset.mimeType,
+    });
+  };
+
+  const handleOpenBackgroundFile = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      multiple: false,
+      type: 'image/*',
+    });
+
+    if (result.canceled || !result.assets[0]) {
+      return;
+    }
+
+    const [asset] = result.assets;
+    await saveBackgroundImageFromPicker({
+      uri: asset.uri,
+      name: asset.name,
+      mimeType: asset.mimeType,
+    });
+  };
+
   const handleFeedback = async () => {
     const mailUrl = 'mailto:13062323959@163.com?subject=Astesia%20Feedback';
     const canOpen = await Linking.canOpenURL(mailUrl);
@@ -292,6 +404,11 @@ export default function PersonalScreen() {
         headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
         headerImage={
           <View style={styles.headerImage}>
+            {/*
+             * 渲染位置: 个人页顶部头图
+             * 展示内容: 内置背景或用户上传的自定义背景图片
+             * 数据来源: settings.personalBackground 与 customBackgroundImageUri
+             */}
             <Image
               source={backgroundImage}
               contentFit="cover"
@@ -343,11 +460,7 @@ export default function PersonalScreen() {
             icon="wallpaper"
             title="背景设置"
             description={`当前：${getOptionLabel(BACKGROUND_OPTIONS, settings.personalBackground)}`}
-            onPress={() =>
-              handleSelect('背景设置', settings.personalBackground, BACKGROUND_OPTIONS, (personalBackground) =>
-                updateSettings({ personalBackground })
-              )
-            }
+            onPress={() => setIsBackgroundModalVisible(true)}
           />
           <SettingButton
             icon="home"
@@ -465,6 +578,71 @@ export default function PersonalScreen() {
                 <ThemedText style={styles.primaryButtonText}>确认导入</ThemedText>
               </Pressable>
             ) : null}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        visible={isBackgroundModalVisible}
+        animationType="fade"
+        onRequestClose={closeBackgroundModal}>
+        <View style={styles.modalBackdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={closeBackgroundModal} />
+          {/*
+           * 渲染位置: 个人页背景设置弹层
+           * 展示内容: 内置背景选择，以及打开图库/打开文件上传自定义背景
+           * 数据来源: settings.personalBackground、customBackgroundImageUri、isSavingBackgroundImage
+           */}
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <ThemedText type="subtitle" style={styles.modalTitle}>背景设置</ThemedText>
+              <Pressable accessibilityRole="button" hitSlop={8} onPress={closeBackgroundModal}>
+                <MaterialIcons name="close" size={24} color="#334155" />
+              </Pressable>
+            </View>
+            <ThemedText style={styles.backgroundModalDescription}>
+              选择内置背景，或上传一张自己的图片作为个人页顶部背景。
+            </ThemedText>
+            <View style={styles.backgroundOptionGrid}>
+              {BACKGROUND_OPTIONS.filter((option): option is ChoiceOption<BuiltInPersonalBackground> => option.value !== 'custom').map((option) => (
+                <Pressable
+                  key={option.value}
+                  accessibilityRole="button"
+                  style={[
+                    styles.backgroundOptionButton,
+                    settings.personalBackground === option.value ? styles.backgroundOptionButtonActive : null,
+                  ]}
+                  onPress={() => handleSelectBuiltInBackground(option.value)}>
+                  <ThemedText
+                    style={[
+                      styles.backgroundOptionText,
+                      settings.personalBackground === option.value ? styles.backgroundOptionTextActive : null,
+                    ]}>
+                    {option.label}
+                  </ThemedText>
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.backgroundUploadActions}>
+              <Pressable style={styles.modalCancelButton} onPress={closeBackgroundModal}>
+                <ThemedText style={styles.modalCancelText}>取消</ThemedText>
+              </Pressable>
+              <View style={styles.backgroundUploadRightActions}>
+                <Pressable
+                  disabled={isSavingBackgroundImage}
+                  style={[styles.modalConfirmButton, isSavingBackgroundImage && styles.modalButtonDisabled]}
+                  onPress={() => void handleOpenBackgroundGallery()}>
+                  <ThemedText style={styles.modalConfirmText}>打开图库</ThemedText>
+                </Pressable>
+                <Pressable
+                  disabled={isSavingBackgroundImage}
+                  style={[styles.modalConfirmButton, isSavingBackgroundImage && styles.modalButtonDisabled]}
+                  onPress={() => void handleOpenBackgroundFile()}>
+                  <ThemedText style={styles.modalConfirmText}>打开文件</ThemedText>
+                </Pressable>
+              </View>
+            </View>
           </View>
         </View>
       </Modal>
@@ -750,6 +928,77 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
+    fontWeight: '700',
+  },
+  backgroundModalDescription: {
+    color: '#475569',
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  backgroundOptionGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  backgroundOptionButton: {
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    backgroundColor: '#F8FAFC',
+  },
+  backgroundOptionButtonActive: {
+    borderColor: '#2563EB',
+    backgroundColor: '#DBEAFE',
+  },
+  backgroundOptionText: {
+    color: '#475569',
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  backgroundOptionTextActive: {
+    color: '#1D4ED8',
+  },
+  backgroundUploadActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginTop: 8,
+  },
+  backgroundUploadRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  modalCancelButton: {
+    borderRadius: 999,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    backgroundColor: '#F5F5F5',
+  },
+  modalCancelText: {
+    color: '#525252',
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  modalConfirmButton: {
+    borderRadius: 999,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: '#3B82F6',
+  },
+  modalButtonDisabled: {
+    opacity: 0.6,
+  },
+  modalConfirmText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    lineHeight: 20,
     fontWeight: '700',
   },
 });
