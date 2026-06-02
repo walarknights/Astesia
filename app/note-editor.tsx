@@ -1,10 +1,9 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { type ComponentProps, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -17,18 +16,16 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import TiptapRichTextEditor from '@/components/TiptapRichTextEditor';
 import { ThemedText } from '@/components/themed-text';
 import {
   createEmptyNote,
-  createImageBlock,
-  createTextBlock,
+  getNoteImageCount,
+  getNotePlainText,
   loadNoteById,
   saveNote,
-  type NoteBlock,
   type NoteRecord,
 } from '@/services/notes-storage';
-
-type MaterialIconName = ComponentProps<typeof MaterialIcons>['name'];
 
 const EDITOR_PLACEHOLDER = '开始写下今天的想法...';
 
@@ -37,12 +34,13 @@ export default function NoteEditorScreen() {
   const params = useLocalSearchParams<{ noteId?: string }>();
   const editingNoteId = typeof params.noteId === 'string' ? params.noteId : '';
   const [note, setNote] = useState<NoteRecord>(() => createEmptyNote());
-  const [focusedBlockId, setFocusedBlockId] = useState('');
+  const [insertedImageUri, setInsertedImageUri] = useState('');
+  const [insertedImageToken, setInsertedImageToken] = useState('');
   const [isLoading, setIsLoading] = useState(Boolean(editingNoteId));
   const [isSaving, setIsSaving] = useState(false);
 
-  const titleValue = note.title;
   const updatedAtLabel = useMemo(() => formatDateTime(note.updatedAt), [note.updatedAt]);
+  const imageCount = useMemo(() => getNoteImageCount(note), [note]);
 
   useEffect(() => {
     if (!editingNoteId) {
@@ -60,7 +58,6 @@ export default function NoteEditorScreen() {
 
         if (active && storedNote) {
           setNote(storedNote);
-          setFocusedBlockId(storedNote.blocks[0]?.id ?? '');
         }
       } finally {
         if (active) {
@@ -76,23 +73,12 @@ export default function NoteEditorScreen() {
     };
   }, [editingNoteId]);
 
-  const handleChangeTextBlock = (blockId: string, content: string) => {
+  const handleChangeHtml = useCallback(async (contentHtml: string) => {
     setNote((currentNote) => ({
       ...currentNote,
-      blocks: currentNote.blocks.map((block) => (
-        block.id === blockId && block.type === 'text'
-          ? { ...block, content }
-          : block
-      )),
+      contentHtml,
     }));
-  };
-
-  const handleAddTextBlock = () => {
-    setNote((currentNote) => ({
-      ...currentNote,
-      blocks: [...currentNote.blocks, createTextBlock()],
-    }));
-  };
+  }, []);
 
   const handlePickImage = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -119,63 +105,15 @@ export default function NoteEditorScreen() {
       return;
     }
 
-    setNote((currentNote) => {
-      const imageBlock = createImageBlock(imageUri);
-      const trailingTextBlock = createTextBlock();
-      const insertIndex = Math.max(
-        currentNote.blocks.findIndex((block) => block.id === focusedBlockId),
-        currentNote.blocks.length - 1
-      );
-      const nextBlocks = [...currentNote.blocks];
-
-      nextBlocks.splice(insertIndex + 1, 0, imageBlock, trailingTextBlock);
-
-      return {
-        ...currentNote,
-        blocks: nextBlocks,
-      };
-    });
-  };
-
-  const handleRemoveBlock = (blockId: string) => {
-    setNote((currentNote) => {
-      const nextBlocks = currentNote.blocks.filter((block) => block.id !== blockId);
-
-      return {
-        ...currentNote,
-        blocks: nextBlocks.length > 0 ? nextBlocks : [createTextBlock()],
-      };
-    });
-  };
-
-  const handleMoveBlock = (blockId: string, direction: -1 | 1) => {
-    setNote((currentNote) => {
-      const currentIndex = currentNote.blocks.findIndex((block) => block.id === blockId);
-      const nextIndex = currentIndex + direction;
-
-      if (currentIndex < 0 || nextIndex < 0 || nextIndex >= currentNote.blocks.length) {
-        return currentNote;
-      }
-
-      const nextBlocks = [...currentNote.blocks];
-      const [movingBlock] = nextBlocks.splice(currentIndex, 1);
-
-      nextBlocks.splice(nextIndex, 0, movingBlock);
-
-      return {
-        ...currentNote,
-        blocks: nextBlocks,
-      };
-    });
+    setInsertedImageUri(imageUri);
+    setInsertedImageToken(`${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   };
 
   const handleSave = async () => {
-    const hasImageBlock = note.blocks.some((block) => block.type === 'image');
-    const hasTextContent = note.blocks.some((block) => (
-      block.type === 'text' && block.content.trim().length > 0
-    ));
+    const hasImageContent = getNoteImageCount(note) > 0;
+    const hasTextContent = getNotePlainText(note).length > 0;
 
-    if (!note.title.trim() && !hasTextContent && !hasImageBlock) {
+    if (!note.title.trim() && !hasTextContent && !hasImageContent) {
       Alert.alert('还没有内容', '请输入标题、正文或插入图片后再保存。');
       return;
     }
@@ -189,7 +127,7 @@ export default function NoteEditorScreen() {
       });
 
       setNote(savedNote);
-      Alert.alert('保存成功', '笔记已保存到本地。', [
+      Alert.alert('保存成功', '富文本笔记已保存到本地。', [
         {
           text: '继续编辑',
           style: 'cancel',
@@ -245,7 +183,7 @@ export default function NoteEditorScreen() {
                * 数据来源: note.title 本地编辑状态
                */}
               <TextInput
-                value={titleValue}
+                value={note.title}
                 onChangeText={(nextTitle) => setNote((currentNote) => ({ ...currentNote, title: nextTitle }))}
                 placeholder="笔记标题"
                 placeholderTextColor="#A78BFA"
@@ -253,167 +191,49 @@ export default function NoteEditorScreen() {
               />
 
               <View style={styles.editorCard}>
-                <View style={styles.editorToolbar}>
-                  <ToolbarButton icon="text-fields" label="文本" onPress={handleAddTextBlock} />
-                  <ToolbarButton icon="image" label="图片" onPress={() => void handlePickImage()} />
+                <View style={styles.editorHeaderRow}>
+                  <View>
+                    <ThemedText style={styles.editorTitle}>富文本编辑器</ThemedText>
+                    <ThemedText style={styles.editorMeta}>
+                      支持加粗、下划线、标题、列表、引用和图片
+                    </ThemedText>
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => void handlePickImage()}
+                    style={styles.insertImageButton}>
+                    <MaterialIcons name="image" size={18} color="#6D28D9" />
+                    <ThemedText style={styles.insertImageText}>
+                      {imageCount > 0 ? `插图 ${imageCount}` : '插图'}
+                    </ThemedText>
+                  </Pressable>
                 </View>
 
                 {/*
                  * 渲染位置: 笔记编辑页正文区域
-                 * 展示内容: 文本块和图片块组成的笔记内容
-                 * 数据来源: note.blocks 本地编辑状态
+                 * 展示内容: Expo DOM Components 承载的 Tiptap 富文本编辑器
+                 * 数据来源: note.contentHtml、insertedImageUri 和 Tiptap 内部编辑状态
                  */}
-                {note.blocks.map((block, index) => (
-                  <EditorBlock
-                    key={block.id}
-                    block={block}
-                    index={index}
-                    isFirst={index === 0}
-                    isLast={index === note.blocks.length - 1}
-                    onFocus={() => setFocusedBlockId(block.id)}
-                    onChangeText={handleChangeTextBlock}
-                    onMove={handleMoveBlock}
-                    onRemove={handleRemoveBlock}
+                <View style={styles.richEditorFrame}>
+                  <TiptapRichTextEditor
+                    initialHtml={note.contentHtml}
+                    insertedImageUri={insertedImageUri}
+                    insertedImageToken={insertedImageToken}
+                    placeholder={EDITOR_PLACEHOLDER}
+                    onChangeHtml={handleChangeHtml}
+                    dom={{
+                      matchContents: true,
+                      scrollEnabled: false,
+                      style: styles.richEditorDom,
+                    }}
                   />
-                ))}
+                </View>
               </View>
             </ScrollView>
           </KeyboardAvoidingView>
         </SafeAreaView>
       </LinearGradient>
     </>
-  );
-}
-
-function EditorBlock({
-  block,
-  index,
-  isFirst,
-  isLast,
-  onFocus,
-  onChangeText,
-  onMove,
-  onRemove,
-}: {
-  block: NoteBlock;
-  index: number;
-  isFirst: boolean;
-  isLast: boolean;
-  onFocus: () => void;
-  onChangeText: (blockId: string, content: string) => void;
-  onMove: (blockId: string, direction: -1 | 1) => void;
-  onRemove: (blockId: string) => void;
-}) {
-  if (block.type === 'image') {
-    return (
-      <View style={styles.imageBlock}>
-        <Image source={{ uri: block.uri }} contentFit="cover" style={styles.noteImage} />
-        <BlockActions
-          blockId={block.id}
-          isFirst={isFirst}
-          isLast={isLast}
-          onMove={onMove}
-          onRemove={onRemove}
-        />
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.textBlock}>
-      <View style={styles.blockIndexBadge}>
-        <ThemedText style={styles.blockIndexText}>{index + 1}</ThemedText>
-      </View>
-      <TextInput
-        multiline
-        textAlignVertical="top"
-        value={block.content}
-        onFocus={onFocus}
-        onChangeText={(content) => onChangeText(block.id, content)}
-        placeholder={EDITOR_PLACEHOLDER}
-        placeholderTextColor="#CBD5E1"
-        style={styles.bodyInput}
-      />
-      <BlockActions
-        blockId={block.id}
-        isFirst={isFirst}
-        isLast={isLast}
-        onMove={onMove}
-        onRemove={onRemove}
-      />
-    </View>
-  );
-}
-
-function BlockActions({
-  blockId,
-  isFirst,
-  isLast,
-  onMove,
-  onRemove,
-}: {
-  blockId: string;
-  isFirst: boolean;
-  isLast: boolean;
-  onMove: (blockId: string, direction: -1 | 1) => void;
-  onRemove: (blockId: string) => void;
-}) {
-  return (
-    <View style={styles.blockActions}>
-      <IconAction
-        icon="keyboard-arrow-up"
-        disabled={isFirst}
-        onPress={() => onMove(blockId, -1)}
-      />
-      <IconAction
-        icon="keyboard-arrow-down"
-        disabled={isLast}
-        onPress={() => onMove(blockId, 1)}
-      />
-      <IconAction icon="delete-outline" danger onPress={() => onRemove(blockId)} />
-    </View>
-  );
-}
-
-function ToolbarButton({
-  icon,
-  label,
-  onPress,
-}: {
-  icon: MaterialIconName;
-  label: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable accessibilityRole="button" style={styles.toolbarButton} onPress={onPress}>
-      <MaterialIcons name={icon} size={18} color="#6D28D9" />
-      <ThemedText style={styles.toolbarButtonText}>{label}</ThemedText>
-    </Pressable>
-  );
-}
-
-function IconAction({
-  icon,
-  danger,
-  disabled,
-  onPress,
-}: {
-  icon: MaterialIconName;
-  danger?: boolean;
-  disabled?: boolean;
-  onPress: () => void;
-}) {
-  const color = disabled ? '#CBD5E1' : danger ? '#DC2626' : '#64748B';
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      disabled={disabled}
-      hitSlop={8}
-      onPress={onPress}
-      style={styles.iconAction}>
-      <MaterialIcons name={icon} size={20} color={color} />
-    </Pressable>
   );
 }
 
@@ -500,11 +320,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 16,
     backgroundColor: 'rgba(255,255,255,0.82)',
-    color: '#000000ff',
+    color: '#111827',
     fontSize: 28,
-    lineHeight: 50  ,
+    lineHeight: 34,
     fontWeight: '700',
-    shadowColor: '#ffffffff',
+    shadowColor: '#3B0764',
     shadowOpacity: 0.06,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 8 },
@@ -522,13 +342,25 @@ const styles = StyleSheet.create({
     elevation: 3,
     gap: 14,
   },
-  editorToolbar: {
+  editorHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingBottom: 4,
+    justifyContent: 'space-between',
+    gap: 12,
   },
-  toolbarButton: {
+  editorTitle: {
+    color: '#111827',
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '700',
+  },
+  editorMeta: {
+    marginTop: 3,
+    color: '#64748B',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  insertImageButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -537,62 +369,22 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     backgroundColor: '#F3E8FF',
   },
-  toolbarButtonText: {
+  insertImageText: {
     color: '#6D28D9',
     fontSize: 14,
     lineHeight: 18,
     fontWeight: '700',
   },
-  textBlock: {
-    borderRadius: 22,
-    padding: 12,
-    backgroundColor: '#F8FAFC',
-    gap: 10,
-  },
-  blockIndexBadge: {
-    alignSelf: 'flex-start',
-    minWidth: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#EDE9FE',
-  },
-  blockIndexText: {
-    color: '#6D28D9',
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '700',
-  },
-  bodyInput: {
-    minHeight: 142,
-    color: '#0F172A',
-    fontSize: 18,
-    lineHeight: 28,
-  },
-  imageBlock: {
+  richEditorFrame: {
     overflow: 'hidden',
+    minHeight: 560,
+    borderWidth: 1,
+    borderColor: '#E9D5FF',
     borderRadius: 24,
-    backgroundColor: '#F8FAFC',
-  },
-  noteImage: {
-    width: '100%',
-    height: 220,
-    backgroundColor: '#E2E8F0',
-  },
-  blockActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  iconAction: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
     backgroundColor: '#FFFFFF',
+  },
+  richEditorDom: {
+    minHeight: 560,
+    backgroundColor: 'transparent',
   },
 });

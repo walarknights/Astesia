@@ -186,7 +186,7 @@ export default function HomeScreen() {
       <ParallaxScrollView
         headerBackgroundColor={{ light: '#0c82eaff', dark: '#0F172A' }}
         headerImage={
-          <View style={[styles.weatherHero, { marginTop: 2 }]}>
+          <View style={styles.weatherHero}>
             <Image
               source={weatherBackground}
               contentFit="cover"

@@ -9,7 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomSwitchBar } from '@/components/BottomSwitchBar';
 import { ThemedText } from '@/components/themed-text';
-import { getNotePlainText, loadNotes, type NoteRecord } from '@/services/notes-storage';
+import { getNoteImageCount, getNotePlainText, loadNotes, type NoteRecord } from '@/services/notes-storage';
 
 type NotesTab = 'notes' | 'todo';
 
@@ -191,7 +191,7 @@ function NotePreviewCard({
   onPress: () => void;
 }) {
   const previewContent = getNotePreviewContent(getNotePlainText(note) || '图片笔记');
-  const imageCount = note.blocks.filter((block) => block.type === 'image').length;
+  const imageCount = getNoteImageCount(note);
 
   return (
     <Pressable accessibilityRole="button" style={[styles.noteCard, style]} onPress={onPress}>

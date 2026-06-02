@@ -19,10 +19,13 @@ export type NoteBlock = NoteTextBlock | NoteImageBlock;
 export type NoteRecord = {
   id: string;
   title: string;
+  contentHtml: string;
   blocks: NoteBlock[];
   createdAt: string;
   updatedAt: string;
 };
+
+const EMPTY_NOTE_HTML = '<p></p>';
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -51,10 +54,58 @@ export function createEmptyNote(): NoteRecord {
   return {
     id: createId('note'),
     title: '',
+    contentHtml: EMPTY_NOTE_HTML,
     blocks: [createTextBlock()],
     createdAt: now,
     updatedAt: now,
   };
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function getHtmlFromBlocks(blocks: NoteBlock[]) {
+  const html = blocks
+    .map((block) => {
+      if (block.type === 'image') {
+        return `<p><img src="${escapeHtml(block.uri)}" alt="${escapeHtml(block.alt)}" /></p>`;
+      }
+
+      const normalizedLines = block.content
+        .split(/\n+/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      return normalizedLines.map((line) => `<p>${escapeHtml(line)}</p>`).join('');
+    })
+    .join('');
+
+  return html || EMPTY_NOTE_HTML;
+}
+
+function getPlainTextFromHtml(html: string) {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<img\b[^>]*alt=["']?([^"'>]*)["']?[^>]*>/gi, ' $1 ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|li|blockquote)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s+/g, '\n')
+    .trim();
 }
 
 function isNoteBlock(value: unknown): value is NoteBlock {
@@ -89,11 +140,16 @@ function normalizeNoteRecord(value: unknown): NoteRecord | null {
   }
 
   const blocks = record.blocks.filter(isNoteBlock);
+  const normalizedBlocks = blocks.length > 0 ? blocks : [createTextBlock()];
+  const contentHtml = typeof record.contentHtml === 'string' && record.contentHtml.trim()
+    ? record.contentHtml
+    : getHtmlFromBlocks(normalizedBlocks);
 
   return {
     id: record.id,
     title: record.title,
-    blocks: blocks.length > 0 ? blocks : [createTextBlock()],
+    contentHtml,
+    blocks: normalizedBlocks,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };
@@ -135,6 +191,7 @@ export async function saveNote(note: NoteRecord) {
   const savedNote: NoteRecord = {
     ...note,
     title: note.title.trim(),
+    contentHtml: note.contentHtml.trim() || EMPTY_NOTE_HTML,
     updatedAt: new Date().toISOString(),
   };
   const nextNotes = [savedNote, ...notes.filter((item) => item.id !== note.id)];
@@ -145,6 +202,10 @@ export async function saveNote(note: NoteRecord) {
 }
 
 export function getNotePlainText(note: NoteRecord) {
+  if (note.contentHtml.trim()) {
+    return getPlainTextFromHtml(note.contentHtml);
+  }
+
   return note.blocks
     .filter((block): block is NoteTextBlock => block.type === 'text')
     .map((block) => block.content.trim())
@@ -152,3 +213,9 @@ export function getNotePlainText(note: NoteRecord) {
     .join('\n');
 }
 
+export function getNoteImageCount(note: NoteRecord) {
+  const htmlImageCount = (note.contentHtml.match(/<img\b/gi) ?? []).length;
+  const blockImageCount = note.blocks.filter((block) => block.type === 'image').length;
+
+  return Math.max(htmlImageCount, blockImageCount);
+}
