@@ -215,7 +215,13 @@ export function getNotePlainText(note: NoteRecord) {
 
 export function getNoteImageCount(note: NoteRecord) {
   const htmlImageCount = (note.contentHtml.match(/<img\b/gi) ?? []).length;
-  const blockImageCount = note.blocks.filter((block) => block.type === 'image').length;
 
-  return Math.max(htmlImageCount, blockImageCount);
+  if (note.contentHtml.trim()) {
+    return htmlImageCount;
+  }
+
+  // [变更] 修改前: 富文本图片数和旧版 block 图片数取最大值
+  // [变更] 修改后: 仅在没有富文本 HTML 时才回退统计旧版 block
+  // [原因] 避免用户在 Tiptap 中删除图片后，被历史 blocks 残留误计为“图片1”
+  return note.blocks.filter((block) => block.type === 'image').length;
 }

@@ -1,4 +1,5 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
+import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
@@ -28,6 +29,19 @@ import {
 } from '@/services/notes-storage';
 
 const EDITOR_PLACEHOLDER = '开始写下今天的想法...';
+const RICH_EDITOR_DOM_STYLE = {
+  minHeight: 560,
+  backgroundColor: 'transparent',
+} as const;
+const IMAGE_MIME_TYPE_BY_EXTENSION: Record<string, string> = {
+  gif: 'image/gif',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+};
 
 export default function NoteEditorScreen() {
   const router = useRouter();
@@ -57,7 +71,10 @@ export default function NoteEditorScreen() {
         const storedNote = await loadNoteById(editingNoteId);
 
         if (active && storedNote) {
-          setNote(storedNote);
+          setNote({
+            ...storedNote,
+            contentHtml: await normalizeEditorImageSources(storedNote.contentHtml),
+          });
         }
       } finally {
         if (active) {
@@ -98,15 +115,26 @@ export default function NoteEditorScreen() {
       return;
     }
 
-    const imageUri = result.assets[0]?.uri;
+    const imageAsset = result.assets[0];
+    const imageUri = imageAsset?.uri;
 
     if (!imageUri) {
       Alert.alert('插入失败', '未读取到图片地址，请重新选择。');
       return;
     }
 
-    setInsertedImageUri(imageUri);
-    setInsertedImageToken(`${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    try {
+      const editorImageSource = await getEditorImageSource({
+        uri: imageUri,
+        fileName: imageAsset.fileName,
+        mimeType: imageAsset.mimeType,
+      });
+
+      setInsertedImageUri(editorImageSource);
+      setInsertedImageToken(`${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    } catch {
+      Alert.alert('插入失败', '图片暂时无法转换为编辑器可展示的格式，请换一张图片重试。');
+    }
   };
 
   const handleSave = async () => {
@@ -224,7 +252,7 @@ export default function NoteEditorScreen() {
                     dom={{
                       matchContents: true,
                       scrollEnabled: false,
-                      style: styles.richEditorDom,
+                      style: RICH_EDITOR_DOM_STYLE,
                     }}
                   />
                 </View>
@@ -248,6 +276,76 @@ function formatDateTime(value: string) {
     .getMinutes()
     .toString()
     .padStart(2, '0')}`;
+}
+
+function getFileExtension(value?: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const sanitizedValue = value.split('?')[0].split('#')[0];
+  const extensionMatch = /\.([a-zA-Z0-9]+)$/.exec(sanitizedValue);
+
+  return extensionMatch?.[1]?.toLowerCase() ?? null;
+}
+
+function getImageMimeType(uri: string, fileName?: string | null, mimeType?: string | null) {
+  if (mimeType?.startsWith('image/')) {
+    return mimeType;
+  }
+
+  const extension = getFileExtension(fileName) ?? getFileExtension(uri);
+
+  return extension ? IMAGE_MIME_TYPE_BY_EXTENSION[extension] ?? 'image/jpeg' : 'image/jpeg';
+}
+
+async function getEditorImageSource({
+  uri,
+  fileName,
+  mimeType,
+}: {
+  uri: string;
+  fileName?: string | null;
+  mimeType?: string | null;
+}) {
+  if (uri.startsWith('data:') || uri.startsWith('http://') || uri.startsWith('https://')) {
+    return uri;
+  }
+
+  const base64Image = await new File(uri).base64();
+
+  return `data:${getImageMimeType(uri, fileName, mimeType)};base64,${base64Image}`;
+}
+
+async function normalizeEditorImageSources(contentHtml: string) {
+  const imageSourcePattern = /<img\b([^>]*?)\bsrc=["']([^"']+)["']([^>]*)>/gi;
+  const imageMatches = [...contentHtml.matchAll(imageSourcePattern)];
+
+  if (imageMatches.length === 0) {
+    return contentHtml;
+  }
+
+  let normalizedHtml = contentHtml;
+
+  for (const match of imageMatches) {
+    const [fullMatch, beforeSource, sourceUri, afterSource] = match;
+
+    if (!sourceUri.startsWith('file://')) {
+      continue;
+    }
+
+    try {
+      const nextSourceUri = await getEditorImageSource({ uri: sourceUri });
+      normalizedHtml = normalizedHtml.replace(
+        fullMatch,
+        `<img${beforeSource}src="${nextSourceUri}"${afterSource}>`
+      );
+    } catch {
+      // 旧图片 URI 转换失败时保留原 HTML，避免打开笔记时丢失内容结构。
+    }
+  }
+
+  return normalizedHtml;
 }
 
 const styles = StyleSheet.create({
@@ -324,7 +422,7 @@ const styles = StyleSheet.create({
     fontSize: 28,
     lineHeight: 34,
     fontWeight: '700',
-    shadowColor: '#3B0764',
+    shadowColor: '#FFFFFF',
     shadowOpacity: 0.06,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 8 },
@@ -382,9 +480,5 @@ const styles = StyleSheet.create({
     borderColor: '#E9D5FF',
     borderRadius: 24,
     backgroundColor: '#FFFFFF',
-  },
-  richEditorDom: {
-    minHeight: 560,
-    backgroundColor: 'transparent',
   },
 });

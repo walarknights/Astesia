@@ -9,6 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomSwitchBar } from '@/components/BottomSwitchBar';
 import { ThemedText } from '@/components/themed-text';
+import { TodoPanel as TodoListPanel } from '@/app/todo';
 import { getNoteImageCount, getNotePlainText, loadNotes, type NoteRecord } from '@/services/notes-storage';
 
 type NotesTab = 'notes' | 'todo';
@@ -32,6 +33,7 @@ export default function NotesScreen() {
   const [activeTab, setActiveTab] = useState<NotesTab>('notes');
   const [notes, setNotes] = useState<NoteRecord[]>([]);
   const [isLoadingNotes, setIsLoadingNotes] = useState(true);
+  const [todoCreateRequestKey, setTodoCreateRequestKey] = useState(0);
 
   useFocusEffect(
     useCallback(() => {
@@ -67,7 +69,7 @@ export default function NotesScreen() {
       return;
     }
 
-    router.push('/todo');
+    setTodoCreateRequestKey((value) => value + 1);
   };
 
   return (
@@ -100,7 +102,7 @@ export default function NotesScreen() {
                 onPressCreate={() => router.push('/note-editor')}
               />
             ) : (
-              <TodoPanel />
+              <TodoPanel createRequestKey={todoCreateRequestKey} />
             )}
           </ScrollView>
           <View style={{marginBottom: 12}} >
@@ -211,21 +213,15 @@ function NotePreviewCard({
   );
 }
 
-function TodoPanel() {
+function TodoPanel({ createRequestKey }: { createRequestKey: number }) {
   return (
     <View style={styles.todoPanel}>
       {/*
        * 渲染位置: 合并入口的待办切换页
-       * 展示内容: 待办功能占位说明，笔记页优先实现
-       * 数据来源: activeTab 切换状态
+       * 展示内容: 可编辑待办列表、空状态、已完成列表和底部弹层
+       * 数据来源: TodoListPanel 内部读取的本地待办记录
        */}
-      <View style={styles.todoEmptyCard}>
-        <MaterialIcons name="checklist" size={40} color="#94A3B8" />
-        <ThemedText style={styles.todoTitle}>待办</ThemedText>
-        <ThemedText style={styles.todoDescription}>
-          待办入口已合并到笔记页，任务清单能力将在后续补充。
-        </ThemedText>
-      </View>
+      <TodoListPanel embedded createRequestKey={createRequestKey} />
     </View>
   );
 }
