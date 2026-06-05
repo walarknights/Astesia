@@ -1,17 +1,23 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import * as Notifications from 'expo-notifications';
 import { Stack } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   KeyboardAvoidingView,
+  LayoutAnimation,
   Modal,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   TextInput,
+  UIManager,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -40,8 +46,30 @@ const REPEAT_OPTIONS: { label: string; value: TodoRepeat }[] = [
   { label: '每周', value: 'weekly' },
 ];
 const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六'] as const;
-const MINUTE_OPTIONS = Array.from({ length: 12 }, (_, index) => index * 5);
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, index) => index);
+const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, index) => index);
+const TIME_PICKER_ITEM_HEIGHT = 44;
+const TIME_PICKER_VISIBLE_ROWS = 5;
+const TODO_STRIKE_ANIMATION_MS = 520;
+const TODO_LAYOUT_ANIMATION_MS = 620;
+const TODO_CRUSH_ANIMATION_MS = 760;
+// [变更] 修改前: 空状态卡片在 360ms 内完成弹出
+// [变更] 修改后: 延长到 680ms，让缩放和上移动画更从容
+// [原因] 用户要求空状态模块弹出时间更长，降低闪现感
+const EMPTY_CARD_POP_ANIMATION_MS = 680;
+const TODO_CRUSH_SHARDS = [
+  { key: 'top-left', left: '8%', top: '12%', width: 58, height: 24, translateX: -46, translateY: -38, rotate: '-24deg' },
+  { key: 'top-mid', left: '32%', top: '8%', width: 72, height: 22, translateX: 4, translateY: -52, rotate: '14deg' },
+  { key: 'top-right', left: '66%', top: '14%', width: 58, height: 24, translateX: 48, translateY: -34, rotate: '28deg' },
+  { key: 'mid-left', left: '14%', top: '42%', width: 62, height: 26, translateX: -58, translateY: 6, rotate: '-38deg' },
+  { key: 'mid-right', left: '58%', top: '42%', width: 74, height: 26, translateX: 62, translateY: 12, rotate: '36deg' },
+  { key: 'bottom-left', left: '24%', top: '68%', width: 68, height: 24, translateX: -34, translateY: 52, rotate: '22deg' },
+  { key: 'bottom-right', left: '62%', top: '70%', width: 58, height: 24, translateX: 42, translateY: 48, rotate: '-18deg' },
+] as const;
+
+if (Platform.OS === 'android') {
+  UIManager.setLayoutAnimationEnabledExperimental?.(true);
+}
 
 type TodoPanelProps = {
   createRequestKey?: number;
@@ -70,11 +98,14 @@ export function TodoPanel({ createRequestKey = 0, embedded = false }: TodoPanelP
   const [todos, setTodos] = useState<TodoRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [draftTodo, setDraftTodo] = useState<TodoRecord | null>(null);
+  const [activeActionTodo, setActiveActionTodo] = useState<TodoRecord | null>(null);
   const [isEditorVisible, setIsEditorVisible] = useState(false);
   const [isReminderVisible, setIsReminderVisible] = useState(false);
   const [reminderDateInput, setReminderDateInput] = useState(getDefaultDateInput());
   const [reminderTimeInput, setReminderTimeInput] = useState(getDefaultTimeInput());
   const [reminderRepeat, setReminderRepeat] = useState<TodoRepeat>('none');
+  const [pendingCompletionTodoId, setPendingCompletionTodoId] = useState<string | null>(null);
+  const [pendingDeleteTodoId, setPendingDeleteTodoId] = useState<string | null>(null);
 
   const activeTodos = useMemo(
     () => todos.filter((todo) => !todo.completedAt),
@@ -131,6 +162,14 @@ export function TodoPanel({ createRequestKey = 0, embedded = false }: TodoPanelP
   const closeEditor = useCallback(() => {
     setIsEditorVisible(false);
     setDraftTodo(null);
+  }, []);
+
+  const closeTodoActions = useCallback(() => {
+    setActiveActionTodo(null);
+  }, []);
+
+  const openTodoActions = useCallback((todo: TodoRecord) => {
+    setActiveActionTodo(todo);
   }, []);
 
   const openReminderSheet = useCallback(() => {
@@ -215,8 +254,24 @@ export function TodoPanel({ createRequestKey = 0, embedded = false }: TodoPanelP
   }, [closeEditor, draftTodo, persistTodos, todos]);
 
   const handleToggleComplete = useCallback(async (todo: TodoRecord) => {
+    if (pendingCompletionTodoId || pendingDeleteTodoId) {
+      return;
+    }
+
     const isCompleting = !todo.completedAt;
-    await cancelNotification(todo.notificationId);
+
+    if (isCompleting) {
+      setPendingCompletionTodoId(todo.id);
+    }
+
+    if (isCompleting) {
+      await Promise.all([
+        cancelNotification(todo.notificationId),
+        wait(TODO_STRIKE_ANIMATION_MS),
+      ]);
+    } else {
+      await cancelNotification(todo.notificationId);
+    }
 
     const updatedTodo: TodoRecord = {
       ...todo,
@@ -226,8 +281,53 @@ export function TodoPanel({ createRequestKey = 0, embedded = false }: TodoPanelP
     };
     const nextTodos = todos.map((item) => item.id === todo.id ? updatedTodo : item);
 
+    configureNextTodoLayout();
     await persistTodos(nextTodos);
-  }, [persistTodos, todos]);
+    setPendingCompletionTodoId(null);
+  }, [pendingCompletionTodoId, pendingDeleteTodoId, persistTodos, todos]);
+
+  const handleDeleteTodo = useCallback(async (todo: TodoRecord) => {
+    if (pendingDeleteTodoId) {
+      return;
+    }
+
+    setPendingDeleteTodoId(todo.id);
+    await Promise.all([
+      cancelNotification(todo.notificationId),
+      wait(TODO_CRUSH_ANIMATION_MS),
+    ]);
+    const nextTodos = todos.filter((item) => item.id !== todo.id);
+
+    configureNextTodoLayout();
+    await persistTodos(nextTodos);
+    setPendingDeleteTodoId(null);
+  }, [pendingDeleteTodoId, persistTodos, todos]);
+
+  const handleEditTodoFromActions = useCallback((todo: TodoRecord) => {
+    closeTodoActions();
+    openEditor(todo);
+  }, [closeTodoActions, openEditor]);
+
+  const handleDeleteTodoFromActions = useCallback((todo: TodoRecord) => {
+    closeTodoActions();
+    Alert.alert(
+      '删除待办',
+      `确定删除“${todo.title.trim() || '这条待办'}”吗？`,
+      [
+        {
+          text: '取消',
+          style: 'cancel',
+        },
+        {
+          text: '删除',
+          style: 'destructive',
+          onPress: () => {
+            void handleDeleteTodo(todo);
+          },
+        },
+      ]
+    );
+  }, [closeTodoActions, handleDeleteTodo]);
 
   return (
     <>
@@ -260,24 +360,19 @@ export function TodoPanel({ createRequestKey = 0, embedded = false }: TodoPanelP
              * 数据来源: loadTodos() 读取的本地待办记录
              */}
             {activeTodos.length === 0 ? (
-              <View style={styles.emptyCard}>
-                <MaterialIcons name="task-alt" size={48} color="#60A5FA" />
-                <ThemedText style={styles.emptyTitle}>还没有待办</ThemedText>
-                <ThemedText style={styles.emptyDescription}>
-                  点击底部加号创建事项，可设置准时、每天或每周提醒。
-                </ThemedText>
-                <Pressable style={styles.primaryButton} onPress={() => openEditor()}>
-                  <ThemedText style={styles.primaryButtonText}>新建待办</ThemedText>
-                </Pressable>
-              </View>
+              <EmptyTodoCard onCreate={() => openEditor()} />
             ) : (
               <View style={styles.section}>
                 <ThemedText style={styles.sectionTitle}>未完成</ThemedText>
                 {activeTodos.map((todo) => (
                   <TodoItem
                     key={todo.id}
+                    animateCompletion={pendingCompletionTodoId === todo.id}
+                    animateDelete={pendingDeleteTodoId === todo.id}
                     todo={todo}
+                    visualCompleted={pendingCompletionTodoId === todo.id}
                     onLongPress={() => openEditor(todo)}
+                    onOpenActions={() => openTodoActions(todo)}
                     onToggleComplete={() => void handleToggleComplete(todo)}
                   />
                 ))}
@@ -290,8 +385,10 @@ export function TodoPanel({ createRequestKey = 0, embedded = false }: TodoPanelP
                 {completedTodos.map((todo) => (
                   <TodoItem
                     key={todo.id}
+                    animateDelete={pendingDeleteTodoId === todo.id}
                     todo={todo}
                     onLongPress={() => openEditor(todo)}
+                    onOpenActions={() => openTodoActions(todo)}
                     onToggleComplete={() => void handleToggleComplete(todo)}
                   />
                 ))}
@@ -321,47 +418,288 @@ export function TodoPanel({ createRequestKey = 0, embedded = false }: TodoPanelP
         onClose={() => setIsReminderVisible(false)}
         onSave={handleSaveReminder}
       />
+      <TodoActionsSheet
+        todo={activeActionTodo}
+        visible={Boolean(activeActionTodo)}
+        onClose={closeTodoActions}
+        onDelete={handleDeleteTodoFromActions}
+        onEdit={handleEditTodoFromActions}
+      />
     </>
   );
 }
 
 function TodoItem({
+  animateCompletion = false,
+  animateDelete = false,
   todo,
+  visualCompleted,
   onLongPress,
+  onOpenActions,
   onToggleComplete,
 }: {
+  animateCompletion?: boolean;
+  animateDelete?: boolean;
   todo: TodoRecord;
+  visualCompleted?: boolean;
   onLongPress: () => void;
+  onOpenActions: () => void;
   onToggleComplete: () => void;
 }) {
   const completed = Boolean(todo.completedAt);
+  const shownCompleted = visualCompleted ?? completed;
+  const [titleWidth, setTitleWidth] = useState(0);
+  const strikeProgress = useRef(new Animated.Value(shownCompleted && !animateCompletion ? 1 : 0)).current;
+  const crushProgress = useRef(new Animated.Value(0)).current;
+  const strikeWidth = strikeProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, titleWidth],
+  });
+  const crushCardOpacity = crushProgress.interpolate({
+    inputRange: [0, 0.58, 1],
+    outputRange: [1, 0.28, 0],
+  });
+  const crushCardScale = crushProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0.78],
+  });
+  const crushCardRotate = crushProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '-3deg'],
+  });
+
+  useEffect(() => {
+    Animated.timing(strikeProgress, {
+      toValue: shownCompleted ? 1 : 0,
+      duration: shownCompleted ? TODO_STRIKE_ANIMATION_MS : 180,
+      easing: shownCompleted ? Easing.linear : Easing.out(Easing.quad),
+      useNativeDriver: false,
+    }).start();
+  }, [shownCompleted, strikeProgress]);
+
+  useEffect(() => {
+    if (!animateDelete) {
+      crushProgress.setValue(0);
+      return;
+    }
+
+    Animated.timing(crushProgress, {
+      toValue: 1,
+      duration: TODO_CRUSH_ANIMATION_MS,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [animateDelete, crushProgress]);
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      delayLongPress={350}
-      onLongPress={onLongPress}
-      style={[styles.todoCard, completed ? styles.todoCardCompleted : null]}>
-      <Pressable
-        accessibilityRole="checkbox"
-        accessibilityState={{ checked: completed }}
-        style={[styles.checkButton, completed ? styles.checkButtonDone : null]}
-        onPress={onToggleComplete}>
-        {completed ? <MaterialIcons name="check" size={18} color="#FFFFFF" /> : null}
-      </Pressable>
-      <View style={styles.todoContent}>
-        <ThemedText style={[styles.todoTitle, completed ? styles.todoTitleDone : null]}>
-          {todo.title}
-        </ThemedText>
-        {todo.reminderAt ? (
-          <View style={styles.reminderRow}>
-            <MaterialIcons name="notifications-none" size={16} color="#64748B" />
-            <ThemedText style={styles.reminderText}>{formatReminderLabel(todo)}</ThemedText>
+    <View style={styles.todoCardShell}>
+      <Animated.View
+        style={{
+          opacity: crushCardOpacity,
+          transform: [{ scale: crushCardScale }, { rotate: crushCardRotate }],
+        }}>
+        <Pressable
+          accessibilityRole="button"
+          delayLongPress={350}
+          disabled={animateDelete}
+          onLongPress={onLongPress}
+          style={[styles.todoCard, shownCompleted ? styles.todoCardCompleted : null]}>
+          <Pressable
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: shownCompleted }}
+            disabled={animateDelete}
+            style={[styles.checkButton, shownCompleted ? styles.checkButtonDone : null]}
+            onPress={onToggleComplete}>
+            {shownCompleted ? <MaterialIcons name="check" size={18} color="#FFFFFF" /> : null}
+          </Pressable>
+          <View style={styles.todoContent}>
+            {/*
+             * 渲染位置: 待办列表项标题区域
+             * 展示内容: 待办名称与点击完成后的横线划过动画
+             * 数据来源: todo.title / completedAt / pendingCompletionTodoId 状态
+             */}
+            <View style={styles.todoTitleWrap}>
+              <ThemedText
+                style={[styles.todoTitle, shownCompleted ? styles.todoTitleDone : null]}
+                onLayout={(event) => setTitleWidth(event.nativeEvent.layout.width)}>
+                {todo.title}
+              </ThemedText>
+              <Animated.View style={[styles.todoTitleStrikeLine, { width: strikeWidth }]} />
+            </View>
+            {todo.reminderAt ? (
+              <View style={styles.reminderRow}>
+                <MaterialIcons name="notifications-none" size={16} color="#64748B" />
+                <ThemedText style={styles.reminderText}>{formatReminderLabel(todo)}</ThemedText>
+              </View>
+            ) : null}
           </View>
-        ) : null}
+          <Pressable
+            accessibilityRole="button"
+            disabled={animateDelete}
+            hitSlop={8}
+            style={styles.moreButton}
+            onPress={onOpenActions}>
+            <MaterialIcons name="more-horiz" size={20} color="#94A3B8" />
+          </Pressable>
+        </Pressable>
+      </Animated.View>
+      {animateDelete ? (
+        /*
+         * 渲染位置: 待办列表项删除过程中
+         * 展示内容: 卡片碎片飞散的粉碎动画
+         * 数据来源: animateDelete / pendingDeleteTodoId 状态
+         */
+        <View pointerEvents="none" style={styles.crushShardLayer}>
+          {TODO_CRUSH_SHARDS.map((shard) => (
+            <Animated.View
+              key={shard.key}
+              style={[
+                styles.crushShard,
+                {
+                  left: shard.left,
+                  top: shard.top,
+                  width: shard.width,
+                  height: shard.height,
+                  opacity: crushProgress.interpolate({
+                    inputRange: [0, 0.18, 0.82, 1],
+                    outputRange: [0, 1, 0.76, 0],
+                  }),
+                  transform: [
+                    {
+                      translateX: crushProgress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, shard.translateX],
+                      }),
+                    },
+                    {
+                      translateY: crushProgress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, shard.translateY],
+                      }),
+                    },
+                    {
+                      rotate: crushProgress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: ['0deg', shard.rotate],
+                      }),
+                    },
+                    {
+                      scale: crushProgress.interpolate({
+                        inputRange: [0, 0.35, 1],
+                        outputRange: [0.84, 1.08, 0.5],
+                      }),
+                    },
+                  ],
+                },
+              ]}
+            />
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function EmptyTodoCard({ onCreate }: { onCreate: () => void }) {
+  const popProgress = useRef(new Animated.Value(0)).current;
+  const scale = popProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.92, 1],
+  });
+
+  useEffect(() => {
+    Animated.timing(popProgress, {
+      toValue: 1,
+      duration: EMPTY_CARD_POP_ANIMATION_MS,
+      easing: Easing.out(Easing.back(1.2)),
+      useNativeDriver: true,
+    }).start();
+  }, [popProgress]);
+
+  return (
+    /*
+     * 渲染位置: 待办页面未完成列表为空时的主内容区
+     * 展示内容: 空状态卡片、说明文案和新建待办按钮
+     * 数据来源: activeTodos.length 条件渲染与 openEditor 创建入口
+     */
+    <Animated.View
+      style={[
+        styles.emptyCard,
+        {
+          opacity: popProgress,
+          transform: [{ scale }, {
+            translateY: popProgress.interpolate({
+              inputRange: [0, 1],
+              outputRange: [18, 0],
+            }),
+          }],
+        },
+      ]}>
+      <MaterialIcons name="task-alt" size={48} color="#60A5FA" />
+      <ThemedText style={styles.emptyTitle}>还没有待办</ThemedText>
+      <ThemedText style={styles.emptyDescription}>
+        点击底部加号创建事项，可设置准时、每天或每周提醒。
+      </ThemedText>
+      <Pressable style={styles.primaryButton} onPress={onCreate}>
+        <ThemedText style={styles.primaryButtonText}>新建待办</ThemedText>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+function TodoActionsSheet({
+  todo,
+  visible,
+  onClose,
+  onDelete,
+  onEdit,
+}: {
+  todo: TodoRecord | null;
+  visible: boolean;
+  onClose: () => void;
+  onDelete: (todo: TodoRecord) => void;
+  onEdit: (todo: TodoRecord) => void;
+}) {
+  return (
+    <Modal animationType="fade" statusBarTranslucent transparent visible={visible} onRequestClose={onClose}>
+      <View style={styles.sheetOverlay}>
+        <Pressable style={styles.sheetBackdrop} onPress={onClose} />
+        {/*
+         * 渲染位置: 待办列表项点击“更多”后的操作弹窗
+         * 展示内容: 编辑、删除和取消操作入口
+         * 数据来源: activeActionTodo 当前选中的待办项
+         */}
+        <View style={styles.actionSheet}>
+          <View style={styles.sheetHandle} />
+          <ThemedText style={styles.actionSheetTitle}>{todo?.title ?? '待办操作'}</ThemedText>
+          <Pressable
+            accessibilityRole="button"
+            style={styles.actionSheetButton}
+            onPress={() => {
+              if (todo) {
+                onEdit(todo);
+              }
+            }}>
+            <MaterialIcons name="edit" size={20} color="#2563EB" />
+            <ThemedText style={styles.actionSheetButtonText}>编辑待办</ThemedText>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            style={styles.actionSheetButton}
+            onPress={() => {
+              if (todo) {
+                onDelete(todo);
+              }
+            }}>
+            <MaterialIcons name="delete-outline" size={20} color="#DC2626" />
+            <ThemedText style={[styles.actionSheetButtonText, styles.actionSheetDeleteText]}>删除待办</ThemedText>
+          </Pressable>
+          <Pressable accessibilityRole="button" style={styles.actionSheetCancelButton} onPress={onClose}>
+            <ThemedText style={styles.actionSheetCancelText}>取消</ThemedText>
+          </Pressable>
+        </View>
       </View>
-      <MaterialIcons name="more-horiz" size={20} color="#94A3B8" />
-    </Pressable>
+    </Modal>
   );
 }
 
@@ -381,9 +719,12 @@ function TodoEditorSheet({
   onSave: () => void;
 }) {
   return (
-    <Modal animationType="slide" transparent visible={visible} onRequestClose={onClose}>
+    <Modal animationType="slide" statusBarTranslucent transparent visible={visible} onRequestClose={onClose}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        // [变更] 修改前: Android 使用 height 避让，多行输入框聚焦时会频繁重算布局
+        // [变更] 修改后: 仅在 iOS 使用 padding 避让，Android 保持底部弹层稳定
+        // [原因] 修复编辑页面输入时反复快速上下移动的问题
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.sheetOverlay}>
         <Pressable style={styles.sheetBackdrop} onPress={onClose} />
         <View style={styles.editorSheet}>
@@ -404,6 +745,7 @@ function TodoEditorSheet({
             multiline
             placeholder="要做些什么？"
             placeholderTextColor="#94A3B8"
+            scrollEnabled={false}
             style={styles.todoInput}
             value={draftTodo?.title ?? ''}
             onChangeText={(title) => onChangeDraft(draftTodo ? { ...draftTodo, title } : draftTodo)}
@@ -482,127 +824,113 @@ function ReminderSheet({
   };
 
   return (
-    <Modal animationType="slide" transparent visible={visible} onRequestClose={onClose}>
+    <Modal animationType="slide" statusBarTranslucent transparent visible={visible} onRequestClose={onClose}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.sheetOverlay}>
         <Pressable style={styles.sheetBackdrop} onPress={onClose} />
         <View style={styles.reminderSheet}>
           <View style={styles.sheetHandle} />
           <ThemedText style={styles.sheetTitle}>设置提醒时间</ThemedText>
-          {/*
-           * 渲染位置: 底部弹出的提醒设置面板
-           * 展示内容: 日历日期选择器、时间输入、重复频率和确认按钮
-           * 数据来源: reminderDateInput / reminderTimeInput / reminderRepeat 状态
-           */}
-          <View style={styles.optionGroup}>
-            <ThemedText style={styles.optionLabel}>日期</ThemedText>
-            <View style={styles.datePickerContent}>
-              <View style={styles.datePickerHeader}>
-                <Pressable style={styles.datePickerMonthButton} onPress={() => handleChangeDatePickerMonth(-1)}>
-                  <MaterialIcons name="chevron-left" size={22} color="#2563EB" />
-                </Pressable>
-                <ThemedText style={styles.datePickerMonthText}>{datePickerMonthLabel}</ThemedText>
-                <Pressable style={styles.datePickerMonthButton} onPress={() => handleChangeDatePickerMonth(1)}>
-                  <MaterialIcons name="chevron-right" size={22} color="#2563EB" />
-                </Pressable>
-              </View>
-              <View style={styles.weekdayRow}>
-                {WEEKDAY_LABELS.map((weekday) => (
-                  <ThemedText key={weekday} style={styles.weekdayText}>
-                    {weekday}
-                  </ThemedText>
-                ))}
-              </View>
-              <View style={styles.dateGrid}>
-                {datePickerDays.map((day) => (
-                  <Pressable
-                    key={day.key}
-                    style={[
-                      styles.dateGridItem,
-                      !day.isCurrentMonth ? styles.dateGridItemMuted : null,
-                      dateInput === day.value ? styles.dateGridItemActive : null,
-                    ]}
-                    onPress={() => onChangeDateInput(day.value)}>
-                    <ThemedText
-                      style={[
-                        styles.dateGridItemText,
-                        !day.isCurrentMonth ? styles.dateGridItemTextMuted : null,
-                        dateInput === day.value ? styles.dateGridItemTextActive : null,
-                      ]}>
-                      {day.label}
-                    </ThemedText>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-          </View>
-          <View style={styles.optionGroup}>
-            <ThemedText style={styles.optionLabel}>时间</ThemedText>
+          <ScrollView
+            bounces={false}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.reminderSheetScrollContent}>
             {/*
-             * 渲染位置: 提醒设置面板的时间选择区域
-             * 展示内容: 小时和分钟选项网格，点击后更新时间
-             * 数据来源: selectedTime 和 onChangeTimeInput
+             * 渲染位置: 底部弹出的提醒设置面板
+             * 展示内容: 日历日期选择器、时间输入、重复频率和确认按钮
+             * 数据来源: reminderDateInput / reminderTimeInput / reminderRepeat 状态
              */}
-            <View style={styles.timePickerCard}>
-              <View style={styles.timePreviewBadge}>
-                <ThemedText style={styles.timePreviewText}>{timeInput}</ThemedText>
-              </View>
-              <ThemedText style={styles.timePickerSubTitle}>小时</ThemedText>
-              <View style={styles.timeOptionGrid}>
-                {HOUR_OPTIONS.map((hour) => (
-                  <Pressable
-                    key={hour}
-                    style={[
-                      styles.timeOptionChip,
-                      selectedTime.hour === hour ? styles.timeOptionChipActive : null,
-                    ]}
-                    onPress={() => handlePickHour(hour)}>
-                    <ThemedText
-                      style={[
-                        styles.timeOptionChipText,
-                        selectedTime.hour === hour ? styles.timeOptionChipTextActive : null,
-                      ]}>
-                      {padNumber(hour)}
-                    </ThemedText>
+            <View style={styles.optionGroup}>
+              <ThemedText style={styles.optionLabel}>日期</ThemedText>
+              <View style={styles.datePickerContent}>
+                <View style={styles.datePickerHeader}>
+                  <Pressable style={styles.datePickerMonthButton} onPress={() => handleChangeDatePickerMonth(-1)}>
+                    <MaterialIcons name="chevron-left" size={22} color="#2563EB" />
                   </Pressable>
-                ))}
-              </View>
-              <ThemedText style={styles.timePickerSubTitle}>分钟</ThemedText>
-              <View style={styles.timeOptionGrid}>
-                {MINUTE_OPTIONS.map((minute) => (
-                  <Pressable
-                    key={minute}
-                    style={[
-                      styles.timeOptionChip,
-                      selectedTime.minute === minute ? styles.timeOptionChipActive : null,
-                    ]}
-                    onPress={() => handlePickMinute(minute)}>
-                    <ThemedText
-                      style={[
-                        styles.timeOptionChipText,
-                        selectedTime.minute === minute ? styles.timeOptionChipTextActive : null,
-                      ]}>
-                      {padNumber(minute)}
-                    </ThemedText>
+                  <ThemedText style={styles.datePickerMonthText}>{datePickerMonthLabel}</ThemedText>
+                  <Pressable style={styles.datePickerMonthButton} onPress={() => handleChangeDatePickerMonth(1)}>
+                    <MaterialIcons name="chevron-right" size={22} color="#2563EB" />
                   </Pressable>
+                </View>
+                <View style={styles.weekdayRow}>
+                  {WEEKDAY_LABELS.map((weekday) => (
+                    <ThemedText key={weekday} style={styles.weekdayText}>
+                      {weekday}
+                    </ThemedText>
+                  ))}
+                </View>
+                <View style={styles.dateGrid}>
+                  {datePickerDays.map((day) => (
+                    <Pressable
+                      key={day.key}
+                      style={[
+                        styles.dateGridItem,
+                        !day.isCurrentMonth ? styles.dateGridItemMuted : null,
+                        dateInput === day.value ? styles.dateGridItemActive : null,
+                      ]}
+                      onPress={() => onChangeDateInput(day.value)}>
+                      <ThemedText
+                        style={[
+                          styles.dateGridItemText,
+                          !day.isCurrentMonth ? styles.dateGridItemTextMuted : null,
+                          dateInput === day.value ? styles.dateGridItemTextActive : null,
+                        ]}>
+                        {day.label}
+                      </ThemedText>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            </View>
+            <View style={styles.optionGroup}>
+              <ThemedText style={styles.optionLabel}>时间</ThemedText>
+              {/*
+               * 渲染位置: 提醒设置面板的时间选择区域
+               * 展示内容: 小时和分钟双列滚动选择器，支持任意分钟
+               * 数据来源: selectedTime 和 onChangeTimeInput
+               */}
+              <View style={styles.timePickerCard}>
+                <View style={styles.timePreviewBadge}>
+                  <ThemedText style={styles.timePreviewText}>{timeInput}</ThemedText>
+                </View>
+                {/*
+                 * 渲染位置: 提醒设置面板时间卡片中部
+                 * 展示内容: 小时与分钟并排滚动列
+                 * 数据来源: selectedTime.hour / selectedTime.minute
+                 */}
+                <View style={styles.timeWheelRow}>
+                  <TimeWheelPicker
+                    label="小时"
+                    options={HOUR_OPTIONS}
+                    selectedValue={selectedTime.hour}
+                    onChange={handlePickHour}
+                  />
+                  <ThemedText style={styles.timeWheelDivider}>:</ThemedText>
+                  <TimeWheelPicker
+                    label="分钟"
+                    options={MINUTE_OPTIONS}
+                    selectedValue={selectedTime.minute}
+                    onChange={handlePickMinute}
+                  />
+                </View>
+              </View>
+            </View>
+            <View style={styles.optionGroup}>
+              <ThemedText style={styles.optionLabel}>重复</ThemedText>
+              <View style={styles.chipRow}>
+                {REPEAT_OPTIONS.map((option) => (
+                  <OptionChip
+                    key={option.value}
+                    active={repeat === option.value}
+                    label={option.label}
+                    onPress={() => onChangeRepeat(option.value)}
+                  />
                 ))}
               </View>
             </View>
-          </View>
-          <View style={styles.optionGroup}>
-            <ThemedText style={styles.optionLabel}>重复</ThemedText>
-            <View style={styles.chipRow}>
-              {REPEAT_OPTIONS.map((option) => (
-                <OptionChip
-                  key={option.value}
-                  active={repeat === option.value}
-                  label={option.label}
-                  onPress={() => onChangeRepeat(option.value)}
-                />
-              ))}
-            </View>
-          </View>
+          </ScrollView>
           <View style={styles.sheetActionRow}>
             <Pressable style={styles.clearButton} onPress={onClear}>
               <ThemedText style={styles.clearButtonText}>清除</ThemedText>
@@ -614,6 +942,94 @@ function ReminderSheet({
         </View>
       </KeyboardAvoidingView>
     </Modal>
+  );
+}
+
+function TimeWheelPicker({
+  label,
+  options,
+  selectedValue,
+  onChange,
+}: {
+  label: string;
+  options: number[];
+  selectedValue: number;
+  onChange: (value: number) => void;
+}) {
+  const scrollRef = useRef<ScrollView>(null);
+  const centerPadding = ((TIME_PICKER_VISIBLE_ROWS - 1) / 2) * TIME_PICKER_ITEM_HEIGHT;
+  const selectedIndex = Math.max(
+    0,
+    options.findIndex((option) => option === selectedValue)
+  );
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({
+      y: getPickerScrollOffset(selectedIndex),
+      animated: false,
+    });
+  }, [selectedIndex]);
+
+  const handleScrollComplete = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const nextIndex = getPickerIndexFromOffset(event.nativeEvent.contentOffset.y, options.length);
+      const nextValue = options[nextIndex];
+
+      if (nextValue !== selectedValue) {
+        onChange(nextValue);
+      } else {
+        scrollRef.current?.scrollTo({
+          y: getPickerScrollOffset(nextIndex),
+          animated: true,
+        });
+      }
+    },
+    [onChange, options, selectedValue]
+  );
+
+  return (
+    <View style={styles.timeWheelColumn}>
+      <ThemedText style={styles.timePickerSubTitle}>{label}</ThemedText>
+      {/*
+       * 渲染位置: 提醒设置面板的滚动时间选择列
+       * 展示内容: 小时或分钟的纵向滚动选项
+       * 数据来源: HOUR_OPTIONS / MINUTE_OPTIONS 与 selectedValue
+       */}
+      <View style={styles.timeWheelViewport}>
+        <View pointerEvents="none" style={styles.timeWheelSelectionFrame} />
+        <ScrollView
+          ref={scrollRef}
+          bounces={false}
+          decelerationRate="fast"
+          nestedScrollEnabled
+          showsVerticalScrollIndicator={false}
+          snapToInterval={TIME_PICKER_ITEM_HEIGHT}
+          snapToAlignment="start"
+          contentContainerStyle={[styles.timeWheelContent, { paddingVertical: centerPadding }]}
+          onMomentumScrollEnd={handleScrollComplete}
+          onScrollEndDrag={handleScrollComplete}>
+          {/*
+           * 渲染位置: 单列时间滚动器内部
+           * 展示内容: 当前列全部可选时间值
+           * 数据来源: options 常量数组
+           */}
+          {options.map((option) => (
+            <Pressable
+              key={`${label}-${option}`}
+              style={styles.timeWheelItem}
+              onPress={() => onChange(option)}>
+              <ThemedText
+                style={[
+                  styles.timeWheelItemText,
+                  option === selectedValue ? styles.timeWheelItemTextActive : null,
+                ]}>
+                {padNumber(option)}
+              </ThemedText>
+            </Pressable>
+          ))}
+        </ScrollView>
+      </View>
+    </View>
   );
 }
 
@@ -645,6 +1061,27 @@ async function cancelNotification(notificationId: string | null | undefined) {
   } catch {
     // 删除已失效通知时不阻塞待办状态更新。
   }
+}
+
+function wait(duration: number) {
+  return new Promise((resolve) => setTimeout(resolve, duration));
+}
+
+function configureNextTodoLayout() {
+  LayoutAnimation.configureNext({
+    duration: TODO_LAYOUT_ANIMATION_MS,
+    create: {
+      type: LayoutAnimation.Types.easeInEaseOut,
+      property: LayoutAnimation.Properties.opacity,
+    },
+    update: {
+      type: LayoutAnimation.Types.easeInEaseOut,
+    },
+    delete: {
+      type: LayoutAnimation.Types.easeInEaseOut,
+      property: LayoutAnimation.Properties.opacity,
+    },
+  });
 }
 
 async function scheduleTodoNotification(todo: TodoRecord) {
@@ -822,6 +1259,27 @@ function formatTimeParts(hour: number, minute: number) {
   return `${padNumber(hour)}:${padNumber(minute)}`;
 }
 
+/**
+ * 根据滚动项索引计算对齐到选中态的滚动距离。
+ *
+ * @param index - 当前选项在列表中的索引
+ * @returns ScrollView 需要滚动到的 y 偏移
+ */
+function getPickerScrollOffset(index: number) {
+  return index * TIME_PICKER_ITEM_HEIGHT;
+}
+
+/**
+ * 将滚动偏移量换算为最接近的选项索引，并限制在有效范围内。
+ *
+ * @param offsetY - 当前 ScrollView 的垂直滚动距离
+ * @param optionCount - 当前滚动列的选项数量
+ * @returns 对齐后的选项索引
+ */
+function getPickerIndexFromOffset(offsetY: number, optionCount: number) {
+  return Math.min(optionCount - 1, Math.max(0, Math.round(offsetY / TIME_PICKER_ITEM_HEIGHT)));
+}
+
 function formatDateInput(date: Date) {
   return `${date.getFullYear()}-${padNumber(date.getMonth() + 1)}-${padNumber(date.getDate())}`;
 }
@@ -953,6 +1411,10 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontWeight: '700',
   },
+  todoCardShell: {
+    position: 'relative',
+    overflow: 'visible',
+  },
   todoCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -986,6 +1448,10 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 6,
   },
+  todoTitleWrap: {
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+  },
   todoTitle: {
     color: '#0F172A',
     fontSize: 17,
@@ -994,7 +1460,35 @@ const styles = StyleSheet.create({
   },
   todoTitleDone: {
     color: '#64748B',
-    textDecorationLine: 'line-through',
+  },
+  todoTitleStrikeLine: {
+    position: 'absolute',
+    left: 0,
+    top: 11,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: '#64748B',
+  },
+  crushShardLayer: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: 'visible',
+  },
+  crushShard: {
+    position: 'absolute',
+    borderRadius: 9,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 3,
+  },
+  moreButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   reminderRow: {
     flexDirection: 'row',
@@ -1014,6 +1508,15 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(15, 23, 42, 0.42)',
   },
+  actionSheet: {
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    paddingHorizontal: 22,
+    paddingTop: 10,
+    paddingBottom: 26,
+    gap: 12,
+    backgroundColor: '#FFFFFF',
+  },
   editorSheet: {
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
@@ -1026,11 +1529,16 @@ const styles = StyleSheet.create({
   reminderSheet: {
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
+    maxHeight: '88%',
     paddingHorizontal: 22,
     paddingTop: 10,
     paddingBottom: 26,
     gap: 18,
     backgroundColor: '#FFFFFF',
+  },
+  reminderSheetScrollContent: {
+    gap: 18,
+    paddingBottom: 4,
   },
   sheetHandle: {
     alignSelf: 'center',
@@ -1048,6 +1556,43 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontSize: 20,
     lineHeight: 26,
+    fontWeight: '800',
+  },
+  actionSheetTitle: {
+    color: '#0F172A',
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: '800',
+  },
+  actionSheetButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: '#F8FAFC',
+  },
+  actionSheetButtonText: {
+    color: '#0F172A',
+    fontSize: 16,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  actionSheetDeleteText: {
+    color: '#DC2626',
+  },
+  actionSheetCancelButton: {
+    marginTop: 4,
+    borderRadius: 18,
+    paddingVertical: 15,
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+  },
+  actionSheetCancelText: {
+    color: '#2563EB',
+    fontSize: 16,
+    lineHeight: 20,
     fontWeight: '800',
   },
   saveButton: {
@@ -1203,30 +1748,55 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: '700',
   },
-  timeOptionGrid: {
+  timeWheelRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  timeOptionChip: {
-    minWidth: 50,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    justifyContent: 'space-between',
+    gap: 12,
   },
-  timeOptionChipActive: {
-    backgroundColor: '#3B82F6',
+  timeWheelColumn: {
+    flex: 1,
+    gap: 10,
   },
-  timeOptionChipText: {
-    color: '#334155',
-    fontSize: 14,
-    lineHeight: 18,
+  timeWheelDivider: {
+    marginTop: 20,
+    color: '#94A3B8',
+    fontSize: 28,
+    lineHeight: 32,
     fontWeight: '700',
   },
-  timeOptionChipTextActive: {
-    color: '#FFFFFF',
+  timeWheelViewport: {
+    position: 'relative',
+    height: TIME_PICKER_ITEM_HEIGHT * TIME_PICKER_VISIBLE_ROWS,
+    overflow: 'hidden',
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+  },
+  timeWheelSelectionFrame: {
+    position: 'absolute',
+    top: ((TIME_PICKER_VISIBLE_ROWS - 1) / 2) * TIME_PICKER_ITEM_HEIGHT,
+    left: 8,
+    right: 8,
+    height: TIME_PICKER_ITEM_HEIGHT,
+    borderRadius: 14,
+    backgroundColor: '#DBEAFE',
+  },
+  timeWheelContent: {
+    paddingHorizontal: 8,
+  },
+  timeWheelItem: {
+    height: TIME_PICKER_ITEM_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timeWheelItemText: {
+    color: '#64748B',
+    fontSize: 18,
+    lineHeight: 22,
+    fontWeight: '700',
+  },
+  timeWheelItemTextActive: {
+    color: '#2563EB',
   },
   chipRow: {
     flexDirection: 'row',

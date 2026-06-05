@@ -29,10 +29,6 @@ import {
 } from '@/services/notes-storage';
 
 const EDITOR_PLACEHOLDER = '开始写下今天的想法...';
-const RICH_EDITOR_DOM_STYLE = {
-  minHeight: 560,
-  backgroundColor: 'transparent',
-} as const;
 const IMAGE_MIME_TYPE_BY_EXTENSION: Record<string, string> = {
   gif: 'image/gif',
   heic: 'image/heic',
@@ -40,7 +36,7 @@ const IMAGE_MIME_TYPE_BY_EXTENSION: Record<string, string> = {
   jpeg: 'image/jpeg',
   jpg: 'image/jpeg',
   png: 'image/png',
-  webp: 'image/webp',
+  webp: 'image/webp', 
 };
 
 export default function NoteEditorScreen() {
@@ -252,7 +248,6 @@ export default function NoteEditorScreen() {
                     dom={{
                       matchContents: true,
                       scrollEnabled: false,
-                      style: RICH_EDITOR_DOM_STYLE,
                     }}
                   />
                 </View>
