@@ -6,6 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
 
+import { AiFloatingAssistant } from '@/components/AiFloatingAssistant';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AppSettingsProvider } from '@/services/app-settings';
 
@@ -66,6 +67,12 @@ function RootNavigator() {
         <Stack.Screen name="weather-search" options={{ headerShown: false }} />
         <Stack.Screen name="weather-overview" options={{ title: '今日概览' }} />
       </Stack>
+      {/*
+       * 渲染位置: 应用根布局导航栈上层
+       * 展示内容: 全局 AI 悬浮球与对话抽屉
+       * 数据来源: AiFloatingAssistant 内部状态和当前路由信息
+       */}
+      <AiFloatingAssistant />
       <StatusBar style="auto" />
     </ThemeProvider>
   );
