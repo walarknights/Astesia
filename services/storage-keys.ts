@@ -9,6 +9,7 @@ export const ACCOUNTING_TOTAL_ASSET_STORAGE_KEY = 'astesia-accounting-total-asse
 export const NOTES_STORAGE_KEY = 'astesia-notes';
 export const TODO_ITEMS_STORAGE_KEY = 'astesia-todo-items';
 export const PERSONAL_BACKGROUND_IMAGE_STORAGE_KEY = 'astesia-personal-background-image';
+export const AI_ASSISTANT_MESSAGES_STORAGE_KEY = 'astesia-ai-assistant-messages';
 
 export const KNOWN_STORAGE_KEYS = [
   APP_SETTINGS_STORAGE_KEY,
@@ -22,4 +23,5 @@ export const KNOWN_STORAGE_KEYS = [
   NOTES_STORAGE_KEY,
   TODO_ITEMS_STORAGE_KEY,
   PERSONAL_BACKGROUND_IMAGE_STORAGE_KEY,
+  AI_ASSISTANT_MESSAGES_STORAGE_KEY,
 ];

@@ -9,10 +9,12 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "akshare": "python3.11 scripts/akshare_server.py"
+    "akshare": "python3.11 scripts/akshare_server.py",
+    "ai-server": "node server/ai-server.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
+    "@hono/node-server": "^1.19.6",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/bottom-tabs": "^7.4.0",
     "@react-navigation/elements": "^2.6.3",
@@ -43,6 +45,7 @@
     "expo-symbols": "~1.0.8",
     "expo-system-ui": "~6.0.9",
     "expo-web-browser": "~15.0.10",
+    "hono": "^4.10.7",
     "mobx": "^6.15.3",
     "mobx-react-lite": "^4.1.1",
     "react": "19.1.0",
