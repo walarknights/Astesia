@@ -22,6 +22,11 @@ export type AiModel = {
   label: string;
 };
 
+export type AiModelsResult = {
+  models: AiModel[];
+  errorMessage: string | null;
+};
+
 type ChatCompletionResponse = {
   content?: unknown;
   error?: unknown;
@@ -30,6 +35,25 @@ type ChatCompletionResponse = {
 type ModelsResponse = {
   data?: unknown;
   error?: unknown;
+};
+
+type AiStreamEvent =
+  | {
+      event: 'chunk';
+      data: { content?: unknown };
+    }
+  | {
+      event: 'done';
+      data: Record<string, never>;
+    }
+  | {
+      event: 'error';
+      data: { message?: unknown };
+    };
+
+export type AiAssistantReplyStreamOptions = {
+  signal?: AbortSignal;
+  onChunk?: (chunk: string, fullContent: string) => void;
 };
 
 export const DEFAULT_AI_MODEL_ID = 'gemini-3.1-pro-preview';
@@ -45,9 +69,7 @@ const DEFAULT_AI_API_HOST = Platform.OS === 'android'
   ? 'http://10.0.2.2:8787'
   : 'http://127.0.0.1:8787';
 
-const AI_API_HOST = (
-  process.env.EXPO_PUBLIC_AI_API_HOST?.trim() || DEFAULT_AI_API_HOST
-).replace(/\/$/, '');
+const AI_API_HOST = resolveAiApiHost(process.env.EXPO_PUBLIC_AI_API_HOST);
 
 /**
  * 创建 AI 对话消息，统一补齐 id 与创建时间。
@@ -118,6 +140,33 @@ function getErrorMessage(error: unknown) {
   return 'AI 服务暂时不可用，请稍后再试。';
 }
 
+function normalizeApiHost(value?: string) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value.trim().replace(/[`'"]/g, '').replace(/\/+$/, '');
+}
+
+function resolveAiApiHost(value?: string) {
+  const normalizedHost = normalizeApiHost(value);
+
+  if (!normalizedHost) {
+    return DEFAULT_AI_API_HOST;
+  }
+
+  // [变更] 修改前: 直接使用环境变量里的 host
+  // [变更] 修改后: Android 下将误配的 localhost / 127.0.0.1 自动改写为模拟器可访问的 10.0.2.2
+  // [原因] Expo Android 模拟器中 127.0.0.1 指向设备自身，不是开发机上的 Hono 代理服务
+  if (Platform.OS === 'android') {
+    return normalizedHost
+      .replace('://127.0.0.1', '://10.0.2.2')
+      .replace('://localhost', '://10.0.2.2');
+  }
+
+  return normalizedHost;
+}
+
 function isModelItem(value: unknown): value is { id: string } {
   return Boolean(value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string');
 }
@@ -125,7 +174,7 @@ function isModelItem(value: unknown): value is { id: string } {
 export async function requestAiModels() {
   try {
     const response = await fetch(`${AI_API_HOST}/api/ai/models`);
-    const data = await response.json() as ModelsResponse;
+    const data = await response.json().catch(() => ({})) as ModelsResponse;
 
     if (!response.ok) {
       throw new Error(typeof data.error === 'string' ? data.error : '模型列表获取失败。');
@@ -140,46 +189,324 @@ export async function requestAiModels() {
         }))
       : [];
 
-    return models.length > 0
-      ? models
-      : [{ id: DEFAULT_AI_MODEL_ID, label: DEFAULT_AI_MODEL_ID }];
-  } catch {
-    return [{ id: DEFAULT_AI_MODEL_ID, label: DEFAULT_AI_MODEL_ID }];
+    return {
+      models: models.length > 0
+        ? models
+        : [{ id: DEFAULT_AI_MODEL_ID, label: DEFAULT_AI_MODEL_ID }],
+      errorMessage: models.length > 0 ? null : '模型接口返回为空，当前回退到默认模型。',
+    } satisfies AiModelsResult;
+  } catch (error) {
+    const errorMessage = getErrorMessage(error);
+    console.warn(`[AI] 模型列表加载失败: ${errorMessage}; host=${AI_API_HOST}`);
+
+    return {
+      models: [{ id: DEFAULT_AI_MODEL_ID, label: DEFAULT_AI_MODEL_ID }],
+      errorMessage,
+    } satisfies AiModelsResult;
   }
 }
 
 export async function requestAiAssistantReply(
   messages: AiAssistantMessage[],
   screenKnowledge: AiScreenKnowledge,
-  model: string
+  model: string,
+  options?: AiAssistantReplyStreamOptions
 ) {
   try {
+    const requestBody = JSON.stringify({
+      model,
+      messages: messages.map(({ role, content }) => ({ role, content })),
+      screenKnowledge,
+    });
+
     // 格式化: 本地消息列表 → 过滤为模型可理解的 role/content → 后端 chat payload
-    // 说明: 避免把前端 id、时间等渲染字段透传给模型
+    // 说明: 避免把前端 id、时间等渲染字段透传给模型，并优先使用原生流式能力消费 SSE
     const response = await fetch(`${AI_API_HOST}/api/ai/chat`, {
       method: 'POST',
       headers: {
+        Accept: 'text/event-stream',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model,
-        messages: messages.map(({ role, content }) => ({ role, content })),
-        screenKnowledge,
-      }),
+      signal: options?.signal,
+      body: requestBody,
     });
 
-    const data = await response.json() as ChatCompletionResponse;
-
     if (!response.ok) {
+      const data = await response.json().catch(() => ({})) as ChatCompletionResponse;
       throw new Error(typeof data.error === 'string' ? data.error : 'AI 服务返回异常。');
     }
 
-    if (typeof data.content !== 'string' || !data.content.trim()) {
-      throw new Error('AI 服务未返回有效内容。');
+    const reader = response.body?.getReader();
+
+    if (!reader) {
+      // [变更] 修改前: 原生端没有 ReadableStream 时直接报错退出
+      // [变更] 修改后: 回退到 XMLHttpRequest 的增量 responseText，继续解析 SSE
+      // [原因] Expo / React Native 环境通常不支持 fetch.getReader，但仍支持通过 XHR 实现流式输出
+      return requestAiAssistantReplyWithXhr(requestBody, options);
     }
 
-    return data.content.trim();
+    return consumeAssistantReplyReader(reader, options);
   } catch (error) {
+    if (error instanceof Error && error.message === '当前环境不支持 AI 流式返回。') {
+      const requestBody = JSON.stringify({
+        model,
+        messages: messages.map(({ role, content }) => ({ role, content })),
+        screenKnowledge,
+      });
+
+      return requestAiAssistantReplyWithXhr(requestBody, options);
+    }
+
     throw new Error(getErrorMessage(error));
   }
+}
+
+/**
+ * 使用 ReadableStream 消费 SSE 响应，并在每次收到文本分片时回调 UI。
+ *
+ * @param reader - fetch 返回的可读流 reader
+ * @param options - 流式输出回调与取消信号
+ * @returns 完整的 AI 回复文本
+ * @example
+ *   consumeAssistantReplyReader(reader, { onChunk: (_, full) => console.log(full) })
+ */
+async function consumeAssistantReplyReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  options?: AiAssistantReplyStreamOptions
+) {
+  let fullContent = '';
+  let sseBuffer = '';
+  const decoder = new TextDecoder();
+
+  while (true) {
+    const { value, done } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    sseBuffer += decoder.decode(value, { stream: true });
+    const parsedEvents = consumeSseEvents(sseBuffer);
+    sseBuffer = parsedEvents.rest;
+
+    fullContent = applyStreamEvents(parsedEvents.events, fullContent, options);
+  }
+
+  sseBuffer += decoder.decode();
+  const finalEvents = consumeSseEvents(`${sseBuffer}\n\n`);
+  fullContent = applyStreamEvents(finalEvents.events, fullContent, options);
+
+  if (!fullContent.trim()) {
+    throw new Error('AI 服务未返回有效内容。');
+  }
+
+  return fullContent.trim();
+}
+
+/**
+ * 在 React Native 原生端使用 XMLHttpRequest 读取逐步增长的 responseText，并按 SSE 协议解析。
+ *
+ * @param requestBody - 已序列化的 chat 请求体
+ * @param options - 流式输出回调与取消信号
+ * @returns 完整的 AI 回复文本
+ * @example
+ *   requestAiAssistantReplyWithXhr(body, { onChunk: (_, full) => console.log(full) })
+ */
+function requestAiAssistantReplyWithXhr(
+  requestBody: string,
+  options?: AiAssistantReplyStreamOptions
+) {
+  return new Promise<string>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let isSettled = false;
+    let fullContent = '';
+    let sseBuffer = '';
+    let processedLength = 0;
+
+    const finalize = (handler: () => void) => {
+      if (isSettled) {
+        return;
+      }
+
+      isSettled = true;
+      options?.signal?.removeEventListener('abort', handleAbort);
+      handler();
+    };
+
+    const consumeResponseText = (forceFlush = false) => {
+      const nextText = xhr.responseText.slice(processedLength);
+
+      if (!nextText && !forceFlush) {
+        return;
+      }
+
+      processedLength = xhr.responseText.length;
+      sseBuffer += nextText;
+      const parsedEvents = consumeSseEvents(forceFlush ? `${sseBuffer}\n\n` : sseBuffer);
+      sseBuffer = parsedEvents.rest;
+      fullContent = applyStreamEvents(parsedEvents.events, fullContent, options);
+    };
+
+    const handleAbort = () => {
+      xhr.abort();
+      finalize(() => reject(new Error('AI 请求已取消。')));
+    };
+
+    xhr.onreadystatechange = () => {
+      if (xhr.readyState === xhr.LOADING) {
+        consumeResponseText();
+        return;
+      }
+
+      if (xhr.readyState !== xhr.DONE) {
+        return;
+      }
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          consumeResponseText(true);
+
+          if (!fullContent.trim()) {
+            throw new Error('AI 服务未返回有效内容。');
+          }
+
+          finalize(() => resolve(fullContent.trim()));
+        } catch (error) {
+          finalize(() => reject(new Error(getErrorMessage(error))));
+        }
+
+        return;
+      }
+
+      let errorMessage = 'AI 服务返回异常。';
+
+      try {
+        const data = JSON.parse(xhr.responseText) as ChatCompletionResponse;
+        errorMessage = typeof data.error === 'string' ? data.error : errorMessage;
+      } catch {
+        if (xhr.responseText.trim()) {
+          errorMessage = xhr.responseText.trim();
+        }
+      }
+
+      finalize(() => reject(new Error(errorMessage)));
+    };
+
+    xhr.onerror = () => {
+      finalize(() => reject(new Error('AI 服务网络请求失败。')));
+    };
+
+    xhr.open('POST', `${AI_API_HOST}/api/ai/chat`);
+    xhr.setRequestHeader('Accept', 'text/event-stream');
+    xhr.setRequestHeader('Content-Type', 'application/json');
+
+    if (options?.signal) {
+      options.signal.addEventListener('abort', handleAbort);
+    }
+
+    xhr.send(requestBody);
+  });
+}
+
+function applyStreamEvents(
+  events: AiStreamEvent[],
+  currentContent: string,
+  options?: AiAssistantReplyStreamOptions
+) {
+  let nextContent = currentContent;
+
+  for (const event of events) {
+    if (event.event === 'chunk') {
+      const chunk = normalizeStreamChunk(event.data.content);
+
+      if (!chunk) {
+        continue;
+      }
+
+      nextContent += chunk;
+      options?.onChunk?.(chunk, nextContent);
+      continue;
+    }
+
+    if (event.event === 'error') {
+      throw new Error(
+        typeof event.data.message === 'string' && event.data.message.trim()
+          ? event.data.message
+          : 'AI 服务返回异常。'
+      );
+    }
+  }
+
+  return nextContent;
+}
+
+/**
+ * 解析 SSE 文本缓冲区，拆出完整事件并保留未结束的尾部片段。
+ *
+ * @param buffer - 原始 SSE 文本缓冲区
+ * @returns 已解析的事件列表和剩余缓冲区
+ * @example
+ *   consumeSseEvents('event: chunk\ndata: {"content":"你好"}\n\n')
+ */
+function consumeSseEvents(buffer: string) {
+  const normalizedBuffer = buffer.replace(/\r\n/g, '\n');
+  const rawEvents = normalizedBuffer.split('\n\n');
+  const rest = rawEvents.pop() ?? '';
+  const events = rawEvents
+    .map(parseSseEvent)
+    .filter((event): event is AiStreamEvent => event !== null);
+
+  return { events, rest };
+}
+
+function parseSseEvent(block: string): AiStreamEvent | null {
+  const lines = block
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  let eventName = 'message';
+  const dataLines: string[] = [];
+
+  for (const line of lines) {
+    if (line.startsWith(':')) {
+      continue;
+    }
+
+    if (line.startsWith('event:')) {
+      eventName = line.slice(6).trim();
+      continue;
+    }
+
+    if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trim());
+    }
+  }
+
+  if (dataLines.length === 0) {
+    return null;
+  }
+
+  try {
+    const data = JSON.parse(dataLines.join('\n')) as AiStreamEvent['data'];
+
+    if (eventName === 'chunk' || eventName === 'done' || eventName === 'error') {
+      return {
+        event: eventName,
+        data,
+      } as AiStreamEvent;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function normalizeStreamChunk(content: unknown) {
+  return typeof content === 'string' ? content : '';
 }

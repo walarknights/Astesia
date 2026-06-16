@@ -10,6 +10,8 @@ import {
   Easing,
   KeyboardAvoidingView,
   Modal,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Platform,
   Pressable,
   ScrollView,
@@ -43,6 +45,12 @@ const SUPPORTED_DOCUMENT_TYPES = [
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ];
+const AUTO_SCROLL_BOTTOM_OFFSET = 48;
+const USER_UPWARD_SCROLL_THRESHOLD = 6;
+
+type MessageStateUpdater =
+  | AiAssistantMessage[]
+  | ((currentMessages: AiAssistantMessage[]) => AiAssistantMessage[]);
 
 export function AiFloatingAssistant() {
   const pathname = usePathname();
@@ -57,8 +65,15 @@ export function AiFloatingAssistant() {
   const [selectedModel, setSelectedModel] = useState(DEFAULT_AI_MODEL_ID);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const [isModelsLoading, setIsModelsLoading] = useState(true);
+  const [modelsError, setModelsError] = useState<string | null>(null);
   const [isModelSheetVisible, setIsModelSheetVisible] = useState(false);
   const [isKnowledgeExpanded, setIsKnowledgeExpanded] = useState(false);
+  const isMountedRef = useRef(true);
+  const messageScrollRef = useRef<ScrollView | null>(null);
+  const messagesRef = useRef<AiAssistantMessage[]>([AI_ASSISTANT_WELCOME_MESSAGE]);
+  const autoScrollEnabledRef = useRef(true);
+  const lastScrollOffsetYRef = useRef(0);
 
   const screenKnowledge = useMemo(
     () => ({
@@ -69,12 +84,46 @@ export function AiFloatingAssistant() {
   );
 
   useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  const loadModels = useCallback(async () => {
+    setIsModelsLoading(true);
+
+    const result = await requestAiModels();
+    const nextModels = Array.isArray(result.models) && result.models.length > 0
+      ? result.models
+      : [{ id: DEFAULT_AI_MODEL_ID, label: DEFAULT_AI_MODEL_ID }];
+
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    // [变更] 修改前: 直接信任 requestAiModels 返回的 models 数组
+    // [变更] 修改后: 在组件侧再次做数组兜底，避免热更新或异常返回导致模型选择状态崩溃
+    // [原因] 模型列表失败时应降级为默认模型，而不是让抽屉组件报错
+    setModels(nextModels);
+    setModelsError(result.errorMessage);
+    setSelectedModel((currentModel) => (
+      nextModels.some((model) => model.id === currentModel) ? currentModel : nextModels[0].id
+    ));
+    setIsModelsLoading(false);
+  }, []);
+
+  useEffect(() => {
     let active = true;
 
     const syncMessages = async () => {
       const storedMessages = await loadAiAssistantMessages();
 
       if (active) {
+        messagesRef.current = storedMessages;
         setMessages(storedMessages);
         setIsHistoryLoading(false);
       }
@@ -88,25 +137,8 @@ export function AiFloatingAssistant() {
   }, []);
 
   useEffect(() => {
-    let active = true;
-
-    const syncModels = async () => {
-      const nextModels = await requestAiModels();
-
-      if (active) {
-        setModels(nextModels);
-        setSelectedModel((currentModel) => (
-          nextModels.some((model) => model.id === currentModel) ? currentModel : nextModels[0].id
-        ));
-      }
-    };
-
-    void syncModels();
-
-    return () => {
-      active = false;
-    };
-  }, []);
+    void loadModels();
+  }, [loadModels]);
 
   const selectedModelLabel = useMemo(
     () => formatModelLabel(models.find((model) => model.id === selectedModel)?.label ?? selectedModel),
@@ -136,21 +168,43 @@ export function AiFloatingAssistant() {
     animateDrawer(-drawerWidth, () => setIsDrawerVisible(false));
   }, [animateDrawer, drawerWidth]);
 
-  const updateMessages = useCallback((nextMessages: AiAssistantMessage[]) => {
-    setMessages(nextMessages);
-    void saveAiAssistantMessages(nextMessages);
+  const scrollMessagesToEnd = useCallback((animated = true) => {
+    requestAnimationFrame(() => {
+      messageScrollRef.current?.scrollToEnd({ animated });
+    });
+  }, []);
+
+  const updateMessages = useCallback((updater: MessageStateUpdater, shouldPersist = true) => {
+    setMessages((currentMessages) => {
+      const nextMessages = typeof updater === 'function'
+        ? updater(currentMessages)
+        : updater;
+
+      messagesRef.current = nextMessages;
+
+      if (shouldPersist) {
+        void saveAiAssistantMessages(nextMessages);
+      }
+
+      return nextMessages;
+    });
   }, []);
 
   const appendSystemMessage = useCallback((content: string) => {
-    updateMessages([...messages, createAiAssistantMessage('system', content)]);
-  }, [messages, updateMessages]);
+    updateMessages(
+      [...messagesRef.current, createAiAssistantMessage('system', content)]
+    );
+  }, [updateMessages]);
 
   const captureCurrentScreen = useCallback(() => {
     appendSystemMessage(`已读取当前屏幕占位信息：${screenKnowledge.summary}`);
   }, [appendSystemMessage, screenKnowledge.summary]);
 
   const clearHistory = useCallback(() => {
-    void clearAiAssistantMessages().then(setMessages);
+    void clearAiAssistantMessages().then((nextMessages) => {
+      messagesRef.current = nextMessages;
+      setMessages(nextMessages);
+    });
   }, []);
 
   const selectModel = useCallback((modelId: string) => {
@@ -197,6 +251,35 @@ export function AiFloatingAssistant() {
     Alert.alert(featureName, '该功能暂时搁置，后续接入。');
   }, []);
 
+  const handleMessageListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    const currentOffsetY = contentOffset.y;
+    const isNearBottom = currentOffsetY + layoutMeasurement.height >= contentSize.height - AUTO_SCROLL_BOTTOM_OFFSET;
+
+    if (isNearBottom) {
+      autoScrollEnabledRef.current = true;
+    } else if (isSending && currentOffsetY < lastScrollOffsetYRef.current - USER_UPWARD_SCROLL_THRESHOLD) {
+      // [变更] 修改前: 消息区没有滚动状态感知，新增内容时只能被动跟随到底部
+      // [变更] 修改后: 流式输出期间一旦检测到用户主动上滑，就暂停自动下滑
+      // [原因] 让用户查看历史内容时不被持续输出打断
+      autoScrollEnabledRef.current = false;
+    }
+
+    lastScrollOffsetYRef.current = currentOffsetY;
+  }, [isSending]);
+
+  const handleMessageListContentChange = useCallback(() => {
+    if (autoScrollEnabledRef.current) {
+      scrollMessagesToEnd();
+    }
+  }, [scrollMessagesToEnd]);
+
+  useEffect(() => {
+    if (isDrawerVisible && !isHistoryLoading) {
+      scrollMessagesToEnd(false);
+    }
+  }, [isDrawerVisible, isHistoryLoading, scrollMessagesToEnd]);
+
   const sendMessage = useCallback(async () => {
     if (isSending) {
       return;
@@ -209,27 +292,46 @@ export function AiFloatingAssistant() {
     }
 
     const userMessage = createAiAssistantMessage('user', nextMessage);
-    const pendingMessages = [...messages, userMessage];
+    const assistantMessage = createAiAssistantMessage('assistant', '');
+    const requestMessages = [...messagesRef.current, userMessage];
+    const pendingMessages = [...requestMessages, assistantMessage];
+
+    autoScrollEnabledRef.current = true;
     updateMessages(pendingMessages);
     setDraftMessage('');
     setIsSending(true);
+    scrollMessagesToEnd();
 
     try {
-      const assistantReply = await requestAiAssistantReply(pendingMessages, screenKnowledge, selectedModel);
-      updateMessages([
-        ...pendingMessages,
-        createAiAssistantMessage('assistant', assistantReply),
-      ]);
+      const assistantReply = await requestAiAssistantReply(requestMessages, screenKnowledge, selectedModel, {
+        onChunk: (_, fullContent) => {
+          updateMessages((currentMessages) => currentMessages.map((message) => (
+            message.id === assistantMessage.id
+              ? { ...message, content: fullContent }
+              : message
+          )), false);
+        },
+      });
+
+      updateMessages((currentMessages) => currentMessages.map((message) => (
+        message.id === assistantMessage.id
+          ? { ...message, content: assistantReply }
+          : message
+      )));
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'AI 服务暂时不可用，请稍后再试。';
-      updateMessages([
-        ...pendingMessages,
-        createAiAssistantMessage('system', errorMessage),
-      ]);
+
+      updateMessages((currentMessages) => {
+        const nextMessages = currentMessages.filter((message) => (
+          message.id !== assistantMessage.id || message.content.trim().length > 0
+        ));
+
+        return [...nextMessages, createAiAssistantMessage('system', errorMessage)];
+      });
     } finally {
       setIsSending(false);
     }
-  }, [draftMessage, isSending, messages, screenKnowledge, selectedModel, updateMessages]);
+  }, [draftMessage, isSending, screenKnowledge, scrollMessagesToEnd, selectedModel, updateMessages]);
 
   const isSendDisabled = isSending || !draftMessage.trim();
 
@@ -284,9 +386,16 @@ export function AiFloatingAssistant() {
                     style={styles.modelSelector}>
                     <MaterialIcons name="psychology" size={27} color="#111827" />
                     <View style={styles.modelPill}>
-                      <ThemedText numberOfLines={1} style={styles.modelText}>{selectedModelLabel}</ThemedText>
+                      <ThemedText numberOfLines={1} style={styles.modelText}>
+                        {isModelsLoading ? '正在加载模型...' : selectedModelLabel}
+                      </ThemedText>
                     </View>
                   </Pressable>
+                  {modelsError ? (
+                    <ThemedText numberOfLines={2} style={styles.modelStatusText}>
+                      模型列表加载失败，当前使用默认模型。
+                    </ThemedText>
+                  ) : null}
                 </View>
                 <View style={styles.headerActions}>
                   <Pressable accessibilityLabel="清空 AI 历史对话" onPress={clearHistory} style={styles.clearButton}>
@@ -334,14 +443,20 @@ export function AiFloatingAssistant() {
                * 展示内容: 用户、AI 与系统历史对话
                * 数据来源: messages 状态和本地持久化记录
                */}
-              <ScrollView contentContainerStyle={styles.messageList} showsVerticalScrollIndicator={false}>
+              <ScrollView
+                ref={messageScrollRef}
+                contentContainerStyle={styles.messageList}
+                onContentSizeChange={handleMessageListContentChange}
+                onScroll={handleMessageListScroll}
+                scrollEventThrottle={16}
+                showsVerticalScrollIndicator={false}>
                 {isHistoryLoading ? (
                   <View style={styles.loadingBubble}>
                     <ActivityIndicator color="#1664FF" />
                     <ThemedText style={styles.loadingText}>正在读取历史对话...</ThemedText>
                   </View>
                 ) : (
-                  messages.map((message) => (
+                  messages.map((message, index) => (
                     <View
                       key={message.id}
                       style={[
@@ -357,15 +472,15 @@ export function AiFloatingAssistant() {
                         ]}>
                         {message.content}
                       </ThemedText>
+                      {message.role === 'assistant' && !message.content.trim() && isSending && index === messages.length - 1 ? (
+                        <View style={styles.streamingState}>
+                          <ActivityIndicator color="#1664FF" size="small" />
+                          <ThemedText style={styles.loadingText}>AI 正在思考...</ThemedText>
+                        </View>
+                      ) : null}
                     </View>
                   ))
                 )}
-                {isSending ? (
-                  <View style={[styles.messageBubble, styles.loadingBubble]}>
-                    <ActivityIndicator color="#1664FF" />
-                    <ThemedText style={styles.loadingText}>AI 正在思考...</ThemedText>
-                  </View>
-                ) : null}
               </ScrollView>
 
               <View style={styles.bottomArea}>
@@ -398,10 +513,13 @@ export function AiFloatingAssistant() {
                   <TextInput
                     multiline
                     placeholder="点击输入文本"
-                    placeholderTextColor="#111827"
+                    cursorColor="#111827"
+                    keyboardAppearance="light"
+                    placeholderTextColor="#000000"
+                    selectionColor="#111827"
                     value={draftMessage}
                     onChangeText={setDraftMessage}
-                    style={styles.input}
+                    style={[styles.input, { color: '#000000' }]}
                   />
                   <Pressable
                     accessibilityLabel="发送消息"
@@ -422,21 +540,49 @@ export function AiFloatingAssistant() {
       </Modal>
 
       <Modal animationType="fade" transparent visible={isModelSheetVisible} onRequestClose={() => setIsModelSheetVisible(false)}>
-        <Pressable style={styles.modelSheetBackdrop} onPress={() => setIsModelSheetVisible(false)}>
+        <View style={styles.modelSheetBackdrop}>
+          <Pressable
+            accessibilityLabel="关闭模型选择弹层"
+            onPress={() => setIsModelSheetVisible(false)}
+            style={StyleSheet.absoluteFill}
+          />
           <View style={styles.modelSheet}>
             <ThemedText style={styles.modelSheetTitle}>选择模型</ThemedText>
-            <ScrollView style={styles.modelList} showsVerticalScrollIndicator>
-              {models.map((model) => (
-                <Pressable key={model.id} onPress={() => selectModel(model.id)} style={styles.modelOption}>
-                  <ThemedText numberOfLines={1} style={styles.modelOptionText}>{model.label}</ThemedText>
-                  {model.id === selectedModel ? (
-                    <MaterialIcons name="check" size={20} color="#1664FF" />
-                  ) : null}
+            {modelsError ? (
+              <View style={styles.modelErrorBanner}>
+                <ThemedText style={styles.modelErrorText}>{modelsError}</ThemedText>
+                <Pressable onPress={() => void loadModels()} style={styles.modelRetryButton}>
+                  <ThemedText style={styles.modelRetryText}>
+                    {isModelsLoading ? '重试中...' : '重新加载'}
+                  </ThemedText>
                 </Pressable>
-              ))}
-            </ScrollView>
+              </View>
+            ) : null}
+
+            {isModelsLoading ? (
+              <View style={styles.modelLoadingState}>
+                <ActivityIndicator color="#1664FF" />
+                <ThemedText style={styles.modelLoadingText}>正在获取模型列表...</ThemedText>
+              </View>
+            ) : (
+              <ScrollView style={styles.modelList} showsVerticalScrollIndicator>
+                {/*
+                 * 渲染位置: 模型选择弹层列表区
+                 * 展示内容: 当前可切换的 AI 模型名称和选中态
+                 * 数据来源: /api/ai/models 返回的 models 状态
+                 */}
+                {models.map((model) => (
+                  <Pressable key={model.id} onPress={() => selectModel(model.id)} style={styles.modelOption}>
+                    <ThemedText numberOfLines={1} style={styles.modelOptionText}>{model.label}</ThemedText>
+                    {model.id === selectedModel ? (
+                      <MaterialIcons name="check" size={20} color="#1664FF" />
+                    ) : null}
+                  </Pressable>
+                ))}
+              </ScrollView>
+            )}
           </View>
-        </Pressable>
+        </View>
       </Modal>
     </>
   );
@@ -523,6 +669,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '100',
     lineHeight: 20,
+  },
+  modelStatusText: {
+    maxWidth: 212,
+    marginTop: 4,
+    color: '#D97706',
+    fontSize: 12,
+    lineHeight: 16,
   },
   headerActions: {
     flexDirection: 'row',
@@ -634,6 +787,11 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontSize: 13,
   },
+  streamingState: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   messageText: {
     color: '#334155',
     fontSize: 14,
@@ -680,9 +838,9 @@ const styles = StyleSheet.create({
     maxHeight: 96,
     flex: 1,
     paddingVertical: 4,
-    color: '#ffffffff',
+    color: '#000000',
     fontSize: 20,
-    fontWeight: '100',
+    fontWeight: '400',
     lineHeight: 24,
   },
   sendButton: {
@@ -711,6 +869,40 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
     marginBottom: 8,
+  },
+  modelErrorBanner: {
+    marginBottom: 10,
+    borderRadius: 12,
+    backgroundColor: '#FFF7ED',
+    padding: 12,
+    gap: 8,
+  },
+  modelErrorText: {
+    color: '#9A3412',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  modelRetryButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    backgroundColor: '#1664FF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  modelRetryText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  modelLoadingState: {
+    minHeight: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  modelLoadingText: {
+    color: '#64748B',
+    fontSize: 13,
   },
   modelList: {
     maxHeight: 360,

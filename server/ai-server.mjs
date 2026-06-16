@@ -66,6 +66,7 @@ app.post('/api/ai/chat', async (c) => {
     },
     body: JSON.stringify({
       model,
+      stream: true,
       messages: [
         {
           role: 'system',
@@ -78,23 +79,109 @@ app.post('/api/ai/chat', async (c) => {
         ...userMessages,
       ],
     }),
+    signal: c.req.raw.signal,
   });
 
-  const upstreamData = await upstreamResponse.json().catch(() => null);
-
   if (!upstreamResponse.ok) {
+    const upstreamData = await upstreamResponse.json().catch(() => null);
+
     return c.json({
       error: getUpstreamError(upstreamData) || 'AI 上游服务返回异常。',
     }, upstreamResponse.status);
   }
 
-  const content = upstreamData?.choices?.[0]?.message?.content;
+  const upstreamReader = upstreamResponse.body?.getReader();
 
-  if (typeof content !== 'string' || !content.trim()) {
-    return c.json({ error: 'AI 上游服务未返回有效内容。' }, 502);
+  if (!upstreamReader) {
+    return c.json({ error: 'AI 上游服务未提供可读取的流式响应。' }, 502);
   }
 
-  return c.json({ content: content.trim() });
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  let buffer = '';
+  let hasStreamedContent = false;
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const emitEvent = (eventName, data) => {
+        controller.enqueue(encoder.encode(`event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`));
+      };
+
+      try {
+        while (true) {
+          const { value, done } = await upstreamReader.read();
+
+          if (done) {
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          const parsed = consumeSsePayload(buffer);
+          buffer = parsed.rest;
+
+          for (const payload of parsed.events) {
+            if (payload === '[DONE]') {
+              continue;
+            }
+
+            const chunk = extractStreamText(payload);
+
+            if (!chunk) {
+              continue;
+            }
+
+            hasStreamedContent = true;
+            emitEvent('chunk', { content: chunk });
+          }
+        }
+
+        buffer += decoder.decode();
+        const parsed = consumeSsePayload(`${buffer}\n\n`);
+
+        for (const payload of parsed.events) {
+          if (payload === '[DONE]') {
+            continue;
+          }
+
+          const chunk = extractStreamText(payload);
+
+          if (!chunk) {
+            continue;
+          }
+
+          hasStreamedContent = true;
+          emitEvent('chunk', { content: chunk });
+        }
+
+        if (!hasStreamedContent) {
+          emitEvent('error', { message: 'AI 上游服务未返回有效内容。' });
+          controller.close();
+          return;
+        }
+
+        emitEvent('done', {});
+        controller.close();
+      } catch (error) {
+        emitEvent('error', { message: getRuntimeErrorMessage(error) });
+        controller.close();
+      } finally {
+        upstreamReader.releaseLock();
+      }
+    },
+    async cancel() {
+      await upstreamReader.cancel().catch(() => null);
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'X-Accel-Buffering': 'no',
+    },
+  });
 });
 
 function isChatMessage(value) {
@@ -137,6 +224,89 @@ function getUpstreamError(data) {
   }
 
   return null;
+}
+
+function consumeSsePayload(buffer) {
+  const normalizedBuffer = buffer.replace(/\r\n/g, '\n');
+  const rawEvents = normalizedBuffer.split('\n\n');
+  const rest = rawEvents.pop() ?? '';
+  const events = rawEvents
+    .map((eventBlock) => parseUpstreamSseEvent(eventBlock))
+    .filter((event) => event !== null);
+
+  return {
+    events,
+    rest,
+  };
+}
+
+function parseUpstreamSseEvent(block) {
+  const lines = block
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const dataLines = [];
+
+  for (const line of lines) {
+    if (line.startsWith(':')) {
+      continue;
+    }
+
+    if (line.startsWith('data:')) {
+      dataLines.push(line.slice(5).trim());
+    }
+  }
+
+  if (dataLines.length === 0) {
+    return null;
+  }
+
+  const payload = dataLines.join('\n');
+
+  if (payload === '[DONE]') {
+    return payload;
+  }
+
+  try {
+    return JSON.parse(payload);
+  } catch {
+    return null;
+  }
+}
+
+function extractStreamText(payload) {
+  const content = payload?.choices?.[0]?.delta?.content;
+
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return '';
+  }
+
+  return content
+    .map((item) => {
+      if (typeof item?.text === 'string') {
+        return item.text;
+      }
+
+      return '';
+    })
+    .join('');
+}
+
+function getRuntimeErrorMessage(error) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return 'AI 服务暂时不可用，请稍后再试。';
 }
 
 function loadLocalEnv() {
