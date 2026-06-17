@@ -3,6 +3,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { usePathname } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Markdown from 'react-native-markdown-display';
 import {
   ActivityIndicator,
   Alert,
@@ -334,6 +335,7 @@ export function AiFloatingAssistant() {
   }, [draftMessage, isSending, screenKnowledge, scrollMessagesToEnd, selectedModel, updateMessages]);
 
   const isSendDisabled = isSending || !draftMessage.trim();
+  const sendButtonLabel = isSending ? '发送中' : '发送';
 
   const drawerStyle = useMemo(
     () => [
@@ -464,14 +466,25 @@ export function AiFloatingAssistant() {
                         message.role === 'user' && styles.userBubble,
                         message.role === 'system' && styles.systemBubble,
                       ]}>
-                      <ThemedText
-                        style={[
-                          styles.messageText,
-                          message.role === 'user' && styles.userMessageText,
-                          message.role === 'system' && styles.systemMessageText,
-                        ]}>
-                        {message.content}
-                      </ThemedText>
+                      {/*
+                       * 渲染位置: AI 对话消息气泡内部
+                       * 展示内容: 用户纯文本消息、AI 的 Markdown 回复或系统提示文案
+                       * 数据来源: messages 状态中的单条 message
+                       */}
+                      {message.role === 'assistant' && message.content.trim() ? (
+                        <Markdown style={markdownStyles}>
+                          {message.content}
+                        </Markdown>
+                      ) : (
+                        <ThemedText
+                          style={[
+                            styles.messageText,
+                            message.role === 'user' && styles.userMessageText,
+                            message.role === 'system' && styles.systemMessageText,
+                          ]}>
+                          {message.content}
+                        </ThemedText>
+                      )}
                       {message.role === 'assistant' && !message.content.trim() && isSending && index === messages.length - 1 ? (
                         <View style={styles.streamingState}>
                           <ActivityIndicator color="#1664FF" size="small" />
@@ -485,53 +498,57 @@ export function AiFloatingAssistant() {
 
               <View style={styles.bottomArea}>
                 {/*
-                 * 渲染位置: AI 抽屉底部输入框上方
-                 * 展示内容: 图片上传、文件上传、插件、AI 配置四个快捷按钮
-                 * 数据来源: 固定功能入口和本地选择结果
+                 * 渲染位置: AI 抽屉底部顶部操作栏
+                 * 展示内容: 左侧工具按钮组和右侧发送按钮
+                 * 数据来源: 固定功能入口、draftMessage 状态与 isSending 状态
                  */}
-                <View style={styles.toolBar}>
-                  <Pressable accessibilityLabel="上传图片" onPress={pickImage} style={styles.toolButton}>
-                    <MaterialIcons name="image" size={22} color="#4B5563" />
-                  </Pressable>
-                  <Pressable accessibilityLabel="上传文件" onPress={pickDocument} style={styles.toolButton}>
-                    <MaterialIcons name="folder-open" size={22} color="#4B5563" />
-                  </Pressable>
-                  <Pressable accessibilityLabel="插件功能" onPress={() => showPendingFeature('插件功能')} style={styles.toolButton}>
-                    <MaterialIcons name="star-border" size={22} color="#4B5563" />
-                  </Pressable>
-                  <Pressable accessibilityLabel="AI 配置" onPress={() => showPendingFeature('AI 配置')} style={styles.toolButton}>
-                    <MaterialIcons name="add" size={22} color="#4B5563" />
+                <View style={styles.composerHeader}>
+                  <View style={styles.toolBar}>
+                    <Pressable accessibilityLabel="上传图片" onPress={pickImage} style={styles.toolButton}>
+                      <MaterialIcons name="image" size={22} color="#4B5563" />
+                    </Pressable>
+                    <Pressable accessibilityLabel="上传文件" onPress={pickDocument} style={styles.toolButton}>
+                      <MaterialIcons name="folder-open" size={22} color="#4B5563" />
+                    </Pressable>
+                    <Pressable accessibilityLabel="插件功能" onPress={() => showPendingFeature('插件功能')} style={styles.toolButton}>
+                      <MaterialIcons name="star-border" size={22} color="#4B5563" />
+                    </Pressable>
+                    <Pressable accessibilityLabel="AI 配置" onPress={() => showPendingFeature('AI 配置')} style={styles.toolButton}>
+                      <MaterialIcons name="add" size={22} color="#4B5563" />
+                    </Pressable>
+                  </View>
+                  <Pressable
+                    accessibilityLabel="发送消息"
+                    disabled={isSendDisabled}
+                    onPress={sendMessage}
+                    style={[styles.sendActionButton, isSendDisabled && styles.sendButtonDisabled]}>
+                    {isSending ? (
+                      <ActivityIndicator color="#FFFFFF" size="small" />
+                    ) : (
+                      <MaterialIcons name="send" size={18} color="#FFFFFF" />
+                    )}
+                    <ThemedText style={styles.sendActionText}>{sendButtonLabel}</ThemedText>
                   </Pressable>
                 </View>
 
                 {/*
                  * 渲染位置: AI 抽屉底部
-                 * 展示内容: 胶囊输入框和发送按钮
+                 * 展示内容: 紧凑的单区输入框
                  * 数据来源: draftMessage 状态
                  */}
                 <View style={styles.composer}>
                   <TextInput
                     multiline
-                    placeholder="点击输入文本"
+                    placeholder="输入对话内容..."
                     cursorColor="#111827"
                     keyboardAppearance="light"
                     placeholderTextColor="#000000"
                     selectionColor="#111827"
                     value={draftMessage}
                     onChangeText={setDraftMessage}
-                    style={[styles.input, { color: '#000000' }]}
+                    style={styles.input}
+                    textAlignVertical="top"
                   />
-                  <Pressable
-                    accessibilityLabel="发送消息"
-                    disabled={isSendDisabled}
-                    onPress={sendMessage}
-                    style={[styles.sendButton, isSendDisabled && styles.sendButtonDisabled]}>
-                    {isSending ? (
-                      <ActivityIndicator color="#111827" size="small" />
-                    ) : (
-                      <MaterialIcons name="send" size={30} color="#111827" />
-                    )}
-                  </Pressable>
                 </View>
               </View>
             </Animated.View>
@@ -591,6 +608,93 @@ export function AiFloatingAssistant() {
 function formatModelLabel(model: string) {
   return model.replace(/-/g, ' ').replace(/^gemini/i, 'gemini');
 }
+
+const markdownStyles = {
+  body: {
+    color: '#334155',
+    fontSize: 14,
+    lineHeight: 22,
+  },
+  paragraph: {
+    marginTop: 0,
+    marginBottom: 8,
+  },
+  heading1: {
+    color: '#0F172A',
+    fontSize: 20,
+    fontWeight: '700',
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  heading2: {
+    color: '#0F172A',
+    fontSize: 18,
+    fontWeight: '700',
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  heading3: {
+    color: '#0F172A',
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  bullet_list: {
+    marginTop: 0,
+    marginBottom: 8,
+  },
+  ordered_list: {
+    marginTop: 0,
+    marginBottom: 8,
+  },
+  list_item: {
+    color: '#334155',
+    marginBottom: 4,
+  },
+  strong: {
+    color: '#0F172A',
+    fontWeight: '700',
+  },
+  em: {
+    fontStyle: 'italic',
+  },
+  code_inline: {
+    color: '#1664FF',
+    backgroundColor: '#EAF2FF',
+    borderRadius: 6,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+  },
+  code_block: {
+    color: '#E2E8F0',
+    backgroundColor: '#0F172A',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  fence: {
+    color: '#E2E8F0',
+    backgroundColor: '#0F172A',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  blockquote: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#BFDBFE',
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  link: {
+    color: '#1664FF',
+  },
+} as const;
 
 const styles = StyleSheet.create({
   floatingButton: {
@@ -808,46 +912,57 @@ const styles = StyleSheet.create({
     marginHorizontal: -6,
     paddingBottom: 0,
   },
-  toolBar: {
-    width: 104,
-    height: 48,
+  composerHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-around',
-    marginBottom: 4,
-    borderRadius: 6,
-    backgroundColor: '#ffffffff',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    gap: 12,
+  },
+  toolBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 4,
   },
   toolButton: {
-    width: 24,
+    width: 28,
     height: 28,
     alignItems: 'center',
     justifyContent: 'center',
   },
   composer: {
-    minHeight: 36,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    borderRadius: 5,
-    backgroundColor: '#efefefff',
-    paddingLeft: 12,
-    paddingRight: 8,
-    paddingVertical: 2,
+    minHeight: 44,
+    borderRadius: 10,
+    backgroundColor: '#EFEFEF',
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 8,
   },
   input: {
+    minHeight: 28,
     maxHeight: 96,
-    flex: 1,
-    paddingVertical: 4,
     color: '#000000',
-    fontSize: 20,
+    fontSize: 14,
     fontWeight: '400',
-    lineHeight: 24,
+    lineHeight: 20,
+    paddingVertical: 0,
   },
-  sendButton: {
-    width: 36,
-    minHeight: 32,
+  sendActionButton: {
+    minWidth: 88,
+    height: 36,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 6,
+    borderRadius: 8,
+    backgroundColor: '#8EA46F',
+    paddingHorizontal: 12,
+  },
+  sendActionText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
   sendButtonDisabled: {
     opacity: 0.45,
