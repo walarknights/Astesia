@@ -3,8 +3,8 @@ import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Animated, Easing, Pressable, ScrollView, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomSwitchBar } from '@/components/BottomSwitchBar';
@@ -15,6 +15,7 @@ import { getNoteImageCount, getNotePlainText, loadNotes, type NoteRecord } from 
 type NotesTab = 'notes' | 'todo';
 
 const NOTE_PREVIEW_CONTENT_LIMIT = 15;
+const NOTE_TAB_POP_ANIMATION_MS = 680;
 
 function getNotePreviewContent(content: string) {
   const normalizedContent = content.trim();
@@ -95,12 +96,14 @@ export default function NotesScreen() {
             showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scrollContent}>
             {activeTab === 'notes' ? (
-              <NotesPanel
-                isLoading={isLoadingNotes}
-                notes={notes}
-                onPressNote={(noteId) => router.push({ pathname: '/note-editor', params: { noteId } })}
-                onPressCreate={() => router.push('/note-editor')}
-              />
+              <NotesTabAnimatedPanel>
+                <NotesPanel
+                  isLoading={isLoadingNotes}
+                  notes={notes}
+                  onPressNote={(noteId) => router.push({ pathname: '/note-editor', params: { noteId } })}
+                  onPressCreate={() => router.push('/note-editor')}
+                />
+              </NotesTabAnimatedPanel>
             ) : (
               <TodoPanel createRequestKey={todoCreateRequestKey} />
             )}
@@ -226,6 +229,50 @@ function TodoPanel({ createRequestKey }: { createRequestKey: number }) {
   );
 }
 
+function NotesTabAnimatedPanel({ children }: { children: React.ReactNode }) {
+  const enterProgress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(enterProgress, {
+      toValue: 1,
+      duration: NOTE_TAB_POP_ANIMATION_MS,
+      easing: Easing.out(Easing.back(1.15)),
+      useNativeDriver: true,
+    }).start();
+  }, [enterProgress]);
+
+  return (
+    /*
+     * 渲染位置: 合并入口的笔记 tab 内容容器
+     * 展示内容: 笔记空状态或笔记卡片列表的整体弹出动画
+     * 数据来源: activeTab === 'notes' 时传入的笔记内容节点
+     */
+    <Animated.View
+      style={[
+        styles.notesAnimatedPanel,
+        {
+          opacity: enterProgress,
+          transform: [
+            {
+              scale: enterProgress.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.92, 1],
+              }),
+            },
+            {
+              translateY: enterProgress.interpolate({
+                inputRange: [0, 1],
+                outputRange: [20, 0],
+              }),
+            },
+          ],
+        },
+      ]}>
+      {children}
+    </Animated.View>
+  );
+}
+
 const styles = StyleSheet.create({
   gradientBackground: {
     flex: 1,
@@ -264,6 +311,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 31,
     paddingTop: 24,
     paddingBottom: 116,
+  },
+  notesAnimatedPanel: {
+    width: '100%',
   },
   notesPanel: {
     width: '100%',

@@ -9,6 +9,7 @@ import 'react-native-reanimated';
 import { AiFloatingAssistant } from '@/components/AiFloatingAssistant';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AppSettingsProvider } from '@/services/app-settings';
+import { ScreenCaptureProvider, ScreenCaptureRoot } from '@/services/screen-capture';
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -56,23 +57,32 @@ function RootNavigator() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-        <Stack.Screen name="notes" options={{ title: '笔记' }} />
-        <Stack.Screen name="note-editor" options={{ title: '编写笔记' }} />
-        <Stack.Screen name="accounting" options={{ title: '记账' }} />
-        <Stack.Screen name="accounting-entry" options={{ title: '账单录入' }} />
-        <Stack.Screen name="todo" options={{ title: '待办' }} />
-        <Stack.Screen name="weather-search" options={{ headerShown: false }} />
-        <Stack.Screen name="weather-overview" options={{ title: '今日概览' }} />
-      </Stack>
-      {/*
-       * 渲染位置: 应用根布局导航栈上层
-       * 展示内容: 全局 AI 悬浮球与对话抽屉
-       * 数据来源: AiFloatingAssistant 内部状态和当前路由信息
-       */}
-      <AiFloatingAssistant />
+      <ScreenCaptureProvider>
+        {/*
+         * 渲染位置: 应用根布局导航栈
+         * 展示内容: 可被 AI 一键截图捕获的业务页面，不包含 AI 抽屉本身
+         * 数据来源: expo-router Stack 路由页面
+         */}
+        <ScreenCaptureRoot>
+          <Stack>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+            <Stack.Screen name="notes" options={{ title: '笔记' }} />
+            <Stack.Screen name="note-editor" options={{ title: '编写笔记' }} />
+            <Stack.Screen name="accounting" options={{ title: '记账' }} />
+            <Stack.Screen name="accounting-entry" options={{ title: '账单录入' }} />
+            <Stack.Screen name="todo" options={{ title: '待办' }} />
+            <Stack.Screen name="weather-search" options={{ headerShown: false }} />
+            <Stack.Screen name="weather-overview" options={{ title: '今日概览' }} />
+          </Stack>
+        </ScreenCaptureRoot>
+        {/*
+         * 渲染位置: 应用根布局导航栈上层
+         * 展示内容: 全局 AI 悬浮球与对话抽屉
+         * 数据来源: AiFloatingAssistant 内部状态和当前路由信息
+         */}
+        <AiFloatingAssistant />
+      </ScreenCaptureProvider>
       <StatusBar style="auto" />
     </ThemeProvider>
   );

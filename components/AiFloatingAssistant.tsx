@@ -1,18 +1,20 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { usePathname } from 'expo-router';
+import { useGlobalSearchParams, usePathname } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Markdown from 'react-native-markdown-display';
 import {
   ActivityIndicator,
   Alert,
   Animated,
+  Image,
   Easing,
   KeyboardAvoidingView,
   Modal,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -36,10 +38,16 @@ import {
   type AiAssistantMessage,
   type AiModel,
 } from '@/services/ai-assistant';
+import { buildAiScreenKnowledge, type AiScreenKnowledgeSnapshot } from '@/services/ai-screen-knowledge';
+import { useScreenCapture } from '@/services/screen-capture';
 
 const DRAWER_WIDTH_RATIO = 0.92;
 const DRAWER_MAX_WIDTH = 350;
 const DRAWER_ANIMATION_MS = 240;
+const FLOATING_BUTTON_SIZE = 56;
+const FLOATING_BUTTON_MARGIN = 12;
+const FLOATING_BUTTON_INITIAL_TOP = 220;
+const FLOATING_DRAG_THRESHOLD = 4;
 const SUPPORTED_DOCUMENT_TYPES = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
@@ -53,12 +61,22 @@ type MessageStateUpdater =
   | AiAssistantMessage[]
   | ((currentMessages: AiAssistantMessage[]) => AiAssistantMessage[]);
 
+type PendingImageAttachment = {
+  id: string;
+  uri: string;
+  name: string;
+  source: 'screenshot' | 'library';
+};
+
 export function AiFloatingAssistant() {
   const pathname = usePathname();
+  const routeParams = useGlobalSearchParams();
+  const { captureAppScreen } = useScreenCapture();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const drawerWidth = Math.min(width * DRAWER_WIDTH_RATIO, DRAWER_MAX_WIDTH);
   const drawerTranslateX = useRef(new Animated.Value(-drawerWidth)).current;
+  const floatingPosition = useRef(new Animated.ValueXY({ x: 0, y: FLOATING_BUTTON_INITIAL_TOP })).current;
   const [isDrawerVisible, setIsDrawerVisible] = useState(false);
   const [draftMessage, setDraftMessage] = useState('');
   const [messages, setMessages] = useState<AiAssistantMessage[]>([AI_ASSISTANT_WELCOME_MESSAGE]);
@@ -70,18 +88,28 @@ export function AiFloatingAssistant() {
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [isModelSheetVisible, setIsModelSheetVisible] = useState(false);
   const [isKnowledgeExpanded, setIsKnowledgeExpanded] = useState(false);
+  const [pendingImageAttachments, setPendingImageAttachments] = useState<PendingImageAttachment[]>([]);
+  const [isCapturingScreenImage, setIsCapturingScreenImage] = useState(false);
+  const [screenKnowledge, setScreenKnowledge] = useState<AiScreenKnowledgeSnapshot>(() => ({
+    route: pathname,
+    summary: `当前页面路径：${pathname}。正在读取屏幕文字内容...`,
+    source: 'fallback',
+    updatedAt: new Date().toISOString(),
+  }));
+  const [isScreenKnowledgeLoading, setIsScreenKnowledgeLoading] = useState(false);
   const isMountedRef = useRef(true);
   const messageScrollRef = useRef<ScrollView | null>(null);
   const messagesRef = useRef<AiAssistantMessage[]>([AI_ASSISTANT_WELCOME_MESSAGE]);
   const autoScrollEnabledRef = useRef(true);
   const lastScrollOffsetYRef = useRef(0);
-
-  const screenKnowledge = useMemo(
-    () => ({
-      route: pathname,
-      summary: `当前页面路径：${pathname}。屏幕内容读取、截图识别与业务上下文注入暂未接入。`,
-    }),
-    [pathname]
+  const floatingPositionRef = useRef({ x: 0, y: FLOATING_BUTTON_INITIAL_TOP });
+  const floatingDragStartRef = useRef({ x: 0, y: FLOATING_BUTTON_INITIAL_TOP });
+  const hasInitializedFloatingPositionRef = useRef(false);
+  const didDragFloatingButtonRef = useRef(false);
+  const routeParamSignature = JSON.stringify(routeParams);
+  const screenKnowledgeRouteParams = useMemo(
+    () => JSON.parse(routeParamSignature) as Record<string, string | string[] | undefined>,
+    [routeParamSignature]
   );
 
   useEffect(() => {
@@ -165,8 +193,112 @@ export function AiFloatingAssistant() {
     requestAnimationFrame(() => animateDrawer(0));
   }, [animateDrawer, drawerTranslateX, drawerWidth]);
 
-  const closeDrawer = useCallback(() => {
-    animateDrawer(-drawerWidth, () => setIsDrawerVisible(false));
+  const clampFloatingPosition = useCallback((x: number, y: number) => {
+    const maxX = Math.max(width - FLOATING_BUTTON_SIZE - FLOATING_BUTTON_MARGIN, FLOATING_BUTTON_MARGIN);
+    const minY = insets.top + FLOATING_BUTTON_MARGIN;
+    const maxY = Math.max(
+      height - insets.bottom - FLOATING_BUTTON_SIZE - FLOATING_BUTTON_MARGIN,
+      minY
+    );
+
+    return {
+      x: Math.min(Math.max(x, 0), maxX),
+      y: Math.min(Math.max(y, minY), maxY),
+    };
+  }, [height, insets.bottom, insets.top, width]);
+
+  const updateFloatingPosition = useCallback((position: { x: number; y: number }) => {
+    floatingPositionRef.current = position;
+    floatingPosition.setValue(position);
+  }, [floatingPosition]);
+
+  useEffect(() => {
+    if (!hasInitializedFloatingPositionRef.current) {
+      hasInitializedFloatingPositionRef.current = true;
+      updateFloatingPosition(clampFloatingPosition(0, insets.top + FLOATING_BUTTON_INITIAL_TOP));
+      return;
+    }
+
+    const nextPosition = clampFloatingPosition(
+      floatingPositionRef.current.x,
+      floatingPositionRef.current.y
+    );
+
+    if (
+      nextPosition.x !== floatingPositionRef.current.x
+      || nextPosition.y !== floatingPositionRef.current.y
+    ) {
+      updateFloatingPosition(nextPosition);
+    }
+  }, [clampFloatingPosition, insets.top, updateFloatingPosition]);
+
+  const handleFloatingButtonPress = useCallback(() => {
+    if (didDragFloatingButtonRef.current) {
+      didDragFloatingButtonRef.current = false;
+      return;
+    }
+
+    openDrawer();
+  }, [openDrawer]);
+
+  const floatingPanResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gestureState) => (
+      Math.abs(gestureState.dx) > FLOATING_DRAG_THRESHOLD
+      || Math.abs(gestureState.dy) > FLOATING_DRAG_THRESHOLD
+    ),
+    onPanResponderGrant: () => {
+      floatingDragStartRef.current = floatingPositionRef.current;
+      didDragFloatingButtonRef.current = false;
+    },
+    onPanResponderMove: (_, gestureState) => {
+      if (
+        Math.abs(gestureState.dx) > FLOATING_DRAG_THRESHOLD
+        || Math.abs(gestureState.dy) > FLOATING_DRAG_THRESHOLD
+      ) {
+        didDragFloatingButtonRef.current = true;
+      }
+
+      updateFloatingPosition(clampFloatingPosition(
+        floatingDragStartRef.current.x + gestureState.dx,
+        floatingDragStartRef.current.y + gestureState.dy
+      ));
+    },
+    onPanResponderRelease: (_, gestureState) => {
+      const nextPosition = clampFloatingPosition(
+        floatingDragStartRef.current.x + gestureState.dx,
+        floatingDragStartRef.current.y + gestureState.dy
+      );
+
+      updateFloatingPosition(nextPosition);
+
+      if (
+        didDragFloatingButtonRef.current
+        || Math.abs(gestureState.dx) > FLOATING_DRAG_THRESHOLD
+        || Math.abs(gestureState.dy) > FLOATING_DRAG_THRESHOLD
+      ) {
+        didDragFloatingButtonRef.current = true;
+        setTimeout(() => {
+          didDragFloatingButtonRef.current = false;
+        }, 0);
+      }
+    },
+    onPanResponderTerminate: () => {
+      updateFloatingPosition(clampFloatingPosition(
+        floatingPositionRef.current.x,
+        floatingPositionRef.current.y
+      ));
+      didDragFloatingButtonRef.current = true;
+      setTimeout(() => {
+        didDragFloatingButtonRef.current = false;
+      }, 0);
+    },
+  }), [clampFloatingPosition, updateFloatingPosition]);
+
+  const closeDrawer = useCallback((onComplete?: () => void) => {
+    animateDrawer(-drawerWidth, () => {
+      setIsDrawerVisible(false);
+      onComplete?.();
+    });
   }, [animateDrawer, drawerWidth]);
 
   const scrollMessagesToEnd = useCallback((animated = true) => {
@@ -197,9 +329,84 @@ export function AiFloatingAssistant() {
     );
   }, [updateMessages]);
 
+  const refreshScreenKnowledge = useCallback(async (shouldAppendMessage = false) => {
+    setIsScreenKnowledgeLoading(true);
+
+    try {
+      const nextKnowledge = await buildAiScreenKnowledge(pathname, screenKnowledgeRouteParams);
+
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setScreenKnowledge(nextKnowledge);
+
+      if (shouldAppendMessage) {
+        appendSystemMessage(`已读取当前屏幕文字内容：\n${nextKnowledge.summary}`);
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsScreenKnowledgeLoading(false);
+      }
+    }
+  // [变更] 修改前: 知识库只读取当前路径的占位文案
+  // [变更] 修改后: 路由或参数变化时重建页面文字摘要
+  // [原因] 让 AI 对话能够结合当前页面真实业务文本回答
+  }, [appendSystemMessage, pathname, screenKnowledgeRouteParams]);
+
+  useEffect(() => {
+    void refreshScreenKnowledge(false);
+  }, [refreshScreenKnowledge]);
+
+  const appendImageAttachment = useCallback((attachment: Omit<PendingImageAttachment, 'id'>) => {
+    setPendingImageAttachments((currentAttachments) => [
+      ...currentAttachments,
+      {
+        ...attachment,
+        id: `${attachment.source}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      },
+    ]);
+  }, []);
+
+  const removeImageAttachment = useCallback((attachmentId: string) => {
+    setPendingImageAttachments((currentAttachments) => (
+      currentAttachments.filter((attachment) => attachment.id !== attachmentId)
+    ));
+  }, []);
+
   const captureCurrentScreen = useCallback(() => {
-    appendSystemMessage(`已读取当前屏幕占位信息：${screenKnowledge.summary}`);
-  }, [appendSystemMessage, screenKnowledge.summary]);
+    if (isCapturingScreenImage) {
+      return;
+    }
+
+    setIsCapturingScreenImage(true);
+    closeDrawer(() => {
+      const runCapture = async () => {
+        try {
+          await waitForScreenSettled();
+          const imageUri = await captureAppScreen();
+
+          appendImageAttachment({
+            uri: imageUri,
+            name: `屏幕截图 ${formatAttachmentTime(new Date())}`,
+            source: 'screenshot',
+          });
+          await refreshScreenKnowledge(true);
+          openDrawer();
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : '当前屏幕截图失败，请稍后重试。';
+          Alert.alert('截图失败', errorMessage);
+          openDrawer();
+        } finally {
+          if (isMountedRef.current) {
+            setIsCapturingScreenImage(false);
+          }
+        }
+      };
+
+      void runCapture();
+    });
+  }, [appendImageAttachment, captureAppScreen, closeDrawer, isCapturingScreenImage, openDrawer, refreshScreenKnowledge]);
 
   const clearHistory = useCallback(() => {
     void clearAiAssistantMessages().then((nextMessages) => {
@@ -230,9 +437,15 @@ export function AiFloatingAssistant() {
       return;
     }
 
-    const imageName = result.assets[0].fileName ?? result.assets[0].uri.split('/').pop() ?? '图片';
-    appendSystemMessage(`已选择图片：${imageName}。图片内容解析与上传到 AI 暂未接入。`);
-  }, [appendSystemMessage]);
+    const imageAsset = result.assets[0];
+    const imageName = imageAsset.fileName ?? imageAsset.uri.split('/').pop() ?? '相册图片';
+
+    appendImageAttachment({
+      uri: imageAsset.uri,
+      name: imageName,
+      source: 'library',
+    });
+  }, [appendImageAttachment]);
 
   const pickDocument = useCallback(async () => {
     const result = await DocumentPicker.getDocumentAsync({
@@ -292,7 +505,10 @@ export function AiFloatingAssistant() {
       return;
     }
 
-    const userMessage = createAiAssistantMessage('user', nextMessage);
+    const attachmentNotice = pendingImageAttachments.length > 0
+      ? `\n\n[已添加 ${pendingImageAttachments.length} 张图片附件，当前阶段仅展示在输入区，暂未发送给 AI 模型。]`
+      : '';
+    const userMessage = createAiAssistantMessage('user', `${nextMessage}${attachmentNotice}`);
     const assistantMessage = createAiAssistantMessage('assistant', '');
     const requestMessages = [...messagesRef.current, userMessage];
     const pendingMessages = [...requestMessages, assistantMessage];
@@ -300,6 +516,7 @@ export function AiFloatingAssistant() {
     autoScrollEnabledRef.current = true;
     updateMessages(pendingMessages);
     setDraftMessage('');
+    setPendingImageAttachments([]);
     setIsSending(true);
     scrollMessagesToEnd();
 
@@ -332,7 +549,7 @@ export function AiFloatingAssistant() {
     } finally {
       setIsSending(false);
     }
-  }, [draftMessage, isSending, screenKnowledge, scrollMessagesToEnd, selectedModel, updateMessages]);
+  }, [draftMessage, isSending, pendingImageAttachments.length, screenKnowledge, scrollMessagesToEnd, selectedModel, updateMessages]);
 
   const isSendDisabled = isSending || !draftMessage.trim();
   const sendButtonLabel = isSending ? '发送中' : '发送';
@@ -353,22 +570,32 @@ export function AiFloatingAssistant() {
   return (
     <>
       {/*
-       * 渲染位置: 全局页面左侧中部
-       * 展示内容: 可点击打开 AI 抽屉的悬浮球
-       * 数据来源: 组件内部固定文案与图标
+       * 渲染位置: 全局页面可拖拽浮层
+       * 展示内容: 可点击打开 AI 抽屉、可拖动调整位置的悬浮球
+       * 数据来源: 组件内部固定文案、图标与 floatingPosition 手势状态
        */}
-      <Pressable
-        accessibilityLabel="打开 AI 助手"
-        accessibilityRole="button"
-        onPress={openDrawer}
-        style={[styles.floatingButton, { top: insets.top + 220 }]}>
-        <MaterialIcons name="auto-awesome" size={24} color="#FFFFFF" />
-        <ThemedText style={styles.floatingLabel}>AI</ThemedText>
-      </Pressable>
+      <Animated.View
+        {...floatingPanResponder.panHandlers}
+        style={[styles.floatingButton, { transform: floatingPosition.getTranslateTransform() }]}>
+        <Pressable
+          accessibilityHint="轻点打开 AI 助手，拖动可调整悬浮球位置"
+          accessibilityLabel="打开 AI 助手"
+          accessibilityRole="button"
+          disabled={isCapturingScreenImage}
+          onPress={handleFloatingButtonPress}
+          style={styles.floatingButtonContent}>
+          {isCapturingScreenImage ? (
+            <ActivityIndicator color="#FFFFFF" size="small" />
+          ) : (
+            <MaterialIcons name="auto-awesome" size={24} color="#FFFFFF" />
+          )}
+          <ThemedText style={styles.floatingLabel}>AI</ThemedText>
+        </Pressable>
+      </Animated.View>
 
-      <Modal animationType="fade" transparent visible={isDrawerVisible} onRequestClose={closeDrawer}>
+      <Modal animationType="fade" transparent visible={isDrawerVisible} onRequestClose={() => closeDrawer()}>
         <View style={styles.modalRoot}>
-          <Pressable accessibilityLabel="关闭 AI 助手遮罩" style={styles.backdrop} onPress={closeDrawer} />
+          <Pressable accessibilityLabel="关闭 AI 助手遮罩" style={styles.backdrop} onPress={() => closeDrawer()} />
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             pointerEvents="box-none"
@@ -403,7 +630,7 @@ export function AiFloatingAssistant() {
                   <Pressable accessibilityLabel="清空 AI 历史对话" onPress={clearHistory} style={styles.clearButton}>
                     <ThemedText style={styles.clearText}>清空</ThemedText>
                   </Pressable>
-                  <Pressable accessibilityLabel="关闭 AI 助手" onPress={closeDrawer} style={styles.closeButton}>
+                  <Pressable accessibilityLabel="关闭 AI 助手" onPress={() => closeDrawer()} style={styles.closeButton}>
                     <MaterialIcons name="close" size={20} color="#475569" />
                   </Pressable>
                 </View>
@@ -411,8 +638,8 @@ export function AiFloatingAssistant() {
 
               {/*
                * 渲染位置: AI 抽屉顶部知识库折叠区
-               * 展示内容: 当前屏幕知识库入口，展开后显示可滚动摘要小窗
-               * 数据来源: expo-router 当前路径与占位摘要
+               * 展示内容: 当前屏幕知识库入口，展开后显示可滚动摘要小窗和刷新入口
+               * 数据来源: expo-router 当前路径、路由参数和本地页面业务数据
                */}
               <View style={styles.knowledgeSection}>
                 <Pressable
@@ -431,9 +658,20 @@ export function AiFloatingAssistant() {
                 {isKnowledgeExpanded ? (
                   <View style={styles.knowledgePanel}>
                     <ScrollView nestedScrollEnabled showsVerticalScrollIndicator>
+                      <ThemedText style={styles.knowledgeMeta}>
+                        {isScreenKnowledgeLoading ? '正在读取屏幕文字...' : `更新时间：${formatKnowledgeTime(screenKnowledge.updatedAt)}`}
+                      </ThemedText>
                       <ThemedText style={styles.knowledgeText}>{screenKnowledge.summary}</ThemedText>
-                      <Pressable onPress={captureCurrentScreen} style={styles.captureButton}>
-                        <ThemedText style={styles.captureText}>读取当前屏幕（占位）</ThemedText>
+                      <Pressable
+                        disabled={isScreenKnowledgeLoading || isCapturingScreenImage}
+                        onPress={captureCurrentScreen}
+                        style={[
+                          styles.captureButton,
+                          (isScreenKnowledgeLoading || isCapturingScreenImage) && styles.captureButtonDisabled,
+                        ]}>
+                        <ThemedText style={styles.captureText}>
+                          {isCapturingScreenImage ? '截图中...' : isScreenKnowledgeLoading ? '读取中...' : '读取当前屏幕（一键截图）'}
+                        </ThemedText>
                       </Pressable>
                     </ScrollView>
                   </View>
@@ -537,6 +775,40 @@ export function AiFloatingAssistant() {
                  * 数据来源: draftMessage 状态
                  */}
                 <View style={styles.composer}>
+                  {pendingImageAttachments.length > 0 ? (
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      style={styles.attachmentScroller}
+                      contentContainerStyle={styles.attachmentList}>
+                      {/*
+                       * 渲染位置: AI 抽屉底部输入框上方
+                       * 展示内容: 待发送的屏幕截图或用户上传图片缩略图
+                       * 数据来源: pendingImageAttachments 状态
+                       */}
+                      {pendingImageAttachments.map((attachment) => (
+                        <View key={attachment.id} style={styles.attachmentCard}>
+                          <Image source={{ uri: attachment.uri }} style={styles.attachmentImage} />
+                          <View style={styles.attachmentMeta}>
+                            <MaterialIcons
+                              name={attachment.source === 'screenshot' ? 'screenshot-monitor' : 'image'}
+                              size={14}
+                              color="#1664FF"
+                            />
+                            <ThemedText numberOfLines={1} style={styles.attachmentName}>
+                              {attachment.name}
+                            </ThemedText>
+                          </View>
+                          <Pressable
+                            accessibilityLabel={`移除图片附件 ${attachment.name}`}
+                            onPress={() => removeImageAttachment(attachment.id)}
+                            style={styles.removeAttachmentButton}>
+                            <MaterialIcons name="close" size={14} color="#FFFFFF" />
+                          </Pressable>
+                        </View>
+                      ))}
+                    </ScrollView>
+                  ) : null}
                   <TextInput
                     multiline
                     placeholder="输入对话内容..."
@@ -607,6 +879,28 @@ export function AiFloatingAssistant() {
 
 function formatModelLabel(model: string) {
   return model.replace(/-/g, ' ').replace(/^gemini/i, 'gemini');
+}
+
+function formatKnowledgeTime(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function formatAttachmentTime(date: Date) {
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function waitForScreenSettled() {
+  return new Promise<void>((resolve) => {
+    setTimeout(() => {
+      requestAnimationFrame(() => resolve());
+    }, DRAWER_ANIMATION_MS + 80);
+  });
 }
 
 const markdownStyles = {
@@ -700,19 +994,23 @@ const styles = StyleSheet.create({
   floatingButton: {
     position: 'absolute',
     left: 0,
+    top: 0,
     zIndex: 20,
     width: 56,
     height: 56,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderBottomRightRadius: 28,
-    borderTopRightRadius: 28,
+    borderRadius: 28,
     backgroundColor: '#4F46E5',
     shadowColor: '#312E81',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.22,
     shadowRadius: 16,
     elevation: 8,
+  },
+  floatingButtonContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 28,
   },
   floatingLabel: {
     marginTop: 1,
@@ -845,6 +1143,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
   },
+  knowledgeMeta: {
+    marginBottom: 6,
+    color: '#64748B',
+    fontSize: 11,
+    lineHeight: 16,
+  },
   captureButton: {
     alignSelf: 'flex-start',
     marginTop: 10,
@@ -853,10 +1157,58 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     backgroundColor: '#1664FF',
   },
+  captureButtonDisabled: {
+    opacity: 0.56,
+  },
   captureText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
+  },
+  attachmentScroller: {
+    marginBottom: 8,
+  },
+  attachmentList: {
+    gap: 8,
+    paddingRight: 4,
+  },
+  attachmentCard: {
+    width: 92,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D6E4FF',
+    backgroundColor: '#FFFFFF',
+    padding: 5,
+  },
+  attachmentImage: {
+    width: '100%',
+    height: 58,
+    borderRadius: 8,
+    backgroundColor: '#E5E7EB',
+  },
+  attachmentMeta: {
+    minHeight: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 5,
+  },
+  attachmentName: {
+    flex: 1,
+    color: '#334155',
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  removeAttachmentButton: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    width: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 10,
+    backgroundColor: '#0F172A',
   },
   messageList: {
     flexGrow: 1,
