@@ -173,6 +173,7 @@ export function AiFloatingAssistant() {
     () => formatModelLabel(models.find((model) => model.id === selectedModel)?.label ?? selectedModel),
     [models, selectedModel]
   );
+  const conversationTitle = '对话标题';
 
   const animateDrawer = useCallback((toValue: number, onComplete?: () => void) => {
     Animated.timing(drawerTranslateX, {
@@ -408,12 +409,23 @@ export function AiFloatingAssistant() {
     });
   }, [appendImageAttachment, captureAppScreen, closeDrawer, isCapturingScreenImage, openDrawer, refreshScreenKnowledge]);
 
-  const clearHistory = useCallback(() => {
+  const startNewConversation = useCallback(() => {
+    if (isSending) {
+      return;
+    }
+
+    // [变更] 修改前: 顶部按钮以“清空”表达删除历史
+    // [变更] 修改后: 以“新对话”表达重置当前会话，等待后续接入多会话保存
+    // [原因] 当前版本尚未支持保存多轮独立对话，使用加号更符合开启新会话的用户预期
+    setDraftMessage('');
+    setPendingImageAttachments([]);
+    autoScrollEnabledRef.current = true;
     void clearAiAssistantMessages().then((nextMessages) => {
       messagesRef.current = nextMessages;
       setMessages(nextMessages);
+      scrollMessagesToEnd(false);
     });
-  }, []);
+  }, [isSending, scrollMessagesToEnd]);
 
   const selectModel = useCallback((modelId: string) => {
     setSelectedModel(modelId);
@@ -602,38 +614,56 @@ export function AiFloatingAssistant() {
             style={styles.keyboardAvoider}>
             <Animated.View style={drawerStyle}>
               <View style={styles.header}>
-                <View>
+                {/*
+                 * 渲染位置: AI 抽屉顶部导航栏
+                 * 展示内容: 历史对话菜单入口、当前对话标题和新对话按钮
+                 * 数据来源: 固定占位标题 conversationTitle 与组件内 startNewConversation 操作
+                 */}
+                <View style={styles.conversationNav}>
+                  <Pressable
+                    accessibilityLabel="打开已保存的 AI 多轮对话菜单"
+                    accessibilityRole="button"
+                    onPress={() => showPendingFeature('历史对话菜单')}
+                    style={styles.menuButton}>
+                    <MaterialIcons name="menu-open" size={24} color="#111827" />
+                  </Pressable>
+                  <ThemedText numberOfLines={1} style={styles.conversationTitle}>
+                    {conversationTitle}
+                  </ThemedText>
+                  <Pressable
+                    accessibilityLabel="开启一轮新 AI 对话"
+                    accessibilityRole="button"
+                    disabled={isSending}
+                    onPress={startNewConversation}
+                    style={[styles.newConversationButton, isSending && styles.newConversationButtonDisabled]}>
+                    <MaterialIcons name="add" size={30} color="#111827" />
+                  </Pressable>
+                </View>
+
+                {/*
+                 * 渲染位置: AI 抽屉顶部品牌与模型区域
+                 * 展示内容: Asteasia 品牌、brain 图标和当前模型名称，点击模型后弹出选择
+                 * 数据来源: models 与 selectedModel 状态
+                 */}
+                <View style={styles.identityRow}>
                   <ThemedText style={styles.brandTitle}>Asteasia</ThemedText>
-                  {/*
-                   * 渲染位置: AI 抽屉标题下方
-                   * 展示内容: brain 图标和当前模型名称，点击后弹出模型选择
-                   * 数据来源: models 与 selectedModel 状态
-                   */}
                   <Pressable
                     accessibilityLabel="选择 AI 模型"
                     onPress={() => setIsModelSheetVisible(true)}
                     style={styles.modelSelector}>
-                    <MaterialIcons name="psychology" size={27} color="#111827" />
+                    <MaterialIcons name="psychology" size={27} color="#4B5563" />
                     <View style={styles.modelPill}>
                       <ThemedText numberOfLines={1} style={styles.modelText}>
                         {isModelsLoading ? '正在加载模型...' : selectedModelLabel}
                       </ThemedText>
                     </View>
                   </Pressable>
-                  {modelsError ? (
-                    <ThemedText numberOfLines={2} style={styles.modelStatusText}>
-                      模型列表加载失败，当前使用默认模型。
-                    </ThemedText>
-                  ) : null}
                 </View>
-                <View style={styles.headerActions}>
-                  <Pressable accessibilityLabel="清空 AI 历史对话" onPress={clearHistory} style={styles.clearButton}>
-                    <ThemedText style={styles.clearText}>清空</ThemedText>
-                  </Pressable>
-                  <Pressable accessibilityLabel="关闭 AI 助手" onPress={() => closeDrawer()} style={styles.closeButton}>
-                    <MaterialIcons name="close" size={20} color="#475569" />
-                  </Pressable>
-                </View>
+                {modelsError ? (
+                  <ThemedText numberOfLines={2} style={styles.modelStatusText}>
+                    模型列表加载失败，当前使用默认模型。
+                  </ThemedText>
+                ) : null}
               </View>
 
               {/*
@@ -1040,10 +1070,45 @@ const styles = StyleSheet.create({
     elevation: 16,
   },
   header: {
-    minHeight: 80,
+    minHeight: 118,
+    marginBottom: 12,
+  },
+  conversationNav: {
+    height: 38,
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 5,
+    marginBottom: 22,
+  },
+  menuButton: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 4,
+    backgroundColor: '#F5F6F8',
+  },
+  conversationTitle: {
+    flex: 1,
+    marginHorizontal: 16,
+    color: '#111827',
+    fontSize: 18,
+    fontWeight: '400',
+    lineHeight: 24,
+    textAlign: 'center',
+  },
+  newConversationButton: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  newConversationButtonDisabled: {
+    opacity: 0.5,
+  },
+  identityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   brandTitle: {
     color: '#000000',
@@ -1052,16 +1117,19 @@ const styles = StyleSheet.create({
     lineHeight: 38,
   },
   modelSelector: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 4,
+    justifyContent: 'flex-end',
+    marginLeft: 18,
   },
   modelPill: {
-    width: 163,
+    flex: 1,
+    maxWidth: 176,
     height: 25,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 12,
+    marginLeft: 10,
     borderRadius: 10,
     backgroundColor: '#F2F3F5',
     paddingHorizontal: 10,
@@ -1078,31 +1146,6 @@ const styles = StyleSheet.create({
     color: '#D97706',
     fontSize: 12,
     lineHeight: 16,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 6,
-    paddingTop: 2,
-  },
-  clearButton: {
-    borderRadius: 999,
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-    backgroundColor: '#F2F3F5',
-  },
-  clearText: {
-    color: '#475569',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  closeButton: {
-    width: 30,
-    height: 30,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 15,
-    backgroundColor: '#F2F3F5',
   },
   knowledgeSection: {
     marginLeft: 13,
