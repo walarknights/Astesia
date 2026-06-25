@@ -10,7 +10,8 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "akshare": "python3.11 scripts/akshare_server.py",
-    "ai-server": "node server/ai-server.mjs"
+    "ai-server": "node server/ai-server.mjs",
+    "db:migrate": "node server/migrate-postgres.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -48,6 +49,7 @@
     "hono": "^4.10.7",
     "mobx": "^6.15.3",
     "mobx-react-lite": "^4.1.1",
+    "pg": "^8.22.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",

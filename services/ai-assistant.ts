@@ -1,6 +1,9 @@
 import { Platform } from 'react-native';
 
-import { AI_ASSISTANT_MESSAGES_STORAGE_KEY } from '@/services/storage-keys';
+import {
+  AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY,
+  AI_ASSISTANT_MESSAGES_STORAGE_KEY,
+} from '@/services/storage-keys';
 import { storage } from '@/services/storage';
 
 export type AiAssistantMessageRole = 'assistant' | 'user' | 'system';
@@ -10,6 +13,15 @@ export type AiAssistantMessage = {
   role: AiAssistantMessageRole;
   content: string;
   createdAt: string;
+};
+
+export type AiAssistantConversation = {
+  id: string;
+  title: string;
+  messages: AiAssistantMessage[];
+  createdAt: string;
+  updatedAt: string;
+  titleGeneratedAt?: string;
 };
 
 export type AiScreenKnowledge = {
@@ -37,6 +49,17 @@ type ModelsResponse = {
   error?: unknown;
 };
 
+type ConversationsResponse = {
+  conversations?: unknown;
+  conversation?: unknown;
+  error?: unknown;
+};
+
+type ConversationTitleResponse = {
+  title?: unknown;
+  error?: unknown;
+};
+
 type AiStreamEvent =
   | {
       event: 'chunk';
@@ -57,6 +80,7 @@ export type AiAssistantReplyStreamOptions = {
 };
 
 export const DEFAULT_AI_MODEL_ID = 'gemini-3.1-pro-preview';
+export const DEFAULT_AI_CONVERSATION_TITLE = '对话标题';
 
 export const AI_ASSISTANT_WELCOME_MESSAGE: AiAssistantMessage = {
   id: 'assistant-welcome',
@@ -92,6 +116,30 @@ export function createAiAssistantMessage(
   };
 }
 
+/**
+ * 创建一轮 AI 会话，统一补齐会话 id、标题和时间字段。
+ *
+ * @param messages - 会话内消息，默认仅包含欢迎语
+ * @param title - 会话标题，默认使用待总结占位标题
+ * @returns 可本地缓存并远端保存的 AI 会话
+ * @example
+ *   createAiAssistantConversation()
+ */
+export function createAiAssistantConversation(
+  messages: AiAssistantMessage[] = [AI_ASSISTANT_WELCOME_MESSAGE],
+  title = DEFAULT_AI_CONVERSATION_TITLE
+): AiAssistantConversation {
+  const now = new Date().toISOString();
+
+  return {
+    id: `conversation-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    title,
+    messages,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 function isAssistantMessage(value: unknown): value is AiAssistantMessage {
   if (!value || typeof value !== 'object') {
     return false;
@@ -103,6 +151,21 @@ function isAssistantMessage(value: unknown): value is AiAssistantMessage {
     && typeof message.content === 'string'
     && typeof message.createdAt === 'string'
     && (message.role === 'assistant' || message.role === 'user' || message.role === 'system')
+  );
+}
+
+function isAssistantConversation(value: unknown): value is AiAssistantConversation {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const conversation = value as Partial<AiAssistantConversation>;
+  return (
+    typeof conversation.id === 'string'
+    && typeof conversation.title === 'string'
+    && typeof conversation.createdAt === 'string'
+    && typeof conversation.updatedAt === 'string'
+    && Array.isArray(conversation.messages)
   );
 }
 
@@ -130,6 +193,237 @@ export async function saveAiAssistantMessages(messages: AiAssistantMessage[]) {
 export async function clearAiAssistantMessages() {
   await saveAiAssistantMessages([AI_ASSISTANT_WELCOME_MESSAGE]);
   return [AI_ASSISTANT_WELCOME_MESSAGE];
+}
+
+export async function loadAiAssistantConversations() {
+  const localConversations = await loadLocalAiAssistantConversations();
+
+  try {
+    const response = await fetch(`${AI_API_HOST}/api/ai/conversations`);
+    const data = await response.json().catch(() => ({})) as ConversationsResponse;
+
+    if (!response.ok) {
+      throw new Error(typeof data.error === 'string' ? data.error : '多轮对话列表获取失败。');
+    }
+
+    // 格式化: 远端会话列表 + 本地缓存列表 → 以 updatedAt 较新的记录合并 → 最新会话优先展示
+    // 说明: 远端失败时仍保留本地可用数据，远端成功时补齐本地离线期间保存的会话
+    const remoteConversations = normalizeConversationList(data.conversations);
+    const mergedConversations = mergeAiConversations(remoteConversations, localConversations);
+
+    if (mergedConversations.length > 0) {
+      await saveLocalAiAssistantConversations(mergedConversations);
+    }
+
+    return mergedConversations;
+  } catch (error) {
+    const errorMessage = getErrorMessage(error);
+    console.warn(`[AI] 多轮对话列表加载失败: ${errorMessage}; 使用本地缓存`);
+    return localConversations;
+  }
+}
+
+export async function saveAiAssistantConversation(conversation: AiAssistantConversation) {
+  const normalizedConversation = normalizeConversation(conversation);
+  const localConversations = await loadLocalAiAssistantConversations();
+  const nextLocalConversations = mergeAiConversations([normalizedConversation], localConversations);
+
+  await saveLocalAiAssistantConversations(nextLocalConversations);
+
+  try {
+    const response = await fetch(`${AI_API_HOST}/api/ai/conversations/${encodeURIComponent(normalizedConversation.id)}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ conversation: normalizedConversation }),
+    });
+    const data = await response.json().catch(() => ({})) as ConversationsResponse;
+
+    if (!response.ok) {
+      throw new Error(typeof data.error === 'string' ? data.error : '多轮对话远端保存失败。');
+    }
+
+    const remoteConversation = isAssistantConversation(data.conversation)
+      ? normalizeConversation(data.conversation)
+      : normalizedConversation;
+    await saveLocalAiAssistantConversations(mergeAiConversations([remoteConversation], nextLocalConversations));
+
+    return {
+      conversation: remoteConversation,
+      remoteSaved: true,
+      errorMessage: null,
+    };
+  } catch (error) {
+    const errorMessage = getErrorMessage(error);
+    console.warn(`[AI] 多轮对话远端保存失败: ${errorMessage}; 已保存在本地缓存`);
+
+    return {
+      conversation: normalizedConversation,
+      remoteSaved: false,
+      errorMessage,
+    };
+  }
+}
+
+export async function deleteAiAssistantConversation(conversationId: string) {
+  const localConversations = await loadLocalAiAssistantConversations();
+  await saveLocalAiAssistantConversations(
+    localConversations.filter((conversation) => conversation.id !== conversationId)
+  );
+
+  try {
+    const response = await fetch(`${AI_API_HOST}/api/ai/conversations/${encodeURIComponent(conversationId)}`, {
+      method: 'DELETE',
+    });
+    const data = await response.json().catch(() => ({})) as ConversationsResponse;
+
+    if (!response.ok) {
+      throw new Error(typeof data.error === 'string' ? data.error : '多轮对话远端删除失败。');
+    }
+
+    return { remoteDeleted: true, errorMessage: null };
+  } catch (error) {
+    const errorMessage = getErrorMessage(error);
+    console.warn(`[AI] 多轮对话远端删除失败: ${errorMessage}; 本地缓存已删除`);
+    return { remoteDeleted: false, errorMessage };
+  }
+}
+
+export async function requestAiConversationTitle(messages: AiAssistantMessage[]) {
+  const titleMessages = messages
+    .filter(isAssistantMessage)
+    .filter((message) => message.content.trim().length > 0)
+    .map(({ role, content }) => ({ role, content }));
+
+  if (titleMessages.length === 0) {
+    return DEFAULT_AI_CONVERSATION_TITLE;
+  }
+
+  const response = await fetch(`${AI_API_HOST}/api/ai/conversations/summarize-title`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ messages: titleMessages }),
+  });
+  const data = await response.json().catch(() => ({})) as ConversationTitleResponse;
+
+  if (!response.ok) {
+    throw new Error(typeof data.error === 'string' ? data.error : '对话标题总结失败。');
+  }
+
+  return normalizeConversationTitle(data.title);
+}
+
+export function isDefaultAiConversationTitle(title: string) {
+  return !title.trim() || title.trim() === DEFAULT_AI_CONVERSATION_TITLE;
+}
+
+function normalizeConversationList(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter(isAssistantConversation).map(normalizeConversation).sort(compareConversationsByUpdatedAt)
+    : [];
+}
+
+function normalizeConversation(value: AiAssistantConversation): AiAssistantConversation {
+  const messages = Array.isArray(value.messages)
+    ? value.messages.filter(isAssistantMessage)
+    : [AI_ASSISTANT_WELCOME_MESSAGE];
+
+  return {
+    ...value,
+    title: normalizeConversationTitle(value.title),
+    messages: messages.length > 0 ? messages : [AI_ASSISTANT_WELCOME_MESSAGE],
+    createdAt: normalizeIsoString(value.createdAt),
+    updatedAt: normalizeIsoString(value.updatedAt),
+    titleGeneratedAt: typeof value.titleGeneratedAt === 'string' ? value.titleGeneratedAt : undefined,
+  };
+}
+
+function normalizeConversationTitle(value: unknown) {
+  if (typeof value !== 'string') {
+    return DEFAULT_AI_CONVERSATION_TITLE;
+  }
+
+  const normalizedTitle = value
+    .replace(/["'“”‘’《》「」]/g, '')
+    .replace(/\s+/g, '')
+    .trim();
+
+  if (!normalizedTitle) {
+    return DEFAULT_AI_CONVERSATION_TITLE;
+  }
+
+  return Array.from(normalizedTitle).slice(0, 12).join('');
+}
+
+function normalizeIsoString(value: unknown) {
+  if (typeof value !== 'string') {
+    return new Date().toISOString();
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+}
+
+function mergeAiConversations(...conversationGroups: AiAssistantConversation[][]) {
+  const conversationMap = new Map<string, AiAssistantConversation>();
+
+  for (const conversation of conversationGroups.flat()) {
+    const normalizedConversation = normalizeConversation(conversation);
+    const storedConversation = conversationMap.get(normalizedConversation.id);
+
+    if (
+      !storedConversation
+      || new Date(normalizedConversation.updatedAt).getTime() >= new Date(storedConversation.updatedAt).getTime()
+    ) {
+      conversationMap.set(normalizedConversation.id, normalizedConversation);
+    }
+  }
+
+  return Array.from(conversationMap.values()).sort(compareConversationsByUpdatedAt);
+}
+
+function compareConversationsByUpdatedAt(
+  currentConversation: AiAssistantConversation,
+  nextConversation: AiAssistantConversation
+) {
+  return new Date(nextConversation.updatedAt).getTime() - new Date(currentConversation.updatedAt).getTime();
+}
+
+async function loadLocalAiAssistantConversations() {
+  try {
+    const rawConversations = await storage.getItem(AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY);
+
+    if (rawConversations) {
+      const parsedConversations = JSON.parse(rawConversations);
+      const conversations = normalizeConversationList(parsedConversations);
+
+      if (conversations.length > 0) {
+        return conversations;
+      }
+    }
+
+    const legacyMessages = await loadAiAssistantMessages();
+
+    if (legacyMessages.length > 1) {
+      const legacyConversation = createAiAssistantConversation(legacyMessages);
+      await saveLocalAiAssistantConversations([legacyConversation]);
+      return [legacyConversation];
+    }
+
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+async function saveLocalAiAssistantConversations(conversations: AiAssistantConversation[]) {
+  await storage.setItem(
+    AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY,
+    JSON.stringify(mergeAiConversations(conversations))
+  );
 }
 
 function getErrorMessage(error: unknown) {

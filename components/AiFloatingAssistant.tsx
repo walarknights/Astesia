@@ -28,13 +28,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import {
   AI_ASSISTANT_WELCOME_MESSAGE,
+  DEFAULT_AI_CONVERSATION_TITLE,
   DEFAULT_AI_MODEL_ID,
-  clearAiAssistantMessages,
+  createAiAssistantConversation,
   createAiAssistantMessage,
-  loadAiAssistantMessages,
+  deleteAiAssistantConversation,
+  isDefaultAiConversationTitle,
+  loadAiAssistantConversations,
   requestAiAssistantReply,
+  requestAiConversationTitle,
   requestAiModels,
-  saveAiAssistantMessages,
+  saveAiAssistantConversation,
+  type AiAssistantConversation,
   type AiAssistantMessage,
   type AiModel,
 } from '@/services/ai-assistant';
@@ -79,7 +84,9 @@ export function AiFloatingAssistant() {
   const floatingPosition = useRef(new Animated.ValueXY({ x: 0, y: FLOATING_BUTTON_INITIAL_TOP })).current;
   const [isDrawerVisible, setIsDrawerVisible] = useState(false);
   const [draftMessage, setDraftMessage] = useState('');
-  const [messages, setMessages] = useState<AiAssistantMessage[]>([AI_ASSISTANT_WELCOME_MESSAGE]);
+  const [currentConversation, setCurrentConversation] = useState<AiAssistantConversation>(() => createAiAssistantConversation());
+  const [conversations, setConversations] = useState<AiAssistantConversation[]>([]);
+  const [messages, setMessages] = useState<AiAssistantMessage[]>(currentConversation.messages);
   const [models, setModels] = useState<AiModel[]>([{ id: DEFAULT_AI_MODEL_ID, label: DEFAULT_AI_MODEL_ID }]);
   const [selectedModel, setSelectedModel] = useState(DEFAULT_AI_MODEL_ID);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
@@ -87,6 +94,9 @@ export function AiFloatingAssistant() {
   const [isModelsLoading, setIsModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [isModelSheetVisible, setIsModelSheetVisible] = useState(false);
+  const [isConversationDrawerVisible, setIsConversationDrawerVisible] = useState(false);
+  const [isTitleSummarizing, setIsTitleSummarizing] = useState(false);
+  const [conversationSyncError, setConversationSyncError] = useState<string | null>(null);
   const [isKnowledgeExpanded, setIsKnowledgeExpanded] = useState(false);
   const [pendingImageAttachments, setPendingImageAttachments] = useState<PendingImageAttachment[]>([]);
   const [isCapturingScreenImage, setIsCapturingScreenImage] = useState(false);
@@ -100,6 +110,8 @@ export function AiFloatingAssistant() {
   const isMountedRef = useRef(true);
   const messageScrollRef = useRef<ScrollView | null>(null);
   const messagesRef = useRef<AiAssistantMessage[]>([AI_ASSISTANT_WELCOME_MESSAGE]);
+  const currentConversationRef = useRef(currentConversation);
+  const conversationsRef = useRef<AiAssistantConversation[]>([]);
   const autoScrollEnabledRef = useRef(true);
   const lastScrollOffsetYRef = useRef(0);
   const floatingPositionRef = useRef({ x: 0, y: FLOATING_BUTTON_INITIAL_TOP });
@@ -121,6 +133,14 @@ export function AiFloatingAssistant() {
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    currentConversationRef.current = currentConversation;
+  }, [currentConversation]);
+
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
 
   const loadModels = useCallback(async () => {
     setIsModelsLoading(true);
@@ -148,17 +168,25 @@ export function AiFloatingAssistant() {
   useEffect(() => {
     let active = true;
 
-    const syncMessages = async () => {
-      const storedMessages = await loadAiAssistantMessages();
+    const syncConversations = async () => {
+      const storedConversations = await loadAiAssistantConversations();
+      const nextConversation = storedConversations[0] ?? createAiAssistantConversation();
+      const nextConversations = storedConversations.length > 0
+        ? storedConversations
+        : [nextConversation];
 
       if (active) {
-        messagesRef.current = storedMessages;
-        setMessages(storedMessages);
+        currentConversationRef.current = nextConversation;
+        conversationsRef.current = nextConversations;
+        messagesRef.current = nextConversation.messages;
+        setCurrentConversation(nextConversation);
+        setConversations(nextConversations);
+        setMessages(nextConversation.messages);
         setIsHistoryLoading(false);
       }
     };
 
-    void syncMessages();
+    void syncConversations();
 
     return () => {
       active = false;
@@ -173,7 +201,8 @@ export function AiFloatingAssistant() {
     () => formatModelLabel(models.find((model) => model.id === selectedModel)?.label ?? selectedModel),
     [models, selectedModel]
   );
-  const conversationTitle = '对话标题';
+  const conversationDrawerWidth = Math.max(112, Math.min(width * 0.25, 180));
+  const conversationTitle = currentConversation.title || DEFAULT_AI_CONVERSATION_TITLE;
 
   const animateDrawer = useCallback((toValue: number, onComplete?: () => void) => {
     Animated.timing(drawerTranslateX, {
@@ -308,21 +337,63 @@ export function AiFloatingAssistant() {
     });
   }, []);
 
+  const syncConversationToStorage = useCallback((conversation: AiAssistantConversation, shouldSetCurrent = false) => {
+    if (shouldSetCurrent) {
+      currentConversationRef.current = conversation;
+      messagesRef.current = conversation.messages;
+      setCurrentConversation(conversation);
+      setMessages(conversation.messages);
+    }
+
+    setConversations((currentConversations) => {
+      const nextConversations = upsertAiConversationList(currentConversations, conversation);
+      conversationsRef.current = nextConversations;
+      return nextConversations;
+    });
+
+    void saveAiAssistantConversation(conversation).then((result) => {
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      setConversationSyncError(result.errorMessage);
+      setConversations((currentConversations) => {
+        const nextConversations = upsertAiConversationList(currentConversations, result.conversation);
+        conversationsRef.current = nextConversations;
+        return nextConversations;
+      });
+
+      if (shouldSetCurrent && currentConversationRef.current.id === result.conversation.id) {
+        currentConversationRef.current = result.conversation;
+        messagesRef.current = result.conversation.messages;
+        setCurrentConversation(result.conversation);
+        setMessages(result.conversation.messages);
+      }
+    });
+  }, []);
+
   const updateMessages = useCallback((updater: MessageStateUpdater, shouldPersist = true) => {
     setMessages((currentMessages) => {
       const nextMessages = typeof updater === 'function'
         ? updater(currentMessages)
         : updater;
+      const nextConversation = {
+        ...currentConversationRef.current,
+        messages: nextMessages,
+        updatedAt: new Date().toISOString(),
+      };
 
       messagesRef.current = nextMessages;
+      currentConversationRef.current = nextConversation;
+      setCurrentConversation(nextConversation);
 
       if (shouldPersist) {
-        void saveAiAssistantMessages(nextMessages);
+        syncConversationToStorage(nextConversation);
       }
 
       return nextMessages;
     });
-  }, []);
+  }, [syncConversationToStorage]);
 
   const appendSystemMessage = useCallback((content: string) => {
     updateMessages(
@@ -414,23 +485,116 @@ export function AiFloatingAssistant() {
       return;
     }
 
-    // [变更] 修改前: 顶部按钮以“清空”表达删除历史
-    // [变更] 修改后: 以“新对话”表达重置当前会话，等待后续接入多会话保存
-    // [原因] 当前版本尚未支持保存多轮独立对话，使用加号更符合开启新会话的用户预期
+    const nextConversation = createAiAssistantConversation();
+
+    // [变更] 修改前: “+” 仅清空当前消息数组
+    // [变更] 修改后: 创建独立会话并保存到本地缓存和远端
+    // [原因] 多轮对话需要保留旧会话，同时让新会话拥有独立 id 与标题
     setDraftMessage('');
     setPendingImageAttachments([]);
+    setIsConversationDrawerVisible(false);
     autoScrollEnabledRef.current = true;
-    void clearAiAssistantMessages().then((nextMessages) => {
-      messagesRef.current = nextMessages;
-      setMessages(nextMessages);
-      scrollMessagesToEnd(false);
-    });
-  }, [isSending, scrollMessagesToEnd]);
+    syncConversationToStorage(nextConversation, true);
+    scrollMessagesToEnd(false);
+  }, [isSending, scrollMessagesToEnd, syncConversationToStorage]);
 
   const selectModel = useCallback((modelId: string) => {
     setSelectedModel(modelId);
     setIsModelSheetVisible(false);
   }, []);
+
+  const selectConversation = useCallback((conversation: AiAssistantConversation) => {
+    currentConversationRef.current = conversation;
+    messagesRef.current = conversation.messages;
+    autoScrollEnabledRef.current = true;
+    setCurrentConversation(conversation);
+    setMessages(conversation.messages);
+    setDraftMessage('');
+    setPendingImageAttachments([]);
+    setIsConversationDrawerVisible(false);
+    scrollMessagesToEnd(false);
+  }, [scrollMessagesToEnd]);
+
+  const summarizeConversationTitle = useCallback(async (
+    conversationId: string,
+    summaryMessages?: AiAssistantMessage[],
+    conversationMessages?: AiAssistantMessage[]
+  ) => {
+    if (isTitleSummarizing) {
+      return;
+    }
+
+    const targetConversation = conversationsRef.current.find((conversation) => conversation.id === conversationId)
+      ?? (currentConversationRef.current.id === conversationId ? currentConversationRef.current : null);
+    const nextSummaryMessages = summaryMessages ?? targetConversation?.messages;
+
+    if (!targetConversation || !nextSummaryMessages || nextSummaryMessages.length === 0) {
+      return;
+    }
+
+    setIsTitleSummarizing(true);
+
+    try {
+      const title = await requestAiConversationTitle(nextSummaryMessages);
+      const now = new Date().toISOString();
+      const nextConversation = {
+        ...targetConversation,
+        title,
+        messages: conversationMessages ?? targetConversation.messages,
+        titleGeneratedAt: now,
+        updatedAt: now,
+      };
+
+      syncConversationToStorage(nextConversation, currentConversationRef.current.id === conversationId);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : '对话标题总结失败，请稍后重试。';
+      Alert.alert('总结标题失败', errorMessage);
+    } finally {
+      if (isMountedRef.current) {
+        setIsTitleSummarizing(false);
+      }
+    }
+  }, [isTitleSummarizing, syncConversationToStorage]);
+
+  const deleteConversation = useCallback((conversationId: string) => {
+    const nextConversations = conversationsRef.current.filter((conversation) => conversation.id !== conversationId);
+    const fallbackConversation = nextConversations[0] ?? createAiAssistantConversation();
+
+    conversationsRef.current = nextConversations.length > 0 ? nextConversations : [fallbackConversation];
+    setConversations(conversationsRef.current);
+
+    if (currentConversationRef.current.id === conversationId) {
+      selectConversation(fallbackConversation);
+    }
+
+    void deleteAiAssistantConversation(conversationId).then((result) => {
+      if (isMountedRef.current) {
+        setConversationSyncError(result.errorMessage);
+      }
+    });
+
+    if (nextConversations.length === 0) {
+      syncConversationToStorage(fallbackConversation, currentConversationRef.current.id === fallbackConversation.id);
+    }
+  }, [selectConversation, syncConversationToStorage]);
+
+  const handleConversationLongPress = useCallback((conversation: AiAssistantConversation) => {
+    Alert.alert(conversation.title, '选择对话操作', [
+      {
+        text: '总结标题',
+        onPress: () => void summarizeConversationTitle(conversation.id),
+      },
+      {
+        text: '删除',
+        style: 'destructive',
+        onPress: () => deleteConversation(conversation.id),
+      },
+      {
+        text: '取消',
+        style: 'cancel',
+      },
+    ]);
+  }, [deleteConversation, summarizeConversationTitle]);
 
   const pickImage = useCallback(async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -524,6 +688,11 @@ export function AiFloatingAssistant() {
     const assistantMessage = createAiAssistantMessage('assistant', '');
     const requestMessages = [...messagesRef.current, userMessage];
     const pendingMessages = [...requestMessages, assistantMessage];
+    const activeConversationId = currentConversationRef.current.id;
+    const shouldAutoSummarizeTitle = (
+      countUserMessages(requestMessages) === 1
+      && isDefaultAiConversationTitle(currentConversationRef.current.title)
+    );
 
     autoScrollEnabledRef.current = true;
     updateMessages(pendingMessages);
@@ -543,11 +712,20 @@ export function AiFloatingAssistant() {
         },
       });
 
-      updateMessages((currentMessages) => currentMessages.map((message) => (
+      const finalMessages = messagesRef.current.map((message) => (
         message.id === assistantMessage.id
           ? { ...message, content: assistantReply }
           : message
-      )));
+      ));
+
+      updateMessages(finalMessages);
+
+      if (shouldAutoSummarizeTitle) {
+        void summarizeConversationTitle(activeConversationId, [
+          userMessage,
+          { ...assistantMessage, content: assistantReply },
+        ], finalMessages);
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'AI 服务暂时不可用，请稍后再试。';
 
@@ -561,7 +739,7 @@ export function AiFloatingAssistant() {
     } finally {
       setIsSending(false);
     }
-  }, [draftMessage, isSending, pendingImageAttachments.length, screenKnowledge, scrollMessagesToEnd, selectedModel, updateMessages]);
+  }, [draftMessage, isSending, pendingImageAttachments.length, screenKnowledge, scrollMessagesToEnd, selectedModel, summarizeConversationTitle, updateMessages]);
 
   const isSendDisabled = isSending || !draftMessage.trim();
   const sendButtonLabel = isSending ? '发送中' : '发送';
@@ -623,13 +801,18 @@ export function AiFloatingAssistant() {
                   <Pressable
                     accessibilityLabel="打开已保存的 AI 多轮对话菜单"
                     accessibilityRole="button"
-                    onPress={() => showPendingFeature('历史对话菜单')}
+                    onPress={() => setIsConversationDrawerVisible(true)}
                     style={styles.menuButton}>
                     <MaterialIcons name="menu-open" size={24} color="#111827" />
                   </Pressable>
-                  <ThemedText numberOfLines={1} style={styles.conversationTitle}>
-                    {conversationTitle}
-                  </ThemedText>
+                  <View style={styles.conversationTitleBox}>
+                    <ThemedText numberOfLines={1} style={styles.conversationTitle}>
+                      {conversationTitle}
+                    </ThemedText>
+                    {isTitleSummarizing ? (
+                      <ActivityIndicator color="#64748B" size="small" />
+                    ) : null}
+                  </View>
                   <Pressable
                     accessibilityLabel="开启一轮新 AI 对话"
                     accessibilityRole="button"
@@ -858,6 +1041,81 @@ export function AiFloatingAssistant() {
         </View>
       </Modal>
 
+      <Modal
+        animationType="fade"
+        transparent
+        visible={isConversationDrawerVisible}
+        onRequestClose={() => setIsConversationDrawerVisible(false)}>
+        <View style={styles.conversationDrawerRoot}>
+          <Pressable
+            accessibilityLabel="关闭多轮对话列表遮罩"
+            onPress={() => setIsConversationDrawerVisible(false)}
+            style={styles.conversationDrawerBackdrop}
+          />
+          {/*
+           * 渲染位置: AI 对话页左侧历史会话抽屉
+           * 展示内容: 已保存的多轮对话标题、更新时间、同步提示和长按操作入口
+           * 数据来源: conversations 状态、本地缓存和 /api/ai/conversations 远端接口
+           */}
+          <View
+            style={[
+              styles.conversationDrawer,
+              {
+                width: conversationDrawerWidth,
+                paddingTop: insets.top + 20,
+                paddingBottom: Math.max(insets.bottom, 12),
+              },
+            ]}>
+            <View style={styles.conversationDrawerHeader}>
+              <MaterialIcons name="history" size={18} color="#111827" />
+              <ThemedText style={styles.conversationDrawerTitle}>历史</ThemedText>
+            </View>
+            {conversationSyncError ? (
+              <ThemedText numberOfLines={3} style={styles.conversationSyncText}>
+                远端同步失败，已保存在本地
+              </ThemedText>
+            ) : null}
+            <ScrollView
+              contentContainerStyle={styles.conversationListContent}
+              showsVerticalScrollIndicator={false}>
+              {isHistoryLoading ? (
+                <ActivityIndicator color="#1664FF" size="small" />
+              ) : (
+                conversations.map((conversation) => {
+                  const isActiveConversation = conversation.id === currentConversation.id;
+
+                  return (
+                    <Pressable
+                      key={conversation.id}
+                      accessibilityLabel={`切换到对话 ${conversation.title}`}
+                      accessibilityRole="button"
+                      onLongPress={() => handleConversationLongPress(conversation)}
+                      onPress={() => selectConversation(conversation)}
+                      style={[
+                        styles.conversationListItem,
+                        isActiveConversation && styles.conversationListItemActive,
+                      ]}>
+                      <ThemedText
+                        numberOfLines={2}
+                        style={[
+                          styles.conversationListTitle,
+                          isActiveConversation && styles.conversationListTitleActive,
+                        ]}>
+                        {conversation.title}
+                      </ThemedText>
+                      <ThemedText numberOfLines={1} style={styles.conversationListTime}>
+                        {formatConversationUpdatedAt(conversation.updatedAt)}
+                      </ThemedText>
+                    </Pressable>
+                  );
+                })
+              )}
+            </ScrollView>
+            <ThemedText style={styles.conversationDrawerHint}>长按可删除或总结标题</ThemedText>
+          </View>
+        </View>
+      </Modal>
+
       <Modal animationType="fade" transparent visible={isModelSheetVisible} onRequestClose={() => setIsModelSheetVisible(false)}>
         <View style={styles.modelSheetBackdrop}>
           <Pressable
@@ -923,6 +1181,43 @@ function formatKnowledgeTime(value: string) {
 
 function formatAttachmentTime(date: Date) {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function formatConversationUpdatedAt(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  return `${month}-${day} ${hour}:${minute}`;
+}
+
+function upsertAiConversationList(
+  conversations: AiAssistantConversation[],
+  conversation: AiAssistantConversation
+) {
+  const conversationMap = new Map(conversations.map((item) => [item.id, item]));
+  const storedConversation = conversationMap.get(conversation.id);
+
+  if (
+    !storedConversation
+    || new Date(conversation.updatedAt).getTime() >= new Date(storedConversation.updatedAt).getTime()
+  ) {
+    conversationMap.set(conversation.id, conversation);
+  }
+
+  return Array.from(conversationMap.values()).sort((currentConversation, nextConversation) => (
+    new Date(nextConversation.updatedAt).getTime() - new Date(currentConversation.updatedAt).getTime()
+  ));
+}
+
+function countUserMessages(messages: AiAssistantMessage[]) {
+  return messages.filter((message) => message.role === 'user' && message.content.trim().length > 0).length;
 }
 
 function waitForScreenSettled() {
@@ -1088,9 +1383,16 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#F5F6F8',
   },
-  conversationTitle: {
+  conversationTitleBox: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
     marginHorizontal: 16,
+  },
+  conversationTitle: {
+    flexShrink: 1,
     color: '#111827',
     fontSize: 18,
     fontWeight: '400',
@@ -1146,6 +1448,74 @@ const styles = StyleSheet.create({
     color: '#D97706',
     fontSize: 12,
     lineHeight: 16,
+  },
+  conversationDrawerRoot: {
+    flex: 1,
+  },
+  conversationDrawerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(15, 23, 42, 0.18)',
+  },
+  conversationDrawer: {
+    height: '100%',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 8, height: 0 },
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    elevation: 18,
+  },
+  conversationDrawerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 10,
+  },
+  conversationDrawerTitle: {
+    color: '#111827',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  conversationSyncText: {
+    marginBottom: 8,
+    color: '#D97706',
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  conversationListContent: {
+    gap: 8,
+    paddingBottom: 10,
+  },
+  conversationListItem: {
+    minHeight: 62,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  },
+  conversationListItemActive: {
+    backgroundColor: '#EAF2FF',
+  },
+  conversationListTitle: {
+    color: '#334155',
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 16,
+  },
+  conversationListTitleActive: {
+    color: '#1664FF',
+  },
+  conversationListTime: {
+    marginTop: 4,
+    color: '#94A3B8',
+    fontSize: 10,
+    lineHeight: 14,
+  },
+  conversationDrawerHint: {
+    color: '#94A3B8',
+    fontSize: 10,
+    lineHeight: 14,
   },
   knowledgeSection: {
     marginLeft: 13,
