@@ -1,19 +1,16 @@
-import { existsSync, readFileSync } from 'node:fs';
-
-import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import pg from 'pg';
 
-loadLocalEnv();
+if (isNodeRuntime()) {
+  await loadLocalEnv();
+}
 
 const NITRO_ROUTER_URL = 'https://api.nitrorouter.com/v1/chat/completions';
 const NITRO_ROUTER_MODELS_URL = 'https://api.nitrorouter.com/v1/models';
 const DEFAULT_MODEL = 'gemini-3.1-pro-preview';
 const TITLE_SUMMARY_MODEL = 'gpt-5-nano';
 const DEFAULT_CONVERSATION_TITLE = '对话标题';
-const PORT = Number(process.env.AI_SERVER_PORT || 8787);
-const { Pool } = pg;
+const PORT = Number(getEnvValue(null, 'AI_SERVER_PORT') || 8787);
 
 const app = new Hono();
 let databasePool = null;
@@ -23,7 +20,7 @@ app.use('*', cors());
 app.get('/health', (c) => c.json({ ok: true }));
 
 app.get('/api/ai/models', async (c) => {
-  const apiKey = process.env.NITRO_ROUTER_API_KEY;
+  const apiKey = getEnvValue(c.env, 'NITRO_ROUTER_API_KEY');
 
   if (!apiKey) {
     return c.json({ error: '缺少 NITRO_ROUTER_API_KEY，请先在后端环境变量中配置。' }, 500);
@@ -47,7 +44,7 @@ app.get('/api/ai/models', async (c) => {
 
 app.get('/api/ai/conversations', async (c) => {
   try {
-    return c.json({ conversations: await readConversations() });
+    return c.json({ conversations: await readConversations(c.env) });
   } catch (error) {
     return c.json({ error: getRuntimeErrorMessage(error) }, 500);
   }
@@ -67,7 +64,7 @@ app.put('/api/ai/conversations/:id', async (c) => {
   }
 
   try {
-    return c.json({ conversation: await upsertConversation(conversation) });
+    return c.json({ conversation: await upsertConversation(conversation, c.env) });
   } catch (error) {
     return c.json({ error: getRuntimeErrorMessage(error) }, 500);
   }
@@ -77,7 +74,7 @@ app.delete('/api/ai/conversations/:id', async (c) => {
   const conversationId = c.req.param('id');
 
   try {
-    await deleteConversation(conversationId);
+    await deleteConversation(conversationId, c.env);
     return c.json({ ok: true });
   } catch (error) {
     return c.json({ error: getRuntimeErrorMessage(error) }, 500);
@@ -85,7 +82,7 @@ app.delete('/api/ai/conversations/:id', async (c) => {
 });
 
 app.post('/api/ai/conversations/summarize-title', async (c) => {
-  const apiKey = process.env.NITRO_ROUTER_API_KEY;
+  const apiKey = getEnvValue(c.env, 'NITRO_ROUTER_API_KEY');
 
   if (!apiKey) {
     return c.json({ error: '缺少 NITRO_ROUTER_API_KEY，请先在后端环境变量中配置。' }, 500);
@@ -139,7 +136,7 @@ app.post('/api/ai/conversations/summarize-title', async (c) => {
 });
 
 app.post('/api/ai/chat', async (c) => {
-  const apiKey = process.env.NITRO_ROUTER_API_KEY;
+  const apiKey = getEnvValue(c.env, 'NITRO_ROUTER_API_KEY');
 
   if (!apiKey) {
     return c.json({ error: '缺少 NITRO_ROUTER_API_KEY，请先在后端环境变量中配置。' }, 500);
@@ -150,7 +147,7 @@ app.post('/api/ai/chat', async (c) => {
     ? body.messages.filter(isChatMessage)
     : [];
   const screenKnowledge = normalizeScreenKnowledge(body?.screenKnowledge);
-  const model = normalizeModel(body?.model);
+  const model = normalizeModel(body?.model, c.env);
 
   if (userMessages.length === 0) {
     return c.json({ error: '缺少可发送给 AI 的对话消息。' }, 400);
@@ -282,17 +279,20 @@ app.post('/api/ai/chat', async (c) => {
   });
 });
 
-function getDatabasePool() {
-  const databaseUrl = normalizeDatabaseUrl(process.env.DATABASE_URL);
+async function getDatabasePool(env) {
+  const databaseUrl = normalizeDatabaseUrl(getEnvValue(env, 'DATABASE_URL'));
 
   if (!databaseUrl) {
     throw new Error('缺少 DATABASE_URL，请先配置 PostgreSQL 连接串。');
   }
 
   if (!databasePool) {
+    const pgModule = await import('pg');
+    const { Pool } = pgModule.default ?? pgModule;
+
     databasePool = new Pool({
       connectionString: databaseUrl,
-      ssl: shouldUseDatabaseSsl(databaseUrl) ? { rejectUnauthorized: false } : undefined,
+      ssl: shouldUseDatabaseSsl(databaseUrl, env) ? { rejectUnauthorized: false } : undefined,
     });
   }
 
@@ -305,20 +305,21 @@ function normalizeDatabaseUrl(value) {
     : '';
 }
 
-function shouldUseDatabaseSsl(databaseUrl) {
-  if (process.env.DATABASE_SSL === 'true') {
+function shouldUseDatabaseSsl(databaseUrl, env) {
+  if (getEnvValue(env, 'DATABASE_SSL') === 'true') {
     return true;
   }
 
-  if (process.env.DATABASE_SSL === 'false') {
+  if (getEnvValue(env, 'DATABASE_SSL') === 'false') {
     return false;
   }
 
   return !/localhost|127\.0\.0\.1|0\.0\.0\.0/.test(databaseUrl);
 }
 
-async function readConversations() {
-  const { rows } = await getDatabasePool().query(`
+async function readConversations(env) {
+  const pool = await getDatabasePool(env);
+  const { rows } = await pool.query(`
     SELECT id, title, messages, created_at, updated_at, title_generated_at
     FROM ai_conversations
     ORDER BY updated_at DESC
@@ -327,8 +328,9 @@ async function readConversations() {
   return rows.map(normalizeConversationRow).filter(Boolean);
 }
 
-async function upsertConversation(conversation) {
-  const { rows } = await getDatabasePool().query(`
+async function upsertConversation(conversation, env) {
+  const pool = await getDatabasePool(env);
+  const { rows } = await pool.query(`
     INSERT INTO ai_conversations (
       id,
       title,
@@ -359,12 +361,13 @@ async function upsertConversation(conversation) {
     return normalizeConversationRow(rows[0]) ?? conversation;
   }
 
-  const existingConversation = await readConversationById(conversation.id);
+  const existingConversation = await readConversationById(conversation.id, env);
   return existingConversation ?? conversation;
 }
 
-async function readConversationById(conversationId) {
-  const { rows } = await getDatabasePool().query(`
+async function readConversationById(conversationId, env) {
+  const pool = await getDatabasePool(env);
+  const { rows } = await pool.query(`
     SELECT id, title, messages, created_at, updated_at, title_generated_at
     FROM ai_conversations
     WHERE id = $1
@@ -373,8 +376,9 @@ async function readConversationById(conversationId) {
   return rows[0] ? normalizeConversationRow(rows[0]) : null;
 }
 
-async function deleteConversation(conversationId) {
-  await getDatabasePool().query('DELETE FROM ai_conversations WHERE id = $1', [conversationId]);
+async function deleteConversation(conversationId, env) {
+  const pool = await getDatabasePool(env);
+  await pool.query('DELETE FROM ai_conversations WHERE id = $1', [conversationId]);
 }
 
 function normalizeConversationRow(row) {
@@ -524,12 +528,12 @@ function normalizeScreenKnowledge(value) {
   return `页面路径：${route}\n页面摘要：${summary}`;
 }
 
-function normalizeModel(value) {
+function normalizeModel(value, env) {
   if (typeof value === 'string' && value.trim()) {
     return value.trim();
   }
 
-  return process.env.NITRO_ROUTER_MODEL || DEFAULT_MODEL;
+  return getEnvValue(env, 'NITRO_ROUTER_MODEL') || DEFAULT_MODEL;
 }
 
 function getUpstreamError(data) {
@@ -629,7 +633,35 @@ function getRuntimeErrorMessage(error) {
   return 'AI 服务暂时不可用，请稍后再试。';
 }
 
-function loadLocalEnv() {
+function getEnvValue(env, key) {
+  const boundValue = env?.[key];
+
+  if (typeof boundValue === 'string' && boundValue.trim()) {
+    return boundValue.trim();
+  }
+
+  if (typeof process !== 'undefined' && typeof process.env?.[key] === 'string' && process.env[key].trim()) {
+    return process.env[key].trim();
+  }
+
+  return undefined;
+}
+
+function isCloudflareWorkerRuntime() {
+  return typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers';
+}
+
+function isNodeRuntime() {
+  return (
+    typeof process !== 'undefined'
+    && Boolean(process.versions?.node)
+    && !isCloudflareWorkerRuntime()
+  );
+}
+
+async function loadLocalEnv() {
+  const { existsSync, readFileSync } = await import('node:fs');
+
   if (!existsSync('.env')) {
     return;
   }
@@ -658,9 +690,16 @@ function loadLocalEnv() {
   }
 }
 
-serve({
-  fetch: app.fetch,
-  port: PORT,
-});
+export default app;
 
-console.log(`AI server is running on http://127.0.0.1:${PORT}`);
+if (isNodeRuntime()) {
+  const nodeServerModule = '@hono/node-server';
+  const { serve } = await import(nodeServerModule);
+
+  serve({
+    fetch: app.fetch,
+    port: PORT,
+  });
+
+  console.log(`AI server is running on http://127.0.0.1:${PORT}`);
+}
