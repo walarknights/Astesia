@@ -1,16 +1,23 @@
+import { existsSync, readFileSync } from 'node:fs';
+
+import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import pg from 'pg';
 
-if (isNodeRuntime()) {
-  await loadLocalEnv();
-}
+loadLocalEnv();
 
 const NITRO_ROUTER_URL = 'https://api.nitrorouter.com/v1/chat/completions';
 const NITRO_ROUTER_MODELS_URL = 'https://api.nitrorouter.com/v1/models';
+const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
+const DEEPSEEK_URL = `${DEEPSEEK_BASE_URL}/chat/completions`;
+const DEEPSEEK_MODELS_URL = `${DEEPSEEK_BASE_URL}/models`;
+const DEEPSEEK_MODEL_PREFIX = 'deepseek-';
 const DEFAULT_MODEL = 'gemini-3.1-pro-preview';
-const TITLE_SUMMARY_MODEL = 'gpt-5-nano';
+const DEFAULT_DEEPSEEK_TITLE_MODEL = 'deepseek-v4-flash';
 const DEFAULT_CONVERSATION_TITLE = '对话标题';
-const PORT = Number(getEnvValue(null, 'AI_SERVER_PORT') || 8787);
+const PORT = Number(getEnvValue('AI_SERVER_PORT') || 8787);
+const { Pool } = pg;
 
 const app = new Hono();
 let databasePool = null;
@@ -20,31 +27,35 @@ app.use('*', cors());
 app.get('/health', (c) => c.json({ ok: true }));
 
 app.get('/api/ai/models', async (c) => {
-  const apiKey = getEnvValue(c.env, 'NITRO_ROUTER_API_KEY');
+  const [deepseekModels, nitroModels] = await Promise.all([
+    fetchCompatibleModels({
+      apiKey: getEnvValue('DEEPSEEK_API_KEY'),
+      apiKeyName: 'DEEPSEEK_API_KEY',
+      modelsUrl: DEEPSEEK_MODELS_URL,
+      providerName: 'DeepSeek',
+    }),
+    fetchCompatibleModels({
+      apiKey: getEnvValue('NITRO_ROUTER_API_KEY'),
+      apiKeyName: 'NITRO_ROUTER_API_KEY',
+      modelsUrl: NITRO_ROUTER_MODELS_URL,
+      providerName: 'Nitro Router',
+    }),
+  ]);
+  const models = mergeModelItems(
+    appendDocumentedDeepSeekModels(deepseekModels),
+    nitroModels
+  );
 
-  if (!apiKey) {
-    return c.json({ error: '缺少 NITRO_ROUTER_API_KEY，请先在后端环境变量中配置。' }, 500);
+  if (models.length === 0) {
+    return c.json({ error: '缺少可用模型配置，请至少配置 DEEPSEEK_API_KEY 或 NITRO_ROUTER_API_KEY。' }, 500);
   }
 
-  const upstreamResponse = await fetch(NITRO_ROUTER_MODELS_URL, {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-    },
-  });
-  const upstreamData = await upstreamResponse.json().catch(() => null);
-
-  if (!upstreamResponse.ok) {
-    return c.json({
-      error: getUpstreamError(upstreamData) || '模型列表获取失败。',
-    }, upstreamResponse.status);
-  }
-
-  return c.json({ data: Array.isArray(upstreamData?.data) ? upstreamData.data : [] });
+  return c.json({ data: models });
 });
 
 app.get('/api/ai/conversations', async (c) => {
   try {
-    return c.json({ conversations: await readConversations(c.env) });
+    return c.json({ conversations: await readConversations() });
   } catch (error) {
     return c.json({ error: getRuntimeErrorMessage(error) }, 500);
   }
@@ -64,7 +75,7 @@ app.put('/api/ai/conversations/:id', async (c) => {
   }
 
   try {
-    return c.json({ conversation: await upsertConversation(conversation, c.env) });
+    return c.json({ conversation: await upsertConversation(conversation) });
   } catch (error) {
     return c.json({ error: getRuntimeErrorMessage(error) }, 500);
   }
@@ -74,7 +85,7 @@ app.delete('/api/ai/conversations/:id', async (c) => {
   const conversationId = c.req.param('id');
 
   try {
-    await deleteConversation(conversationId, c.env);
+    await deleteConversation(conversationId);
     return c.json({ ok: true });
   } catch (error) {
     return c.json({ error: getRuntimeErrorMessage(error) }, 500);
@@ -82,10 +93,10 @@ app.delete('/api/ai/conversations/:id', async (c) => {
 });
 
 app.post('/api/ai/conversations/summarize-title', async (c) => {
-  const apiKey = getEnvValue(c.env, 'NITRO_ROUTER_API_KEY');
+  const apiKey = getEnvValue('DEEPSEEK_API_KEY');
 
   if (!apiKey) {
-    return c.json({ error: '缺少 NITRO_ROUTER_API_KEY，请先在后端环境变量中配置。' }, 500);
+    return c.json({ error: '缺少 DEEPSEEK_API_KEY，请先在后端环境变量中配置。' }, 500);
   }
 
   const body = await c.req.json().catch(() => null);
@@ -98,14 +109,17 @@ app.post('/api/ai/conversations/summarize-title', async (c) => {
   }
 
   const conversationText = buildConversationTitleContext(messages);
-  const upstreamResponse = await fetch(NITRO_ROUTER_URL, {
+  // [变更] 修改前: 标题总结复用 Nitro Router 模型，模型渠道不可用时会直接失败
+  // [变更] 修改后: 标题总结固定走 DeepSeek，并默认使用 deepseek-v4-flash
+  // [原因] 用户明确要求标题总结统一走 DeepSeek Flash，且该场景更适合低延迟摘要模型
+  const upstreamResponse = await fetch(DEEPSEEK_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: TITLE_SUMMARY_MODEL,
+      model: getDeepSeekTitleModel(),
       stream: false,
       messages: [
         {
@@ -136,28 +150,27 @@ app.post('/api/ai/conversations/summarize-title', async (c) => {
 });
 
 app.post('/api/ai/chat', async (c) => {
-  const apiKey = getEnvValue(c.env, 'NITRO_ROUTER_API_KEY');
-
-  if (!apiKey) {
-    return c.json({ error: '缺少 NITRO_ROUTER_API_KEY，请先在后端环境变量中配置。' }, 500);
-  }
-
   const body = await c.req.json().catch(() => null);
   const userMessages = Array.isArray(body?.messages)
     ? body.messages.filter(isChatMessage)
     : [];
   const screenKnowledge = normalizeScreenKnowledge(body?.screenKnowledge);
-  const model = normalizeModel(body?.model, c.env);
+  const model = normalizeModel(body?.model);
+  const chatUpstream = resolveChatUpstream(model);
 
   if (userMessages.length === 0) {
     return c.json({ error: '缺少可发送给 AI 的对话消息。' }, 400);
   }
 
-  const upstreamResponse = await fetch(NITRO_ROUTER_URL, {
+  if (!chatUpstream.apiKey) {
+    return c.json({ error: `缺少 ${chatUpstream.apiKeyName}，请先在后端环境变量中配置。` }, 500);
+  }
+
+  const upstreamResponse = await fetch(chatUpstream.url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${chatUpstream.apiKey}`,
     },
     body: JSON.stringify({
       model,
@@ -279,20 +292,17 @@ app.post('/api/ai/chat', async (c) => {
   });
 });
 
-async function getDatabasePool(env) {
-  const databaseUrl = normalizeDatabaseUrl(getEnvValue(env, 'DATABASE_URL'));
+function getDatabasePool() {
+  const databaseUrl = normalizeDatabaseUrl(getEnvValue('DATABASE_URL'));
 
   if (!databaseUrl) {
     throw new Error('缺少 DATABASE_URL，请先配置 PostgreSQL 连接串。');
   }
 
   if (!databasePool) {
-    const pgModule = await import('pg');
-    const { Pool } = pgModule.default ?? pgModule;
-
     databasePool = new Pool({
       connectionString: databaseUrl,
-      ssl: shouldUseDatabaseSsl(databaseUrl, env) ? { rejectUnauthorized: false } : undefined,
+      ssl: shouldUseDatabaseSsl(databaseUrl) ? { rejectUnauthorized: false } : undefined,
     });
   }
 
@@ -305,20 +315,20 @@ function normalizeDatabaseUrl(value) {
     : '';
 }
 
-function shouldUseDatabaseSsl(databaseUrl, env) {
-  if (getEnvValue(env, 'DATABASE_SSL') === 'true') {
+function shouldUseDatabaseSsl(databaseUrl) {
+  if (getEnvValue('DATABASE_SSL') === 'true') {
     return true;
   }
 
-  if (getEnvValue(env, 'DATABASE_SSL') === 'false') {
+  if (getEnvValue('DATABASE_SSL') === 'false') {
     return false;
   }
 
   return !/localhost|127\.0\.0\.1|0\.0\.0\.0/.test(databaseUrl);
 }
 
-async function readConversations(env) {
-  const pool = await getDatabasePool(env);
+async function readConversations() {
+  const pool = getDatabasePool();
   const { rows } = await pool.query(`
     SELECT id, title, messages, created_at, updated_at, title_generated_at
     FROM ai_conversations
@@ -328,8 +338,8 @@ async function readConversations(env) {
   return rows.map(normalizeConversationRow).filter(Boolean);
 }
 
-async function upsertConversation(conversation, env) {
-  const pool = await getDatabasePool(env);
+async function upsertConversation(conversation) {
+  const pool = getDatabasePool();
   const { rows } = await pool.query(`
     INSERT INTO ai_conversations (
       id,
@@ -361,12 +371,12 @@ async function upsertConversation(conversation, env) {
     return normalizeConversationRow(rows[0]) ?? conversation;
   }
 
-  const existingConversation = await readConversationById(conversation.id, env);
+  const existingConversation = await readConversationById(conversation.id);
   return existingConversation ?? conversation;
 }
 
-async function readConversationById(conversationId, env) {
-  const pool = await getDatabasePool(env);
+async function readConversationById(conversationId) {
+  const pool = getDatabasePool();
   const { rows } = await pool.query(`
     SELECT id, title, messages, created_at, updated_at, title_generated_at
     FROM ai_conversations
@@ -376,8 +386,8 @@ async function readConversationById(conversationId, env) {
   return rows[0] ? normalizeConversationRow(rows[0]) : null;
 }
 
-async function deleteConversation(conversationId, env) {
-  const pool = await getDatabasePool(env);
+async function deleteConversation(conversationId) {
+  const pool = getDatabasePool();
   await pool.query('DELETE FROM ai_conversations WHERE id = $1', [conversationId]);
 }
 
@@ -528,26 +538,135 @@ function normalizeScreenKnowledge(value) {
   return `页面路径：${route}\n页面摘要：${summary}`;
 }
 
-function normalizeModel(value, env) {
-  if (typeof value === 'string' && value.trim()) {
-    return value.trim();
+function getDeepSeekTitleModel() {
+  return normalizeConfiguredModel(getEnvValue('DEEPSEEK_TITLE_MODEL'))
+    || DEFAULT_DEEPSEEK_TITLE_MODEL;
+}
+
+function normalizeConfiguredModel(value) {
+  return typeof value === 'string' && value.trim()
+    ? value.trim()
+    : '';
+}
+
+function resolveChatUpstream(model) {
+  if (isDeepSeekModel(model)) {
+    return {
+      apiKey: getEnvValue('DEEPSEEK_API_KEY'),
+      apiKeyName: 'DEEPSEEK_API_KEY',
+      url: DEEPSEEK_URL,
+    };
   }
 
-  return getEnvValue(env, 'NITRO_ROUTER_MODEL') || DEFAULT_MODEL;
+  return {
+    apiKey: getEnvValue('NITRO_ROUTER_API_KEY'),
+    apiKeyName: 'NITRO_ROUTER_API_KEY',
+    url: NITRO_ROUTER_URL,
+  };
+}
+
+function isDeepSeekModel(model) {
+  return typeof model === 'string'
+    && model.trim().toLowerCase().startsWith(DEEPSEEK_MODEL_PREFIX);
+}
+
+function normalizeModel(value) {
+  return normalizeConfiguredModel(value)
+    || normalizeConfiguredModel(getEnvValue('NITRO_ROUTER_MODEL'))
+    || DEFAULT_MODEL;
+}
+
+async function fetchCompatibleModels({
+  apiKey,
+  apiKeyName,
+  modelsUrl,
+  providerName,
+}) {
+  if (!apiKey) {
+    return [];
+  }
+
+  try {
+    const upstreamResponse = await fetch(modelsUrl, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+    });
+    const upstreamData = await upstreamResponse.json().catch(() => null);
+
+    if (!upstreamResponse.ok) {
+      throw new Error(getUpstreamError(upstreamData) || `${providerName} 模型列表获取失败。`);
+    }
+
+    return Array.isArray(upstreamData?.data)
+      ? upstreamData.data.filter(isModelItem).map((model) => ({ id: model.id }))
+      : [];
+  } catch (error) {
+    console.warn(`[AI] ${providerName} 模型列表获取失败: ${getRuntimeErrorMessage(error)}; key=${apiKeyName}`);
+    return [];
+  }
+}
+
+function isModelItem(value) {
+  return value && typeof value === 'object' && typeof value.id === 'string';
+}
+
+function mergeModelItems(...modelGroups) {
+  const seenModelIds = new Set();
+  const mergedModels = [];
+
+  for (const group of modelGroups) {
+    for (const model of group) {
+      if (seenModelIds.has(model.id)) {
+        continue;
+      }
+
+      seenModelIds.add(model.id);
+      mergedModels.push(model);
+    }
+  }
+
+  return mergedModels;
 }
 
 function getUpstreamError(data) {
   const error = data?.error;
 
   if (typeof error === 'string') {
-    return error;
+    return translateUpstreamErrorMessage(error);
   }
 
   if (typeof error?.message === 'string') {
-    return error.message;
+    return translateUpstreamErrorMessage(error.message);
   }
 
   return null;
+}
+
+function translateUpstreamErrorMessage(message) {
+  if (/insufficient balance/i.test(message)) {
+    return '上游账户余额不足，请先充值后再继续使用该模型。';
+  }
+
+  if (/no available channel/i.test(message)) {
+    return '当前模型在上游渠道不可用，请切换模型或检查渠道配置。';
+  }
+
+  return message;
+}
+
+function appendDocumentedDeepSeekModels(models) {
+  if (models.length === 0) {
+    return models;
+  }
+
+  // [变更] 修改前: 直接信任 DeepSeek /models 返回值，兼容别名模型不会出现在前端列表中
+  // [变更] 修改后: 在官方文档声明的基础上补齐 deepseek-chat 和 deepseek-reasoner 两个兼容别名
+  // [原因] 用户明确要求模型选择器展示 DeepSeek 当前全部可用模型
+  return mergeModelItems(models, [
+    { id: 'deepseek-chat' },
+    { id: 'deepseek-reasoner' },
+  ]);
 }
 
 function consumeSsePayload(buffer) {
@@ -633,35 +752,15 @@ function getRuntimeErrorMessage(error) {
   return 'AI 服务暂时不可用，请稍后再试。';
 }
 
-function getEnvValue(env, key) {
-  const boundValue = env?.[key];
-
-  if (typeof boundValue === 'string' && boundValue.trim()) {
-    return boundValue.trim();
-  }
-
-  if (typeof process !== 'undefined' && typeof process.env?.[key] === 'string' && process.env[key].trim()) {
+function getEnvValue(key) {
+  if (typeof process.env?.[key] === 'string' && process.env[key].trim()) {
     return process.env[key].trim();
   }
 
   return undefined;
 }
 
-function isCloudflareWorkerRuntime() {
-  return typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers';
-}
-
-function isNodeRuntime() {
-  return (
-    typeof process !== 'undefined'
-    && Boolean(process.versions?.node)
-    && !isCloudflareWorkerRuntime()
-  );
-}
-
-async function loadLocalEnv() {
-  const { existsSync, readFileSync } = await import('node:fs');
-
+function loadLocalEnv() {
   if (!existsSync('.env')) {
     return;
   }
@@ -690,16 +789,9 @@ async function loadLocalEnv() {
   }
 }
 
-export default app;
+serve({
+  fetch: app.fetch,
+  port: PORT,
+});
 
-if (isNodeRuntime()) {
-  const nodeServerModule = '@hono/node-server';
-  const { serve } = await import(nodeServerModule);
-
-  serve({
-    fetch: app.fetch,
-    port: PORT,
-  });
-
-  console.log(`AI server is running on http://127.0.0.1:${PORT}`);
-}
+console.log(`AI server is running on http://127.0.0.1:${PORT}`);

@@ -47,8 +47,11 @@ import { buildAiScreenKnowledge, type AiScreenKnowledgeSnapshot } from '@/servic
 import { useScreenCapture } from '@/services/screen-capture';
 
 const DRAWER_WIDTH_RATIO = 0.92;
+const CONVERSATION_DRAWER_WIDTH_RATIO = 0.5;
 const DRAWER_MAX_WIDTH = 350;
 const DRAWER_ANIMATION_MS = 240;
+const KNOWLEDGE_PANEL_ANIMATION_MS = 180;
+const KNOWLEDGE_PANEL_HEIGHT = 128;
 const FLOATING_BUTTON_SIZE = 56;
 const FLOATING_BUTTON_MARGIN = 12;
 const FLOATING_BUTTON_INITIAL_TOP = 220;
@@ -81,6 +84,7 @@ export function AiFloatingAssistant() {
   const { width, height } = useWindowDimensions();
   const drawerWidth = Math.min(width * DRAWER_WIDTH_RATIO, DRAWER_MAX_WIDTH);
   const drawerTranslateX = useRef(new Animated.Value(-drawerWidth)).current;
+  const knowledgePanelProgress = useRef(new Animated.Value(0)).current;
   const floatingPosition = useRef(new Animated.ValueXY({ x: 0, y: FLOATING_BUTTON_INITIAL_TOP })).current;
   const [isDrawerVisible, setIsDrawerVisible] = useState(false);
   const [draftMessage, setDraftMessage] = useState('');
@@ -201,8 +205,47 @@ export function AiFloatingAssistant() {
     () => formatModelLabel(models.find((model) => model.id === selectedModel)?.label ?? selectedModel),
     [models, selectedModel]
   );
-  const conversationDrawerWidth = Math.max(112, Math.min(width * 0.25, 180));
+  // [变更] 修改前: 历史抽屉宽度按屏幕宽度 25% 计算，并额外限制到 180
+  // [变更] 修改后: 历史抽屉宽度改为主 AI 抽屉宽度的 50%，与主面板保持稳定比例
+  // [原因] 历史标题和时间需要更充足的展示空间，避免在窄屏下列表信息被过度压缩
+  const conversationDrawerWidth = drawerWidth * CONVERSATION_DRAWER_WIDTH_RATIO;
   const conversationTitle = currentConversation.title || DEFAULT_AI_CONVERSATION_TITLE;
+  const knowledgePanelAnimatedStyle = useMemo(
+    () => ({
+      height: knowledgePanelProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, KNOWLEDGE_PANEL_HEIGHT],
+      }),
+      marginTop: knowledgePanelProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, 8],
+      }),
+      opacity: knowledgePanelProgress,
+    }),
+    [knowledgePanelProgress]
+  );
+  const knowledgeCaretAnimatedStyle = useMemo(
+    () => ({
+      transform: [
+        {
+          rotate: knowledgePanelProgress.interpolate({
+            inputRange: [0, 1],
+            outputRange: ['0deg', '180deg'],
+          }),
+        },
+      ],
+    }),
+    [knowledgePanelProgress]
+  );
+
+  useEffect(() => {
+    Animated.timing(knowledgePanelProgress, {
+      toValue: isKnowledgeExpanded ? 1 : 0,
+      duration: KNOWLEDGE_PANEL_ANIMATION_MS,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [isKnowledgeExpanded, knowledgePanelProgress]);
 
   const animateDrawer = useCallback((toValue: number, onComplete?: () => void) => {
     Animated.timing(drawerTranslateX, {
@@ -401,7 +444,7 @@ export function AiFloatingAssistant() {
     );
   }, [updateMessages]);
 
-  const refreshScreenKnowledge = useCallback(async (shouldAppendMessage = false) => {
+  const refreshScreenKnowledge = useCallback(async () => {
     setIsScreenKnowledgeLoading(true);
 
     try {
@@ -412,10 +455,6 @@ export function AiFloatingAssistant() {
       }
 
       setScreenKnowledge(nextKnowledge);
-
-      if (shouldAppendMessage) {
-        appendSystemMessage(`已读取当前屏幕文字内容：\n${nextKnowledge.summary}`);
-      }
     } finally {
       if (isMountedRef.current) {
         setIsScreenKnowledgeLoading(false);
@@ -424,10 +463,10 @@ export function AiFloatingAssistant() {
   // [变更] 修改前: 知识库只读取当前路径的占位文案
   // [变更] 修改后: 路由或参数变化时重建页面文字摘要
   // [原因] 让 AI 对话能够结合当前页面真实业务文本回答
-  }, [appendSystemMessage, pathname, screenKnowledgeRouteParams]);
+  }, [pathname, screenKnowledgeRouteParams]);
 
   useEffect(() => {
-    void refreshScreenKnowledge(false);
+    void refreshScreenKnowledge();
   }, [refreshScreenKnowledge]);
 
   const appendImageAttachment = useCallback((attachment: Omit<PendingImageAttachment, 'id'>) => {
@@ -463,7 +502,7 @@ export function AiFloatingAssistant() {
             name: `屏幕截图 ${formatAttachmentTime(new Date())}`,
             source: 'screenshot',
           });
-          await refreshScreenKnowledge(true);
+          await refreshScreenKnowledge();
           openDrawer();
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : '当前屏幕截图失败，请稍后重试。';
@@ -681,10 +720,10 @@ export function AiFloatingAssistant() {
       return;
     }
 
-    const attachmentNotice = pendingImageAttachments.length > 0
-      ? `\n\n[已添加 ${pendingImageAttachments.length} 张图片附件，当前阶段仅展示在输入区，暂未发送给 AI 模型。]`
-      : '';
-    const userMessage = createAiAssistantMessage('user', `${nextMessage}${attachmentNotice}`);
+    // [变更] 修改前: 图片附件状态会拼接成用户气泡里的说明文字
+    // [变更] 修改后: 用户消息只保留输入框文本，附件继续停留在独立附件 UI 中
+    // [原因] 屏幕截图当前还未接入多模态发送，不能伪装成用户输入内容
+    const userMessage = createAiAssistantMessage('user', nextMessage);
     const assistantMessage = createAiAssistantMessage('assistant', '');
     const requestMessages = [...messagesRef.current, userMessage];
     const pendingMessages = [...requestMessages, assistantMessage];
@@ -739,7 +778,7 @@ export function AiFloatingAssistant() {
     } finally {
       setIsSending(false);
     }
-  }, [draftMessage, isSending, pendingImageAttachments.length, screenKnowledge, scrollMessagesToEnd, selectedModel, summarizeConversationTitle, updateMessages]);
+  }, [draftMessage, isSending, screenKnowledge, scrollMessagesToEnd, selectedModel, summarizeConversationTitle, updateMessages]);
 
   const isSendDisabled = isSending || !draftMessage.trim();
   const sendButtonLabel = isSending ? '发送中' : '发送';
@@ -861,16 +900,24 @@ export function AiFloatingAssistant() {
                   style={styles.knowledgeToggle}>
                   <MaterialIcons name="summarize" size={24} color="#1664FF" />
                   <ThemedText style={styles.knowledgeTitle}>当前屏幕知识库</ThemedText>
-                  <MaterialIcons
-                    name={isKnowledgeExpanded ? 'arrow-drop-up' : 'arrow-drop-down'}
-                    size={36}
-                    color="#111827"
-                    style={styles.knowledgeCaret}
-                  />
+                  <Animated.View style={[styles.knowledgeCaret, knowledgeCaretAnimatedStyle]}>
+                    <MaterialIcons name="arrow-drop-down" size={36} color="#111827" />
+                  </Animated.View>
                 </Pressable>
-                {isKnowledgeExpanded ? (
+                <Animated.View
+                  pointerEvents={isKnowledgeExpanded ? 'auto' : 'none'}
+                  style={[styles.knowledgePanelShell, knowledgePanelAnimatedStyle]}>
+                  {/*
+                   * 渲染位置: AI 抽屉顶部知识库折叠面板
+                   * 展示内容: 当前页面文字摘要、更新时间和一键截图入口
+                   * 数据来源: screenKnowledge 状态、isScreenKnowledgeLoading 状态和截图操作状态
+                   */}
                   <View style={styles.knowledgePanel}>
-                    <ScrollView nestedScrollEnabled showsVerticalScrollIndicator>
+                    <ScrollView
+                      contentContainerStyle={styles.knowledgeScrollContent}
+                      nestedScrollEnabled
+                      showsVerticalScrollIndicator
+                      style={styles.knowledgeScroll}>
                       <ThemedText style={styles.knowledgeMeta}>
                         {isScreenKnowledgeLoading ? '正在读取屏幕文字...' : `更新时间：${formatKnowledgeTime(screenKnowledge.updatedAt)}`}
                       </ThemedText>
@@ -888,7 +935,7 @@ export function AiFloatingAssistant() {
                       </Pressable>
                     </ScrollView>
                   </View>
-                ) : null}
+                </Animated.View>
               </View>
 
               {/*
@@ -896,11 +943,18 @@ export function AiFloatingAssistant() {
                * 展示内容: 用户、AI 与系统历史对话
                * 数据来源: messages 状态和本地持久化记录
                */}
+              {/*
+               * [变更] 修改前: 屏幕知识库展开后，底部消息列表仍会接管纵向手势
+               * [变更] 修改后: 知识库展开期间暂时禁用消息列表的触摸和滚动
+               * [原因] 让知识库浮层内的 ScrollView 能优先响应下滑操作
+               */}
               <ScrollView
                 ref={messageScrollRef}
                 contentContainerStyle={styles.messageList}
                 onContentSizeChange={handleMessageListContentChange}
                 onScroll={handleMessageListScroll}
+                pointerEvents={isKnowledgeExpanded ? 'none' : 'auto'}
+                scrollEnabled={!isKnowledgeExpanded}
                 scrollEventThrottle={16}
                 showsVerticalScrollIndicator={false}>
                 {isHistoryLoading ? (
@@ -1459,67 +1513,74 @@ const styles = StyleSheet.create({
   conversationDrawer: {
     height: '100%',
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 8,
+    paddingLeft: 8,
+    paddingRight: 6,
     shadowColor: '#0F172A',
     shadowOffset: { width: 8, height: 0 },
     shadowOpacity: 0.16,
     shadowRadius: 18,
     elevation: 18,
   },
+  // [变更] 修改前: 历史抽屉整体收紧后，左侧阅读留白偏少
+  // [变更] 修改后: 保持纵向紧凑，仅把抽屉和卡片的左内边距回调一些
+  // [原因] 让标题和时间的起始线更稳定，避免内容过于贴左
   conversationDrawerHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    marginBottom: 10,
+    gap: 6,
+    marginBottom: 8,
   },
   conversationDrawerTitle: {
     color: '#111827',
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '800',
   },
   conversationSyncText: {
-    marginBottom: 8,
+    marginBottom: 6,
     color: '#D97706',
-    fontSize: 10,
-    lineHeight: 14,
+    fontSize: 11,
+    lineHeight: 15,
   },
   conversationListContent: {
-    gap: 8,
-    paddingBottom: 10,
+    gap: 6,
+    paddingBottom: 8,
   },
   conversationListItem: {
-    minHeight: 62,
-    borderRadius: 12,
+    minHeight: 54,
+    borderRadius: 10,
     backgroundColor: '#F8FAFC',
-    paddingHorizontal: 8,
-    paddingVertical: 8,
+    paddingLeft: 8,
+    paddingRight: 6,
+    paddingVertical: 6,
   },
   conversationListItemActive: {
     backgroundColor: '#EAF2FF',
   },
   conversationListTitle: {
     color: '#334155',
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
-    lineHeight: 16,
+    lineHeight: 18,
   },
   conversationListTitleActive: {
     color: '#1664FF',
   },
   conversationListTime: {
-    marginTop: 4,
+    marginTop: 2,
     color: '#94A3B8',
-    fontSize: 10,
-    lineHeight: 14,
+    fontSize: 11,
+    lineHeight: 15,
   },
   conversationDrawerHint: {
     color: '#94A3B8',
-    fontSize: 10,
-    lineHeight: 14,
+    fontSize: 11,
+    lineHeight: 15,
   },
   knowledgeSection: {
     marginLeft: 13,
     marginBottom: 12,
+    zIndex: 10,
+    elevation: 10,
   },
   knowledgeToggle: {
     width: 283,
@@ -1541,15 +1602,35 @@ const styles = StyleSheet.create({
     marginLeft: 'auto',
     marginRight: 2,
   },
+  // [变更] 修改前: 知识库面板高度参与抽屉主布局，展开时会短暂挤压消息列表
+  // [变更] 修改后: 面板作为绝对定位浮层覆盖在消息区上方，展开动画不影响主布局
+  // [原因] 屏幕知识库是临时查看内容，不应该改变对话主页面的位置
+  knowledgePanelShell: {
+    position: 'absolute',
+    left: 0,
+    top: 37,
+    zIndex: 20,
+    elevation: 20,
+    width: 283,
+    overflow: 'hidden',
+  },
   knowledgePanel: {
     width: 283,
-    maxHeight: 120,
-    marginTop: 8,
+    height: KNOWLEDGE_PANEL_HEIGHT,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: 'rgba(41, 98, 255, 0.16)',
     backgroundColor: '#F8FAFF',
     padding: 10,
+  },
+  // [变更] 修改前: 知识库面板里的 ScrollView 没有占满固定高度容器，内容过长时无法稳定下滑
+  // [变更] 修改后: 为 ScrollView 补齐 flex 高度约束，并给内容区保留少量底部留白
+  // [原因] 让“当前屏幕知识库”在摘要较长时可以正常纵向滚动查看
+  knowledgeScroll: {
+    flex: 1,
+  },
+  knowledgeScrollContent: {
+    paddingBottom: 6,
   },
   knowledgeText: {
     color: '#475569',
