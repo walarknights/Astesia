@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { existsSync, readFileSync } from 'node:fs';
 
 import { serve } from '@hono/node-server';
@@ -16,13 +17,63 @@ const DEEPSEEK_MODEL_PREFIX = 'deepseek-';
 const DEFAULT_MODEL = 'gemini-3.1-pro-preview';
 const DEFAULT_DEEPSEEK_TITLE_MODEL = 'deepseek-v4-flash';
 const DEFAULT_CONVERSATION_TITLE = '对话标题';
+const DEFAULT_CHAT_MAX_OUTPUT_TOKENS = 4096;
+const CHAT_MAX_OUTPUT_TOKENS = normalizePositiveInteger(
+  getEnvValue('AI_CHAT_MAX_OUTPUT_TOKENS'),
+  DEFAULT_CHAT_MAX_OUTPUT_TOKENS
+);
+const DEFAULT_MODEL_PRICING = Object.freeze({
+  'deepseek-v4-flash': {
+    inputPerMillionUsd: 0.14,
+    cachedInputPerMillionUsd: 0.0028,
+    outputPerMillionUsd: 0.28,
+  },
+  'deepseek-chat': {
+    inputPerMillionUsd: 0.14,
+    cachedInputPerMillionUsd: 0.0028,
+    outputPerMillionUsd: 0.28,
+  },
+  'deepseek-reasoner': {
+    inputPerMillionUsd: 0.14,
+    cachedInputPerMillionUsd: 0.0028,
+    outputPerMillionUsd: 0.28,
+  },
+  'deepseek-v4-pro': {
+    inputPerMillionUsd: 0.435,
+    cachedInputPerMillionUsd: 0.003625,
+    outputPerMillionUsd: 0.87,
+  },
+  'gemini-3.1-pro-preview': {
+    inputPerMillionUsd: 2,
+    cachedInputPerMillionUsd: 0.2,
+    outputPerMillionUsd: 12,
+  },
+});
 const PORT = Number(getEnvValue('AI_SERVER_PORT') || 8787);
 const { Pool } = pg;
 
 const app = new Hono();
 let databasePool = null;
+const modelPricingMap = createModelPricingMap(getEnvValue('AI_MODEL_PRICING_JSON'));
+const AI_INITIAL_BALANCE_USD = normalizeNonNegativeNumber(
+  getEnvValue('AI_INITIAL_BALANCE_USD'),
+  0
+);
+const AI_USER_ID_HEADER = 'x-ai-user-id';
 
-app.use('*', cors());
+class AiAuthenticationError extends Error {}
+
+class InsufficientAiBalanceError extends Error {
+  constructor(balanceUsd, requiredUsd) {
+    super(`AI 余额不足，当前余额 $${formatUsdAmount(balanceUsd)}，至少需要预留 $${formatUsdAmount(requiredUsd)} 才能发起本次对话。`);
+    this.balanceUsd = balanceUsd;
+    this.requiredUsd = requiredUsd;
+  }
+}
+
+app.use('*', cors({
+  allowHeaders: ['Accept', 'Authorization', 'Content-Type', AI_USER_ID_HEADER],
+}));
 
 app.get('/health', (c) => c.json({ ok: true }));
 
@@ -53,11 +104,21 @@ app.get('/api/ai/models', async (c) => {
   return c.json({ data: models });
 });
 
+app.get('/api/ai/billing/summary', async (c) => {
+  try {
+    const aiUser = resolveRequiredAiUser(c);
+    return c.json(await getAiBillingSummary(aiUser.userId));
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, error instanceof AiAuthenticationError ? 401 : 500);
+  }
+});
+
 app.get('/api/ai/conversations', async (c) => {
   try {
-    return c.json({ conversations: await readConversations() });
+    const aiUser = resolveRequiredAiUser(c);
+    return c.json({ conversations: await readConversations(aiUser.userId) });
   } catch (error) {
-    return c.json({ error: getRuntimeErrorMessage(error) }, 500);
+    return c.json({ error: getRuntimeErrorMessage(error) }, error instanceof AiAuthenticationError ? 401 : 500);
   }
 });
 
@@ -75,9 +136,10 @@ app.put('/api/ai/conversations/:id', async (c) => {
   }
 
   try {
-    return c.json({ conversation: await upsertConversation(conversation) });
+    const aiUser = resolveRequiredAiUser(c);
+    return c.json({ conversation: await upsertConversation(aiUser.userId, conversation) });
   } catch (error) {
-    return c.json({ error: getRuntimeErrorMessage(error) }, 500);
+    return c.json({ error: getRuntimeErrorMessage(error) }, error instanceof AiAuthenticationError ? 401 : 500);
   }
 });
 
@@ -85,10 +147,11 @@ app.delete('/api/ai/conversations/:id', async (c) => {
   const conversationId = c.req.param('id');
 
   try {
-    await deleteConversation(conversationId);
+    const aiUser = resolveRequiredAiUser(c);
+    await deleteConversation(aiUser.userId, conversationId);
     return c.json({ ok: true });
   } catch (error) {
-    return c.json({ error: getRuntimeErrorMessage(error) }, 500);
+    return c.json({ error: getRuntimeErrorMessage(error) }, error instanceof AiAuthenticationError ? 401 : 500);
   }
 });
 
@@ -97,6 +160,12 @@ app.post('/api/ai/conversations/summarize-title', async (c) => {
 
   if (!apiKey) {
     return c.json({ error: '缺少 DEEPSEEK_API_KEY，请先在后端环境变量中配置。' }, 500);
+  }
+
+  try {
+    resolveRequiredAiUser(c);
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, error instanceof AiAuthenticationError ? 401 : 500);
   }
 
   const body = await c.req.json().catch(() => null);
@@ -151,19 +220,72 @@ app.post('/api/ai/conversations/summarize-title', async (c) => {
 
 app.post('/api/ai/chat', async (c) => {
   const body = await c.req.json().catch(() => null);
+  let aiUser;
+
+  try {
+    aiUser = resolveRequiredAiUser(c);
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, error instanceof AiAuthenticationError ? 401 : 500);
+  }
+
   const userMessages = Array.isArray(body?.messages)
     ? body.messages.filter(isChatMessage)
     : [];
   const screenKnowledge = normalizeScreenKnowledge(body?.screenKnowledge);
   const model = normalizeModel(body?.model);
   const chatUpstream = resolveChatUpstream(model);
+  const conversationId = normalizeConversationId(body?.conversationId);
+  const modelPricing = resolveModelPricing(model);
+  const usageRequestId = createAiUsageRequestId(aiUser.userId, conversationId);
 
   if (userMessages.length === 0) {
     return c.json({ error: '缺少可发送给 AI 的对话消息。' }, 400);
   }
 
+  if (!modelPricing) {
+    return c.json({
+      error: `模型 ${model} 尚未配置计费单价，请先在服务端补齐价格表后再启用收费。`,
+    }, 400);
+  }
+
   if (!chatUpstream.apiKey) {
     return c.json({ error: `缺少 ${chatUpstream.apiKeyName}，请先在后端环境变量中配置。` }, 500);
+  }
+
+  const chatMessages = [
+    {
+      role: 'system',
+      // [变更] 修改前: 后端总是把“当前屏幕知识库”注入系统提示词
+      // [变更] 修改后: 只有前端显式传入 screenKnowledge 时才追加相关约束和上下文
+      // [原因] 用户需要自己决定本轮对话是否使用当前屏幕知识
+      content: [
+        '你是 Astesia App 内的移动端 AI 助手。',
+        screenKnowledge
+          ? '回答需要简洁、友好，并在用户开启时结合当前屏幕知识库。'
+          : '回答需要简洁、友好。',
+        screenKnowledge ? `当前屏幕知识库：${screenKnowledge}` : null,
+      ].filter(Boolean).join('\n'),
+    },
+    ...userMessages,
+  ];
+
+  // [变更] 修改前: 聊天请求不会校验用户余额，返回多少 token 就被动承担多少上游成本
+  // [变更] 修改后: 先按“保守输入估算 + 最大输出上限”预留本次请求余额，再在流式结束后按真实 usage 结算
+  // [原因] 需要支持按登录用户扣费，同时避免并发请求把余额透支
+  const reserveUsd = estimateAiRequestReserveUsd(chatMessages, modelPricing, CHAT_MAX_OUTPUT_TOKENS);
+
+  try {
+    await reserveAiWalletBalance({
+      userId: aiUser.userId,
+      requestId: usageRequestId,
+      reservedUsd: reserveUsd,
+    });
+  } catch (error) {
+    if (error instanceof InsufficientAiBalanceError) {
+      return c.json({ error: error.message }, 402);
+    }
+
+    return c.json({ error: getRuntimeErrorMessage(error) }, 500);
   }
 
   const upstreamResponse = await fetch(chatUpstream.url, {
@@ -175,23 +297,21 @@ app.post('/api/ai/chat', async (c) => {
     body: JSON.stringify({
       model,
       stream: true,
-      messages: [
-        {
-          role: 'system',
-          content: [
-            '你是 Astesia App 内的移动端 AI 助手。',
-            '回答需要简洁、友好，并优先结合当前屏幕知识库。',
-            `当前屏幕知识库：${screenKnowledge}`,
-          ].join('\n'),
-        },
-        ...userMessages,
-      ],
+      stream_options: {
+        include_usage: true,
+      },
+      max_tokens: CHAT_MAX_OUTPUT_TOKENS,
+      messages: chatMessages,
     }),
     signal: c.req.raw.signal,
   });
 
   if (!upstreamResponse.ok) {
     const upstreamData = await upstreamResponse.json().catch(() => null);
+    await releaseAiWalletReservation({
+      userId: aiUser.userId,
+      requestId: usageRequestId,
+    }).catch(() => null);
 
     return c.json({
       error: getUpstreamError(upstreamData) || 'AI 上游服务返回异常。',
@@ -201,6 +321,10 @@ app.post('/api/ai/chat', async (c) => {
   const upstreamReader = upstreamResponse.body?.getReader();
 
   if (!upstreamReader) {
+    await releaseAiWalletReservation({
+      userId: aiUser.userId,
+      requestId: usageRequestId,
+    }).catch(() => null);
     return c.json({ error: 'AI 上游服务未提供可读取的流式响应。' }, 502);
   }
 
@@ -209,6 +333,21 @@ app.post('/api/ai/chat', async (c) => {
 
   let buffer = '';
   let hasStreamedContent = false;
+  let latestUsage = null;
+  let providerRequestId = '';
+  let isReservationSettled = false;
+
+  const releaseReservedBalance = async () => {
+    if (isReservationSettled) {
+      return;
+    }
+
+    isReservationSettled = true;
+    await releaseAiWalletReservation({
+      userId: aiUser.userId,
+      requestId: usageRequestId,
+    });
+  };
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -233,6 +372,16 @@ app.post('/api/ai/chat', async (c) => {
               continue;
             }
 
+            if (typeof payload?.id === 'string' && payload.id.trim()) {
+              providerRequestId = payload.id.trim();
+            }
+
+            const usage = extractStreamUsage(payload);
+
+            if (usage) {
+              latestUsage = usage;
+            }
+
             const chunk = extractStreamText(payload);
 
             if (!chunk) {
@@ -252,6 +401,16 @@ app.post('/api/ai/chat', async (c) => {
             continue;
           }
 
+          if (typeof payload?.id === 'string' && payload.id.trim()) {
+            providerRequestId = payload.id.trim();
+          }
+
+          const usage = extractStreamUsage(payload);
+
+          if (usage) {
+            latestUsage = usage;
+          }
+
           const chunk = extractStreamText(payload);
 
           if (!chunk) {
@@ -263,14 +422,45 @@ app.post('/api/ai/chat', async (c) => {
         }
 
         if (!hasStreamedContent) {
+            await releaseReservedBalance();
           emitEvent('error', { message: 'AI 上游服务未返回有效内容。' });
           controller.close();
           return;
         }
 
-        emitEvent('done', {});
+          if (!latestUsage) {
+            await releaseReservedBalance();
+            emitEvent('error', { message: 'AI 上游服务未返回可计费 usage，本次对话已取消结算。' });
+            controller.close();
+            return;
+          }
+
+          const usageCharge = computeAiUsageCharge(latestUsage, modelPricing);
+          const walletSummary = await finalizeAiUsageCharge({
+            requestId: usageRequestId,
+            userId: aiUser.userId,
+            conversationId,
+            provider: chatUpstream.providerName,
+            model,
+            usage: latestUsage,
+            pricing: modelPricing,
+            charge: usageCharge,
+          });
+
+          isReservationSettled = true;
+          emitEvent('done', {
+            requestId: usageRequestId,
+            providerRequestId: providerRequestId || undefined,
+            usage: serializeUsageMetrics(latestUsage),
+            billing: {
+              totalCostUsd: formatUsdAmount(usageCharge.totalCostUsd),
+              remainingBalanceUsd: formatUsdAmount(walletSummary.balanceUsd),
+              totalChargedUsd: formatUsdAmount(walletSummary.totalChargedUsd),
+            },
+          });
         controller.close();
       } catch (error) {
+          await releaseReservedBalance().catch(() => null);
         emitEvent('error', { message: getRuntimeErrorMessage(error) });
         controller.close();
       } finally {
@@ -279,6 +469,7 @@ app.post('/api/ai/chat', async (c) => {
     },
     async cancel() {
       await upstreamReader.cancel().catch(() => null);
+        await releaseReservedBalance().catch(() => null);
     },
   });
 
@@ -327,39 +518,818 @@ function shouldUseDatabaseSsl(databaseUrl) {
   return !/localhost|127\.0\.0\.1|0\.0\.0\.0/.test(databaseUrl);
 }
 
-async function readConversations() {
+function resolveRequiredAiUser(c) {
+  const headerUserId = normalizeAiUserId(c.req.header(AI_USER_ID_HEADER));
+  const bearerToken = getBearerToken(c.req.header('authorization'));
+  const tokenUserId = extractUserIdFromBearerToken(bearerToken);
+
+  if (headerUserId && tokenUserId && headerUserId !== tokenUserId) {
+    throw new AiAuthenticationError('AI 用户身份校验失败，请重新登录后再试。');
+  }
+
+  const userId = tokenUserId || headerUserId;
+
+  if (!userId) {
+    throw new AiAuthenticationError('缺少 AI 用户身份，请先登录后再继续使用 AI 对话。');
+  }
+
+  return { userId };
+}
+
+function normalizeAiUserId(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const normalizedValue = value.trim();
+  return /^[A-Za-z0-9._:@-]{1,128}$/.test(normalizedValue)
+    ? normalizedValue
+    : '';
+}
+
+function getBearerToken(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const match = value.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() ?? '';
+}
+
+function extractUserIdFromBearerToken(token) {
+  if (!token || token.split('.').length < 2) {
+    return '';
+  }
+
+  try {
+    const payload = JSON.parse(decodeBase64Url(token.split('.')[1]));
+
+    for (const key of ['userId', 'user_id', 'uid', 'sub']) {
+      const normalizedUserId = normalizeAiUserId(String(payload?.[key] ?? ''));
+
+      if (normalizedUserId) {
+        return normalizedUserId;
+      }
+    }
+  } catch {
+    return '';
+  }
+
+  return '';
+}
+
+function decodeBase64Url(value) {
+  const normalizedValue = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padding = normalizedValue.length % 4 === 0
+    ? ''
+    : '='.repeat(4 - (normalizedValue.length % 4));
+
+  return Buffer.from(`${normalizedValue}${padding}`, 'base64').toString('utf8');
+}
+
+function normalizePositiveInteger(value, fallbackValue) {
+  const numericValue = Number(value);
+  return Number.isInteger(numericValue) && numericValue > 0
+    ? numericValue
+    : fallbackValue;
+}
+
+function normalizeNonNegativeInteger(value, fallbackValue = 0) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) && numericValue >= 0
+    ? Math.floor(numericValue)
+    : fallbackValue;
+}
+
+function normalizeFiniteNumber(value, fallbackValue = 0) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : fallbackValue;
+}
+
+function normalizeNonNegativeNumber(value, fallbackValue = 0) {
+  const numericValue = normalizeFiniteNumber(value, fallbackValue);
+  return numericValue >= 0 ? numericValue : fallbackValue;
+}
+
+function roundUsdAmount(value) {
+  return Number(normalizeFiniteNumber(value, 0).toFixed(8));
+}
+
+function formatUsdAmount(value) {
+  return roundUsdAmount(value).toFixed(8).replace(/\.?0+$/, '');
+}
+
+function normalizeConversationId(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const normalizedValue = value.trim();
+  return normalizedValue.length > 0 && normalizedValue.length <= 128
+    ? normalizedValue
+    : '';
+}
+
+function createModelPricingMap(rawConfig) {
+  const pricingMap = new Map();
+
+  for (const [modelId, pricing] of Object.entries(DEFAULT_MODEL_PRICING)) {
+    const normalizedPricing = normalizeModelPricingEntry(pricing);
+
+    if (normalizedPricing) {
+      pricingMap.set(modelId, normalizedPricing);
+    }
+  }
+
+  if (!rawConfig) {
+    return pricingMap;
+  }
+
+  try {
+    const parsedConfig = JSON.parse(rawConfig);
+
+    if (!parsedConfig || typeof parsedConfig !== 'object' || Array.isArray(parsedConfig)) {
+      throw new Error('AI_MODEL_PRICING_JSON 必须是对象。');
+    }
+
+    for (const [modelId, pricing] of Object.entries(parsedConfig)) {
+      const normalizedModelId = normalizeConfiguredModel(modelId);
+      const normalizedPricing = normalizeModelPricingEntry(pricing);
+
+      if (!normalizedModelId || !normalizedPricing) {
+        console.warn(`[AI] 跳过无效模型计费配置: ${modelId}`);
+        continue;
+      }
+
+      pricingMap.set(normalizedModelId, normalizedPricing);
+    }
+  } catch (error) {
+    console.warn(`[AI] AI_MODEL_PRICING_JSON 解析失败: ${getRuntimeErrorMessage(error)}`);
+  }
+
+  return pricingMap;
+}
+
+function normalizeModelPricingEntry(value) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const inputPerMillionUsd = normalizeFiniteNumber(value.inputPerMillionUsd, Number.NaN);
+  const cachedInputPerMillionUsd = normalizeFiniteNumber(
+    value.cachedInputPerMillionUsd ?? value.inputPerMillionUsd,
+    Number.NaN
+  );
+  const outputPerMillionUsd = normalizeFiniteNumber(value.outputPerMillionUsd, Number.NaN);
+
+  if (
+    !Number.isFinite(inputPerMillionUsd)
+    || inputPerMillionUsd < 0
+    || !Number.isFinite(cachedInputPerMillionUsd)
+    || cachedInputPerMillionUsd < 0
+    || !Number.isFinite(outputPerMillionUsd)
+    || outputPerMillionUsd < 0
+  ) {
+    return null;
+  }
+
+  return {
+    inputPerMillionUsd,
+    cachedInputPerMillionUsd,
+    outputPerMillionUsd,
+  };
+}
+
+function resolveModelPricing(model) {
+  return modelPricingMap.get(model) ?? null;
+}
+
+function estimateAiRequestReserveUsd(chatMessages, modelPricing, maxOutputTokens) {
+  const promptTokenEstimate = estimateMessageTokenCount(chatMessages);
+  const inputCostUsd = (promptTokenEstimate * modelPricing.inputPerMillionUsd) / 1_000_000;
+  const outputCostUsd = (Math.max(maxOutputTokens, 0) * modelPricing.outputPerMillionUsd) / 1_000_000;
+
+  return roundUsdAmount((inputCostUsd + outputCostUsd) * 1.15);
+}
+
+function estimateMessageTokenCount(messages) {
+  return messages.reduce((tokenCount, message) => (
+    tokenCount + estimateTextTokenCount(message.role) + estimateTextTokenCount(message.content) + 16
+  ), 4);
+}
+
+function estimateTextTokenCount(value) {
+  return typeof value === 'string' && value.trim()
+    ? Math.max(Array.from(value).length, 1)
+    : 0;
+}
+
+function createAiUsageRequestId(userId, conversationId) {
+  const userPart = sanitizeIdentifierFragment(userId, 'user');
+  const conversationPart = sanitizeIdentifierFragment(conversationId, 'adhoc');
+  const timestamp = Date.now().toString(36);
+  const randomPart = Math.random().toString(36).slice(2, 10);
+
+  return `ai-${userPart}-${conversationPart}-${timestamp}-${randomPart}`;
+}
+
+function sanitizeIdentifierFragment(value, fallbackValue) {
+  if (typeof value !== 'string') {
+    return fallbackValue;
+  }
+
+  const sanitizedValue = value
+    .trim()
+    .replace(/[^A-Za-z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 48);
+
+  return sanitizedValue || fallbackValue;
+}
+
+function extractStreamUsage(payload) {
+  const usage = payload?.usage;
+
+  if (!usage || typeof usage !== 'object') {
+    return null;
+  }
+
+  const promptTokens = normalizeNonNegativeInteger(
+    usage.prompt_tokens ?? usage.promptTokens ?? usage.input_tokens,
+    0
+  );
+  const cachedPromptTokens = normalizeNonNegativeInteger(
+    usage.cached_prompt_tokens
+      ?? usage.prompt_cache_hit_tokens
+      ?? usage.prompt_tokens_details?.cached_tokens
+      ?? usage.input_tokens_details?.cached_tokens,
+    0
+  );
+  const totalTokens = normalizeNonNegativeInteger(
+    usage.total_tokens ?? usage.totalTokens,
+    promptTokens
+  );
+  const completionTokensFromPayload = normalizeNonNegativeInteger(
+    usage.completion_tokens ?? usage.completionTokens ?? usage.output_tokens,
+    0
+  );
+  const completionTokens = completionTokensFromPayload > 0
+    ? completionTokensFromPayload
+    : Math.max(totalTokens - promptTokens, 0);
+  const reasoningTokens = normalizeNonNegativeInteger(
+    usage.reasoning_tokens
+      ?? usage.completion_tokens_details?.reasoning_tokens
+      ?? usage.output_tokens_details?.reasoning_tokens,
+    0
+  );
+
+  if (promptTokens === 0 && completionTokens === 0 && totalTokens === 0) {
+    return null;
+  }
+
+  return {
+    promptTokens,
+    cachedPromptTokens: Math.min(cachedPromptTokens, promptTokens),
+    completionTokens,
+    reasoningTokens: Math.min(reasoningTokens, completionTokens),
+    totalTokens: Math.max(totalTokens, promptTokens + completionTokens),
+  };
+}
+
+function computeAiUsageCharge(usage, pricing) {
+  const cachedPromptTokens = Math.min(usage.cachedPromptTokens, usage.promptTokens);
+  const uncachedPromptTokens = Math.max(usage.promptTokens - cachedPromptTokens, 0);
+  const inputCostUsd = roundUsdAmount(
+    (
+      (uncachedPromptTokens * pricing.inputPerMillionUsd)
+      + (cachedPromptTokens * pricing.cachedInputPerMillionUsd)
+    ) / 1_000_000
+  );
+  const outputCostUsd = roundUsdAmount(
+    (usage.completionTokens * pricing.outputPerMillionUsd) / 1_000_000
+  );
+
+  return {
+    inputCostUsd,
+    outputCostUsd,
+    totalCostUsd: roundUsdAmount(inputCostUsd + outputCostUsd),
+  };
+}
+
+function serializeUsageMetrics(usage) {
+  return {
+    promptTokens: usage.promptTokens,
+    cachedPromptTokens: usage.cachedPromptTokens,
+    completionTokens: usage.completionTokens,
+    reasoningTokens: usage.reasoningTokens,
+    totalTokens: usage.totalTokens,
+  };
+}
+
+async function ensureAiWalletExists(queryable, userId) {
+  await queryable.query(`
+    INSERT INTO ai_user_wallets (user_id, balance_usd, total_charged_usd)
+    VALUES ($1, $2, 0)
+    ON CONFLICT (user_id) DO NOTHING
+  `, [userId, AI_INITIAL_BALANCE_USD]);
+}
+
+async function getWalletSnapshot(queryable, userId) {
+  await ensureAiWalletExists(queryable, userId);
+  const { rows } = await queryable.query(`
+    SELECT user_id, balance_usd, total_charged_usd
+    FROM ai_user_wallets
+    WHERE user_id = $1
+  `, [userId]);
+
+  return normalizeAiWalletRow(rows[0]) ?? {
+    userId,
+    balanceUsd: roundUsdAmount(AI_INITIAL_BALANCE_USD),
+    totalChargedUsd: 0,
+  };
+}
+
+function normalizeAiWalletRow(row) {
+  if (!row || typeof row !== 'object' || typeof row.user_id !== 'string') {
+    return null;
+  }
+
+  return {
+    userId: row.user_id,
+    balanceUsd: roundUsdAmount(row.balance_usd),
+    totalChargedUsd: roundUsdAmount(row.total_charged_usd),
+  };
+}
+
+async function readAiWalletReservationForUpdate(client, requestId) {
+  const { rows } = await client.query(`
+    SELECT request_id, user_id, reserved_usd, status
+    FROM ai_wallet_reservations
+    WHERE request_id = $1
+    FOR UPDATE
+  `, [requestId]);
+
+  return normalizeAiWalletReservationRow(rows[0]);
+}
+
+function normalizeAiWalletReservationRow(row) {
+  if (
+    !row
+    || typeof row !== 'object'
+    || typeof row.request_id !== 'string'
+    || typeof row.user_id !== 'string'
+    || typeof row.status !== 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    requestId: row.request_id,
+    userId: row.user_id,
+    reservedUsd: roundUsdAmount(row.reserved_usd),
+    status: row.status,
+  };
+}
+
+async function readAiUsageRecordByRequestId(queryable, requestId) {
+  const { rows } = await queryable.query(`
+    SELECT
+      request_id,
+      user_id,
+      conversation_id,
+      provider,
+      model,
+      prompt_tokens,
+      cached_prompt_tokens,
+      completion_tokens,
+      reasoning_tokens,
+      total_tokens,
+      input_cost_usd,
+      output_cost_usd,
+      total_cost_usd,
+      currency,
+      created_at
+    FROM ai_usage_records
+    WHERE request_id = $1
+    LIMIT 1
+  `, [requestId]);
+
+  return normalizeAiUsageRecordRow(rows[0]);
+}
+
+function normalizeAiUsageRecordRow(row) {
+  if (
+    !row
+    || typeof row !== 'object'
+    || typeof row.request_id !== 'string'
+    || typeof row.user_id !== 'string'
+    || typeof row.provider !== 'string'
+    || typeof row.model !== 'string'
+  ) {
+    return null;
+  }
+
+  const fallbackDate = new Date().toISOString();
+
+  return {
+    requestId: row.request_id,
+    userId: row.user_id,
+    conversationId: typeof row.conversation_id === 'string' ? row.conversation_id : null,
+    provider: row.provider,
+    model: row.model,
+    usage: {
+      promptTokens: normalizeNonNegativeInteger(row.prompt_tokens, 0),
+      cachedPromptTokens: normalizeNonNegativeInteger(row.cached_prompt_tokens, 0),
+      completionTokens: normalizeNonNegativeInteger(row.completion_tokens, 0),
+      reasoningTokens: normalizeNonNegativeInteger(row.reasoning_tokens, 0),
+      totalTokens: normalizeNonNegativeInteger(row.total_tokens, 0),
+    },
+    billing: {
+      inputCostUsd: formatUsdAmount(row.input_cost_usd),
+      outputCostUsd: formatUsdAmount(row.output_cost_usd),
+      totalCostUsd: formatUsdAmount(row.total_cost_usd),
+    },
+    currency: typeof row.currency === 'string' ? row.currency : 'USD',
+    createdAt: normalizeIsoString(row.created_at, fallbackDate),
+  };
+}
+
+function normalizeAiBillingModelRow(row) {
+  if (!row || typeof row !== 'object' || typeof row.model !== 'string') {
+    return null;
+  }
+
+  const fallbackDate = new Date().toISOString();
+
+  return {
+    model: row.model,
+    requestCount: normalizeNonNegativeInteger(row.request_count, 0),
+    totalTokens: normalizeNonNegativeInteger(row.total_tokens, 0),
+    totalCostUsd: formatUsdAmount(row.total_cost_usd),
+    lastUsedAt: row.last_used_at
+      ? normalizeIsoString(row.last_used_at, fallbackDate)
+      : null,
+  };
+}
+
+async function reserveAiWalletBalance({
+  userId,
+  requestId,
+  reservedUsd,
+}) {
+  const normalizedReservedUsd = roundUsdAmount(Math.max(reservedUsd, 0));
+  const pool = getDatabasePool();
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    await ensureAiWalletExists(client, userId);
+
+    const existingReservation = await readAiWalletReservationForUpdate(client, requestId);
+
+    if (existingReservation) {
+      if (existingReservation.userId !== userId) {
+        throw new Error('AI 计费预留记录的用户身份不匹配。');
+      }
+
+      const wallet = await getWalletSnapshot(client, userId);
+      await client.query('COMMIT');
+
+      return {
+        requestId,
+        reservedUsd: existingReservation.reservedUsd,
+        balanceUsd: wallet.balanceUsd,
+        totalChargedUsd: wallet.totalChargedUsd,
+      };
+    }
+
+    const { rows } = await client.query(`
+      UPDATE ai_user_wallets
+      SET balance_usd = balance_usd - $2,
+          updated_at = now()
+      WHERE user_id = $1
+        AND balance_usd >= $2
+      RETURNING balance_usd, total_charged_usd
+    `, [userId, normalizedReservedUsd]);
+
+    if (!rows[0]) {
+      const wallet = await getWalletSnapshot(client, userId);
+      throw new InsufficientAiBalanceError(wallet.balanceUsd, normalizedReservedUsd);
+    }
+
+    await client.query(`
+      INSERT INTO ai_wallet_reservations (request_id, user_id, reserved_usd, status)
+      VALUES ($1, $2, $3, 'reserved')
+    `, [requestId, userId, normalizedReservedUsd]);
+
+    await client.query('COMMIT');
+
+    return {
+      requestId,
+      reservedUsd: normalizedReservedUsd,
+      balanceUsd: roundUsdAmount(rows[0].balance_usd),
+      totalChargedUsd: roundUsdAmount(rows[0].total_charged_usd),
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => null);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function releaseAiWalletReservation({
+  userId,
+  requestId,
+}) {
+  const pool = getDatabasePool();
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    await ensureAiWalletExists(client, userId);
+
+    const reservation = await readAiWalletReservationForUpdate(client, requestId);
+
+    if (!reservation) {
+      const wallet = await getWalletSnapshot(client, userId);
+      await client.query('COMMIT');
+      return wallet;
+    }
+
+    if (reservation.userId !== userId) {
+      throw new Error('AI 计费预留记录的用户身份不匹配。');
+    }
+
+    if (reservation.status !== 'reserved') {
+      const wallet = await getWalletSnapshot(client, userId);
+      await client.query('COMMIT');
+      return wallet;
+    }
+
+    const { rows } = await client.query(`
+      UPDATE ai_user_wallets
+      SET balance_usd = balance_usd + $2,
+          updated_at = now()
+      WHERE user_id = $1
+      RETURNING user_id, balance_usd, total_charged_usd
+    `, [userId, reservation.reservedUsd]);
+
+    await client.query(`
+      UPDATE ai_wallet_reservations
+      SET status = 'released',
+          settled_at = now()
+      WHERE request_id = $1
+    `, [requestId]);
+
+    await client.query('COMMIT');
+    return normalizeAiWalletRow(rows[0]) ?? {
+      userId,
+      balanceUsd: roundUsdAmount(AI_INITIAL_BALANCE_USD),
+      totalChargedUsd: 0,
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => null);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function finalizeAiUsageCharge({
+  requestId,
+  userId,
+  conversationId,
+  provider,
+  model,
+  usage,
+  pricing,
+  charge,
+}) {
+  const pool = getDatabasePool();
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    await ensureAiWalletExists(client, userId);
+
+    const existingUsageRecord = await readAiUsageRecordByRequestId(client, requestId);
+
+    if (existingUsageRecord) {
+      const wallet = await getWalletSnapshot(client, userId);
+      await client.query('COMMIT');
+      return {
+        balanceUsd: wallet.balanceUsd,
+        totalChargedUsd: wallet.totalChargedUsd,
+      };
+    }
+
+    const reservation = await readAiWalletReservationForUpdate(client, requestId);
+
+    if (!reservation || reservation.status !== 'reserved') {
+      throw new Error('AI 计费预留不存在或已结束，无法完成本次结算。');
+    }
+
+    if (reservation.userId !== userId) {
+      throw new Error('AI 计费预留记录的用户身份不匹配。');
+    }
+
+    const refundUsd = roundUsdAmount(Math.max(reservation.reservedUsd - charge.totalCostUsd, 0));
+    const extraChargeUsd = roundUsdAmount(Math.max(charge.totalCostUsd - reservation.reservedUsd, 0));
+
+    const { rows } = await client.query(`
+      UPDATE ai_user_wallets
+      SET balance_usd = balance_usd + $2 - $3,
+          total_charged_usd = total_charged_usd + $4,
+          updated_at = now()
+      WHERE user_id = $1
+      RETURNING user_id, balance_usd, total_charged_usd
+    `, [userId, refundUsd, extraChargeUsd, charge.totalCostUsd]);
+
+    await client.query(`
+      INSERT INTO ai_usage_records (
+        request_id,
+        user_id,
+        conversation_id,
+        provider,
+        model,
+        prompt_tokens,
+        cached_prompt_tokens,
+        completion_tokens,
+        reasoning_tokens,
+        total_tokens,
+        input_price_per_million_usd,
+        cached_input_price_per_million_usd,
+        output_price_per_million_usd,
+        input_cost_usd,
+        output_cost_usd,
+        total_cost_usd,
+        currency
+      )
+      VALUES (
+        $1, $2, $3, $4, $5,
+        $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15, $16, 'USD'
+      )
+    `, [
+      requestId,
+      userId,
+      conversationId || null,
+      provider,
+      model,
+      usage.promptTokens,
+      usage.cachedPromptTokens,
+      usage.completionTokens,
+      usage.reasoningTokens,
+      usage.totalTokens,
+      pricing.inputPerMillionUsd,
+      pricing.cachedInputPerMillionUsd,
+      pricing.outputPerMillionUsd,
+      charge.inputCostUsd,
+      charge.outputCostUsd,
+      charge.totalCostUsd,
+    ]);
+
+    await client.query(`
+      UPDATE ai_wallet_reservations
+      SET status = 'charged',
+          settled_at = now()
+      WHERE request_id = $1
+    `, [requestId]);
+
+    await client.query('COMMIT');
+
+    const wallet = normalizeAiWalletRow(rows[0]) ?? {
+      userId,
+      balanceUsd: 0,
+      totalChargedUsd: roundUsdAmount(charge.totalCostUsd),
+    };
+
+    return {
+      balanceUsd: wallet.balanceUsd,
+      totalChargedUsd: wallet.totalChargedUsd,
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => null);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function getAiBillingSummary(userId) {
+  const pool = getDatabasePool();
+  await ensureAiWalletExists(pool, userId);
+
+  const [wallet, usageTotalsResult, modelSummaryResult, recentUsageResult] = await Promise.all([
+    getWalletSnapshot(pool, userId),
+    pool.query(`
+      SELECT
+        COUNT(*) AS request_count,
+        COALESCE(SUM(total_tokens), 0) AS total_tokens,
+        COALESCE(SUM(total_cost_usd), 0) AS total_cost_usd
+      FROM ai_usage_records
+      WHERE user_id = $1
+    `, [userId]),
+    pool.query(`
+      SELECT
+        model,
+        COUNT(*) AS request_count,
+        COALESCE(SUM(total_tokens), 0) AS total_tokens,
+        COALESCE(SUM(total_cost_usd), 0) AS total_cost_usd,
+        MAX(created_at) AS last_used_at
+      FROM ai_usage_records
+      WHERE user_id = $1
+      GROUP BY model
+      ORDER BY MAX(created_at) DESC, model ASC
+    `, [userId]),
+    pool.query(`
+      SELECT
+        request_id,
+        user_id,
+        conversation_id,
+        provider,
+        model,
+        prompt_tokens,
+        cached_prompt_tokens,
+        completion_tokens,
+        reasoning_tokens,
+        total_tokens,
+        input_cost_usd,
+        output_cost_usd,
+        total_cost_usd,
+        currency,
+        created_at
+      FROM ai_usage_records
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+      LIMIT 20
+    `, [userId]),
+  ]);
+
+  const usageTotalsRow = usageTotalsResult.rows[0] ?? {};
+  const modelSummaries = modelSummaryResult.rows
+    .map(normalizeAiBillingModelRow)
+    .filter(Boolean);
+  const recentUsage = recentUsageResult.rows
+    .map(normalizeAiUsageRecordRow)
+    .filter(Boolean);
+
+  return {
+    userId,
+    currency: 'USD',
+    balanceUsd: formatUsdAmount(wallet.balanceUsd),
+    totalChargedUsd: formatUsdAmount(wallet.totalChargedUsd),
+    totalRequests: normalizeNonNegativeInteger(usageTotalsRow.request_count, 0),
+    totalTokens: normalizeNonNegativeInteger(usageTotalsRow.total_tokens, 0),
+    totalCostUsd: formatUsdAmount(usageTotalsRow.total_cost_usd),
+    models: modelSummaries,
+    recentUsage,
+  };
+}
+
+async function readConversations(userId) {
   const pool = getDatabasePool();
   const { rows } = await pool.query(`
     SELECT id, title, messages, created_at, updated_at, title_generated_at
     FROM ai_conversations
+    WHERE user_id = $1
     ORDER BY updated_at DESC
-  `);
+  `, [userId]);
 
   return rows.map(normalizeConversationRow).filter(Boolean);
 }
 
-async function upsertConversation(conversation) {
+async function upsertConversation(userId, conversation) {
   const pool = getDatabasePool();
   const { rows } = await pool.query(`
     INSERT INTO ai_conversations (
       id,
+      user_id,
       title,
       messages,
       created_at,
       updated_at,
       title_generated_at
     )
-    VALUES ($1, $2, $3::jsonb, $4::timestamptz, $5::timestamptz, $6::timestamptz)
+    VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz, $6::timestamptz, $7::timestamptz)
     ON CONFLICT (id) DO UPDATE SET
+      user_id = EXCLUDED.user_id,
       title = EXCLUDED.title,
       messages = EXCLUDED.messages,
       created_at = LEAST(ai_conversations.created_at, EXCLUDED.created_at),
       updated_at = EXCLUDED.updated_at,
       title_generated_at = EXCLUDED.title_generated_at
-    WHERE EXCLUDED.updated_at >= ai_conversations.updated_at
+    WHERE (
+      ai_conversations.user_id = EXCLUDED.user_id
+      OR ai_conversations.user_id IS NULL
+    )
+      AND EXCLUDED.updated_at >= ai_conversations.updated_at
     RETURNING id, title, messages, created_at, updated_at, title_generated_at
   `, [
     conversation.id,
+    userId,
     conversation.title,
     JSON.stringify(conversation.messages),
     conversation.createdAt,
@@ -371,24 +1341,34 @@ async function upsertConversation(conversation) {
     return normalizeConversationRow(rows[0]) ?? conversation;
   }
 
-  const existingConversation = await readConversationById(conversation.id);
-  return existingConversation ?? conversation;
+  const existingConversation = await readConversationById(userId, conversation.id);
+
+  if (existingConversation) {
+    return existingConversation;
+  }
+
+  throw new Error('多轮对话 id 已被其他用户占用，请重新创建会话。');
 }
 
-async function readConversationById(conversationId) {
+async function readConversationById(userId, conversationId) {
   const pool = getDatabasePool();
   const { rows } = await pool.query(`
     SELECT id, title, messages, created_at, updated_at, title_generated_at
     FROM ai_conversations
     WHERE id = $1
-  `, [conversationId]);
+      AND user_id = $2
+  `, [conversationId, userId]);
 
   return rows[0] ? normalizeConversationRow(rows[0]) : null;
 }
 
-async function deleteConversation(conversationId) {
+async function deleteConversation(userId, conversationId) {
   const pool = getDatabasePool();
-  await pool.query('DELETE FROM ai_conversations WHERE id = $1', [conversationId]);
+  await pool.query(`
+    DELETE FROM ai_conversations
+    WHERE id = $1
+      AND user_id = $2
+  `, [conversationId, userId]);
 }
 
 function normalizeConversationRow(row) {
@@ -530,11 +1510,16 @@ function isChatMessage(value) {
 
 function normalizeScreenKnowledge(value) {
   if (!value || typeof value !== 'object') {
-    return '当前屏幕内容读取暂未接入。';
+    return null;
   }
 
   const route = typeof value.route === 'string' ? value.route : 'unknown';
-  const summary = typeof value.summary === 'string' ? value.summary : '当前屏幕内容读取暂未接入。';
+  const summary = typeof value.summary === 'string' ? value.summary.trim() : '';
+
+  if (!summary) {
+    return null;
+  }
+
   return `页面路径：${route}\n页面摘要：${summary}`;
 }
 
@@ -554,6 +1539,7 @@ function resolveChatUpstream(model) {
     return {
       apiKey: getEnvValue('DEEPSEEK_API_KEY'),
       apiKeyName: 'DEEPSEEK_API_KEY',
+      providerName: 'DeepSeek',
       url: DEEPSEEK_URL,
     };
   }
@@ -561,6 +1547,7 @@ function resolveChatUpstream(model) {
   return {
     apiKey: getEnvValue('NITRO_ROUTER_API_KEY'),
     apiKeyName: 'NITRO_ROUTER_API_KEY',
+    providerName: 'Nitro Router',
     url: NITRO_ROUTER_URL,
   };
 }

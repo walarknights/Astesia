@@ -30,11 +30,13 @@ import {
   AI_ASSISTANT_WELCOME_MESSAGE,
   DEFAULT_AI_CONVERSATION_TITLE,
   DEFAULT_AI_MODEL_ID,
+  MAX_AI_CONVERSATION_TITLE_LENGTH,
   createAiAssistantConversation,
   createAiAssistantMessage,
   deleteAiAssistantConversation,
   isDefaultAiConversationTitle,
   loadAiAssistantConversations,
+  normalizeAiConversationTitle,
   requestAiAssistantReply,
   requestAiConversationTitle,
   requestAiModels,
@@ -47,10 +49,11 @@ import { buildAiScreenKnowledge, type AiScreenKnowledgeSnapshot } from '@/servic
 import { useScreenCapture } from '@/services/screen-capture';
 
 const DRAWER_WIDTH_RATIO = 0.92;
-const CONVERSATION_DRAWER_WIDTH_RATIO = 0.5;
+const CONVERSATION_DRAWER_WIDTH_RATIO = 0.75;
 const DRAWER_MAX_WIDTH = 350;
 const DRAWER_ANIMATION_MS = 240;
 const KNOWLEDGE_PANEL_ANIMATION_MS = 180;
+const KNOWLEDGE_INCLUDE_TOGGLE_ANIMATION_MS = 220;
 const KNOWLEDGE_PANEL_HEIGHT = 128;
 const FLOATING_BUTTON_SIZE = 56;
 const FLOATING_BUTTON_MARGIN = 12;
@@ -85,6 +88,7 @@ export function AiFloatingAssistant() {
   const drawerWidth = Math.min(width * DRAWER_WIDTH_RATIO, DRAWER_MAX_WIDTH);
   const drawerTranslateX = useRef(new Animated.Value(-drawerWidth)).current;
   const knowledgePanelProgress = useRef(new Animated.Value(0)).current;
+  const knowledgeIncludeProgress = useRef(new Animated.Value(0)).current;
   const floatingPosition = useRef(new Animated.ValueXY({ x: 0, y: FLOATING_BUTTON_INITIAL_TOP })).current;
   const [isDrawerVisible, setIsDrawerVisible] = useState(false);
   const [draftMessage, setDraftMessage] = useState('');
@@ -99,9 +103,16 @@ export function AiFloatingAssistant() {
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [isModelSheetVisible, setIsModelSheetVisible] = useState(false);
   const [isConversationDrawerVisible, setIsConversationDrawerVisible] = useState(false);
+  const [activeConversationActionId, setActiveConversationActionId] = useState<string | null>(null);
+  const [conversationTitleDraft, setConversationTitleDraft] = useState('');
+  const [isConversationTitleEditing, setIsConversationTitleEditing] = useState(false);
   const [isTitleSummarizing, setIsTitleSummarizing] = useState(false);
   const [conversationSyncError, setConversationSyncError] = useState<string | null>(null);
   const [isKnowledgeExpanded, setIsKnowledgeExpanded] = useState(false);
+  // [变更] 修改前: 屏幕知识会在发送消息时默认参与 AI 请求
+  // [变更] 修改后: 增加显式选择状态，只有用户主动开启时才把当前屏幕知识带入对话
+  // [原因] 满足“默认不添加到对话中，由用户自己选择”的交互要求
+  const [shouldIncludeScreenKnowledge, setShouldIncludeScreenKnowledge] = useState(false);
   const [pendingImageAttachments, setPendingImageAttachments] = useState<PendingImageAttachment[]>([]);
   const [isCapturingScreenImage, setIsCapturingScreenImage] = useState(false);
   const [screenKnowledge, setScreenKnowledge] = useState<AiScreenKnowledgeSnapshot>(() => ({
@@ -210,6 +221,14 @@ export function AiFloatingAssistant() {
   // [原因] 历史标题和时间需要更充足的展示空间，避免在窄屏下列表信息被过度压缩
   const conversationDrawerWidth = drawerWidth * CONVERSATION_DRAWER_WIDTH_RATIO;
   const conversationTitle = currentConversation.title || DEFAULT_AI_CONVERSATION_TITLE;
+  const activeConversationAction = useMemo(() => {
+    if (!activeConversationActionId) {
+      return null;
+    }
+
+    return conversations.find((conversation) => conversation.id === activeConversationActionId)
+      ?? (currentConversation.id === activeConversationActionId ? currentConversation : null);
+  }, [activeConversationActionId, conversations, currentConversation]);
   const knowledgePanelAnimatedStyle = useMemo(
     () => ({
       height: knowledgePanelProgress.interpolate({
@@ -237,6 +256,67 @@ export function AiFloatingAssistant() {
     }),
     [knowledgePanelProgress]
   );
+  // [变更] 修改前: “加入对话”按钮状态切换时只会立即替换图标
+  // [变更] 修改后: 增加按钮底色、缩放和图标交叉淡入淡出动画
+  // [原因] 让知识库开关的视觉反馈更顺滑，减少硬切换的突兀感
+  const knowledgeIncludeButtonAnimatedStyle = useMemo(
+    () => ({
+      backgroundColor: knowledgeIncludeProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['rgba(255, 255, 255, 0)', 'rgba(22, 100, 255, 0.12)'],
+      }),
+      borderColor: knowledgeIncludeProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['rgba(148, 163, 184, 0.32)', 'rgba(22, 100, 255, 0.26)'],
+      }),
+      transform: [
+        {
+          scale: knowledgeIncludeProgress.interpolate({
+            inputRange: [0, 0.65, 1],
+            outputRange: [1, 1.08, 1],
+          }),
+        },
+      ],
+    }),
+    [knowledgeIncludeProgress]
+  );
+  const knowledgeIncludeInactiveIconAnimatedStyle = useMemo(
+    () => ({
+      opacity: knowledgeIncludeProgress.interpolate({
+        inputRange: [0, 0.6, 1],
+        outputRange: [1, 0.18, 0],
+      }),
+      transform: [
+        {
+          scale: knowledgeIncludeProgress.interpolate({
+            inputRange: [0, 1],
+            outputRange: [1, 0.82],
+          }),
+        },
+      ],
+    }),
+    [knowledgeIncludeProgress]
+  );
+  const knowledgeIncludeActiveIconAnimatedStyle = useMemo(
+    () => ({
+      opacity: knowledgeIncludeProgress,
+      transform: [
+        {
+          scale: knowledgeIncludeProgress.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.72, 1],
+          }),
+        },
+        {
+          rotate: knowledgeIncludeProgress.interpolate({
+            inputRange: [0, 1],
+            outputRange: ['-18deg', '0deg'],
+          }),
+        },
+      ],
+    }),
+    [knowledgeIncludeProgress]
+  );
 
   useEffect(() => {
     Animated.timing(knowledgePanelProgress, {
@@ -246,6 +326,15 @@ export function AiFloatingAssistant() {
       useNativeDriver: false,
     }).start();
   }, [isKnowledgeExpanded, knowledgePanelProgress]);
+
+  useEffect(() => {
+    Animated.timing(knowledgeIncludeProgress, {
+      toValue: shouldIncludeScreenKnowledge ? 1 : 0,
+      duration: KNOWLEDGE_INCLUDE_TOGGLE_ANIMATION_MS,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [knowledgeIncludeProgress, shouldIncludeScreenKnowledge]);
 
   const animateDrawer = useCallback((toValue: number, onComplete?: () => void) => {
     Animated.timing(drawerTranslateX, {
@@ -554,6 +643,24 @@ export function AiFloatingAssistant() {
     scrollMessagesToEnd(false);
   }, [scrollMessagesToEnd]);
 
+  const closeConversationActions = useCallback(() => {
+    setActiveConversationActionId(null);
+    setConversationTitleDraft('');
+    setIsConversationTitleEditing(false);
+  }, []);
+
+  // [变更] 修改前: 历史对话长按直接使用系统 Alert，标题只能作为静态文案展示
+  // [变更] 修改后: 改为打开组件内自定义操作弹层，可从标题本身进入编辑态
+  // [原因] 满足“点击标题即可修改”的交互诉求，同时保留删除和总结标题能力
+  const openConversationActions = useCallback((
+    conversation: AiAssistantConversation,
+    shouldStartEditing = false
+  ) => {
+    setActiveConversationActionId(conversation.id);
+    setConversationTitleDraft(conversation.title);
+    setIsConversationTitleEditing(shouldStartEditing);
+  }, []);
+
   const summarizeConversationTitle = useCallback(async (
     conversationId: string,
     summaryMessages?: AiAssistantMessage[],
@@ -595,6 +702,46 @@ export function AiFloatingAssistant() {
     }
   }, [isTitleSummarizing, syncConversationToStorage]);
 
+  // [变更] 修改前: 会话标题只能依赖 AI 自动总结生成
+  // [变更] 修改后: 支持用户手动重命名，并继续复用现有本地/远端同步链路
+  // [原因] 让用户可以直接修正历史会话标题，避免只能反复触发 AI 总结
+  const renameConversationTitle = useCallback((conversationId: string, nextTitle: string) => {
+    const targetConversation = conversationsRef.current.find((conversation) => conversation.id === conversationId)
+      ?? (currentConversationRef.current.id === conversationId ? currentConversationRef.current : null);
+
+    if (!targetConversation) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const nextConversation = {
+      ...targetConversation,
+      title: normalizeAiConversationTitle(nextTitle),
+      updatedAt: now,
+    };
+
+    syncConversationToStorage(nextConversation, currentConversationRef.current.id === conversationId);
+  }, [syncConversationToStorage]);
+
+  const confirmConversationTitleEdit = useCallback(() => {
+    if (!activeConversationAction) {
+      return;
+    }
+
+    const nextTitle = normalizeAiConversationTitle(conversationTitleDraft);
+
+    if (nextTitle !== activeConversationAction.title) {
+      renameConversationTitle(activeConversationAction.id, conversationTitleDraft);
+    }
+
+    closeConversationActions();
+  }, [
+    activeConversationAction,
+    closeConversationActions,
+    conversationTitleDraft,
+    renameConversationTitle,
+  ]);
+
   const deleteConversation = useCallback((conversationId: string) => {
     const nextConversations = conversationsRef.current.filter((conversation) => conversation.id !== conversationId);
     const fallbackConversation = nextConversations[0] ?? createAiAssistantConversation();
@@ -618,22 +765,8 @@ export function AiFloatingAssistant() {
   }, [selectConversation, syncConversationToStorage]);
 
   const handleConversationLongPress = useCallback((conversation: AiAssistantConversation) => {
-    Alert.alert(conversation.title, '选择对话操作', [
-      {
-        text: '总结标题',
-        onPress: () => void summarizeConversationTitle(conversation.id),
-      },
-      {
-        text: '删除',
-        style: 'destructive',
-        onPress: () => deleteConversation(conversation.id),
-      },
-      {
-        text: '取消',
-        style: 'cancel',
-      },
-    ]);
-  }, [deleteConversation, summarizeConversationTitle]);
+    openConversationActions(conversation);
+  }, [openConversationActions]);
 
   const pickImage = useCallback(async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -720,6 +853,13 @@ export function AiFloatingAssistant() {
       return;
     }
 
+    // [变更] 修改前: 每次发送都会无条件携带当前屏幕知识
+    // [变更] 修改后: 仅在用户显式开启后，才把 route/summary 注入本轮 AI 请求
+    // [原因] 当前屏幕知识属于可选辅助上下文，不应默认影响所有对话
+    const requestScreenKnowledge = shouldIncludeScreenKnowledge
+      ? { route: screenKnowledge.route, summary: screenKnowledge.summary }
+      : null;
+
     // [变更] 修改前: 图片附件状态会拼接成用户气泡里的说明文字
     // [变更] 修改后: 用户消息只保留输入框文本，附件继续停留在独立附件 UI 中
     // [原因] 屏幕截图当前还未接入多模态发送，不能伪装成用户输入内容
@@ -741,7 +881,11 @@ export function AiFloatingAssistant() {
     scrollMessagesToEnd();
 
     try {
-      const assistantReply = await requestAiAssistantReply(requestMessages, screenKnowledge, selectedModel, {
+        // [变更] 修改前: AI 请求只上传消息内容，不携带当前会话 id
+        // [变更] 修改后: 把 activeConversationId 一并传给服务层
+        // [原因] 服务端需要按用户 + 会话归档 token 消耗与扣费记录
+      const assistantReply = await requestAiAssistantReply(requestMessages, requestScreenKnowledge, selectedModel, {
+          conversationId: activeConversationId,
         onChunk: (_, fullContent) => {
           updateMessages((currentMessages) => currentMessages.map((message) => (
             message.id === assistantMessage.id
@@ -778,7 +922,16 @@ export function AiFloatingAssistant() {
     } finally {
       setIsSending(false);
     }
-  }, [draftMessage, isSending, screenKnowledge, scrollMessagesToEnd, selectedModel, summarizeConversationTitle, updateMessages]);
+  }, [
+    draftMessage,
+    isSending,
+    screenKnowledge,
+    scrollMessagesToEnd,
+    selectedModel,
+    shouldIncludeScreenKnowledge,
+    summarizeConversationTitle,
+    updateMessages,
+  ]);
 
   const isSendDisabled = isSending || !draftMessage.trim();
   const sendButtonLabel = isSending ? '发送中' : '发送';
@@ -833,8 +986,8 @@ export function AiFloatingAssistant() {
               <View style={styles.header}>
                 {/*
                  * 渲染位置: AI 抽屉顶部导航栏
-                 * 展示内容: 历史对话菜单入口、当前对话标题和新对话按钮
-                 * 数据来源: 固定占位标题 conversationTitle 与组件内 startNewConversation 操作
+                 * 展示内容: 历史对话菜单入口、可点击修改的当前对话标题和新对话按钮
+                 * 数据来源: currentConversation.title、openConversationActions 与 startNewConversation
                  */}
                 <View style={styles.conversationNav}>
                   <Pressable
@@ -844,14 +997,18 @@ export function AiFloatingAssistant() {
                     style={styles.menuButton}>
                     <MaterialIcons name="menu-open" size={24} color="#111827" />
                   </Pressable>
-                  <View style={styles.conversationTitleBox}>
+                  <Pressable
+                    accessibilityLabel="修改当前对话标题"
+                    accessibilityRole="button"
+                    onPress={() => openConversationActions(currentConversation, true)}
+                    style={styles.conversationTitleBox}>
                     <ThemedText numberOfLines={1} style={styles.conversationTitle}>
                       {conversationTitle}
                     </ThemedText>
                     {isTitleSummarizing ? (
                       <ActivityIndicator color="#64748B" size="small" />
                     ) : null}
-                  </View>
+                  </Pressable>
                   <Pressable
                     accessibilityLabel="开启一轮新 AI 对话"
                     accessibilityRole="button"
@@ -890,20 +1047,61 @@ export function AiFloatingAssistant() {
 
               {/*
                * 渲染位置: AI 抽屉顶部知识库折叠区
-               * 展示内容: 当前屏幕知识库入口，展开后显示可滚动摘要小窗和刷新入口
-               * 数据来源: expo-router 当前路径、路由参数和本地页面业务数据
+               * 展示内容: 当前屏幕知识库入口、是否加入对话的选择按钮，展开后显示可滚动摘要小窗和刷新入口
+               * 数据来源: expo-router 当前路径、路由参数、本地页面业务数据和 shouldIncludeScreenKnowledge 状态
                */}
               <View style={styles.knowledgeSection}>
-                <Pressable
-                  accessibilityLabel="展开或收起当前屏幕知识库"
-                  onPress={() => setIsKnowledgeExpanded((visible) => !visible)}
-                  style={styles.knowledgeToggle}>
-                  <MaterialIcons name="summarize" size={24} color="#1664FF" />
-                  <ThemedText style={styles.knowledgeTitle}>当前屏幕知识库</ThemedText>
-                  <Animated.View style={[styles.knowledgeCaret, knowledgeCaretAnimatedStyle]}>
-                    <MaterialIcons name="arrow-drop-down" size={36} color="#111827" />
-                  </Animated.View>
-                </Pressable>
+                <View style={styles.knowledgeToggle}>
+                  <Pressable
+                    accessibilityLabel="展开或收起当前屏幕知识库"
+                    accessibilityRole="button"
+                    onPress={() => setIsKnowledgeExpanded((visible) => !visible)}
+                    style={styles.knowledgeExpandButton}>
+                    <MaterialIcons name="summarize" size={24} color="#1664FF" />
+                    <ThemedText numberOfLines={1} style={styles.knowledgeTitle}>
+                      当前屏幕知识库
+                    </ThemedText>
+                  </Pressable>
+                  {/*
+                   * 渲染位置: AI 抽屉顶部知识库入口右侧
+                   * 展示内容: 控制是否把当前屏幕知识加入本轮对话的选择按钮
+                   * 数据来源: shouldIncludeScreenKnowledge 状态
+                   */}
+                  <Pressable
+                    accessibilityHint="轻点切换发送消息时是否附带当前屏幕知识"
+                    accessibilityLabel="将当前屏幕知识加入对话"
+                    accessibilityRole="switch"
+                    accessibilityState={{ checked: shouldIncludeScreenKnowledge }}
+                    onPress={() => setShouldIncludeScreenKnowledge((current) => !current)}
+                    style={styles.knowledgeIncludePressable}>
+                    {/*
+                     * 渲染位置: AI 抽屉顶部知识库入口右侧选择开关内部
+                     * 展示内容: 未选中圆环与选中勾选图标的平滑切换动画
+                     * 数据来源: shouldIncludeScreenKnowledge 状态与 knowledgeIncludeProgress 动画进度
+                     */}
+                    <Animated.View style={[styles.knowledgeIncludeButton, knowledgeIncludeButtonAnimatedStyle]}>
+                      <Animated.View
+                        pointerEvents="none"
+                        style={[styles.knowledgeIncludeIconLayer, knowledgeIncludeInactiveIconAnimatedStyle]}>
+                        <MaterialIcons name="radio-button-unchecked" size={22} color="#94A3B8" />
+                      </Animated.View>
+                      <Animated.View
+                        pointerEvents="none"
+                        style={[styles.knowledgeIncludeIconLayer, knowledgeIncludeActiveIconAnimatedStyle]}>
+                        <MaterialIcons name="check-circle" size={22} color="#1664FF" />
+                      </Animated.View>
+                    </Animated.View>
+                  </Pressable>
+                  <Pressable
+                    accessibilityLabel="展开或收起当前屏幕知识库"
+                    accessibilityRole="button"
+                    onPress={() => setIsKnowledgeExpanded((visible) => !visible)}
+                    style={styles.knowledgeCaretButton}>
+                    <Animated.View style={[styles.knowledgeCaret, knowledgeCaretAnimatedStyle]}>
+                      <MaterialIcons name="arrow-drop-down" size={36} color="#111827" />
+                    </Animated.View>
+                  </Pressable>
+                </View>
                 <Animated.View
                   pointerEvents={isKnowledgeExpanded ? 'auto' : 'none'}
                   style={[styles.knowledgePanelShell, knowledgePanelAnimatedStyle]}>
@@ -919,7 +1117,9 @@ export function AiFloatingAssistant() {
                       showsVerticalScrollIndicator
                       style={styles.knowledgeScroll}>
                       <ThemedText style={styles.knowledgeMeta}>
-                        {isScreenKnowledgeLoading ? '正在读取屏幕文字...' : `更新时间：${formatKnowledgeTime(screenKnowledge.updatedAt)}`}
+                        {isScreenKnowledgeLoading
+                          ? '正在读取屏幕文字...'
+                          : `${shouldIncludeScreenKnowledge ? '已加入对话' : '未加入对话'} · 更新时间：${formatKnowledgeTime(screenKnowledge.updatedAt)}`}
                       </ThemedText>
                       <ThemedText style={styles.knowledgeText}>{screenKnowledge.summary}</ThemedText>
                       <Pressable
@@ -1165,8 +1365,155 @@ export function AiFloatingAssistant() {
                 })
               )}
             </ScrollView>
-            <ThemedText style={styles.conversationDrawerHint}>长按可删除或总结标题</ThemedText>
+            <ThemedText style={styles.conversationDrawerHint}>长按后可点击标题修改，也可删除或总结标题</ThemedText>
           </View>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={activeConversationAction !== null}
+        onRequestClose={closeConversationActions}>
+        <View style={styles.conversationActionRoot}>
+          <Pressable
+            accessibilityLabel="关闭对话操作弹层"
+            onPress={closeConversationActions}
+            style={StyleSheet.absoluteFill}
+          />
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.conversationActionKeyboardAvoider}>
+            <View style={styles.conversationActionSheet}>
+              {/*
+               * 渲染位置: 历史对话长按后的操作弹层顶部
+               * 展示内容: 当前会话标题，非编辑态可点击进入重命名，编辑态展示标题输入框
+               * 数据来源: activeConversationAction 与 conversationTitleDraft 状态
+               */}
+              {isConversationTitleEditing ? (
+                <>
+                  <ThemedText style={styles.conversationActionLabel}>修改对话标题</ThemedText>
+                  <TextInput
+                    autoFocus
+                    cursorColor="#111827"
+                    keyboardAppearance="light"
+                    onChangeText={(nextTitle) => {
+                      // 格式化: 用户输入标题文本 → 按 Unicode 字符截断到 12 个以内 → 避免代理对字符被截断
+                      // 说明: 标题编辑需要兼容 emoji 等字符，避免出现半个字符的异常展示
+                      setConversationTitleDraft(
+                        Array.from(nextTitle).slice(0, MAX_AI_CONVERSATION_TITLE_LENGTH).join('')
+                      );
+                    }}
+                    onSubmitEditing={confirmConversationTitleEdit}
+                    placeholder="输入对话标题"
+                    placeholderTextColor="#94A3B8"
+                    returnKeyType="done"
+                    selectionColor="#111827"
+                    style={styles.conversationActionInput}
+                    value={conversationTitleDraft}
+                  />
+                  <ThemedText style={styles.conversationActionHint}>
+                    {`${Array.from(conversationTitleDraft).length}/${MAX_AI_CONVERSATION_TITLE_LENGTH}，留空会恢复默认标题`}
+                  </ThemedText>
+                </>
+              ) : (
+                <>
+                  <Pressable
+                    accessibilityLabel={`修改对话标题 ${activeConversationAction?.title ?? DEFAULT_AI_CONVERSATION_TITLE}`}
+                    accessibilityRole="button"
+                    onPress={() => {
+                      if (!activeConversationAction) {
+                        return;
+                      }
+
+                      setConversationTitleDraft(activeConversationAction.title);
+                      setIsConversationTitleEditing(true);
+                    }}
+                    style={styles.conversationActionTitleButton}>
+                    <ThemedText style={styles.conversationActionTitle}>
+                      {activeConversationAction?.title ?? DEFAULT_AI_CONVERSATION_TITLE}
+                    </ThemedText>
+                    <ThemedText style={styles.conversationActionTitleHint}>点击标题可修改</ThemedText>
+                  </Pressable>
+                  <ThemedText style={styles.conversationActionSubtitle}>选择对话操作</ThemedText>
+                </>
+              )}
+              <View style={styles.conversationActionButtonRow}>
+                {isConversationTitleEditing ? (
+                  <>
+                    <Pressable
+                      accessibilityLabel="保存对话标题"
+                      accessibilityRole="button"
+                      onPress={confirmConversationTitleEdit}
+                      style={styles.conversationActionButton}>
+                      <ThemedText style={styles.conversationActionButtonText}>保存</ThemedText>
+                    </Pressable>
+                    <Pressable
+                      accessibilityLabel="取消修改对话标题"
+                      accessibilityRole="button"
+                      onPress={closeConversationActions}
+                      style={styles.conversationActionButton}>
+                      <ThemedText style={styles.conversationActionButtonText}>取消</ThemedText>
+                    </Pressable>
+                  </>
+                ) : (
+                  <>
+                    <Pressable
+                      accessibilityLabel="总结当前对话标题"
+                      accessibilityRole="button"
+                      disabled={isTitleSummarizing}
+                      onPress={() => {
+                        if (!activeConversationAction) {
+                          return;
+                        }
+
+                        closeConversationActions();
+                        void summarizeConversationTitle(activeConversationAction.id);
+                      }}
+                      style={[
+                        styles.conversationActionButton,
+                        isTitleSummarizing && styles.conversationActionButtonDisabled,
+                      ]}>
+                      <ThemedText
+                        style={[
+                          styles.conversationActionButtonText,
+                          isTitleSummarizing && styles.conversationActionButtonTextDisabled,
+                        ]}>
+                        {isTitleSummarizing ? '总结中' : '总结标题'}
+                      </ThemedText>
+                    </Pressable>
+                    <Pressable
+                      accessibilityLabel="删除当前对话"
+                      accessibilityRole="button"
+                      onPress={() => {
+                        if (!activeConversationAction) {
+                          return;
+                        }
+
+                        closeConversationActions();
+                        deleteConversation(activeConversationAction.id);
+                      }}
+                      style={styles.conversationActionButton}>
+                      <ThemedText
+                        style={[
+                          styles.conversationActionButtonText,
+                          styles.conversationActionButtonTextDanger,
+                        ]}>
+                        删除
+                      </ThemedText>
+                    </Pressable>
+                    <Pressable
+                      accessibilityLabel="取消对话操作"
+                      accessibilityRole="button"
+                      onPress={closeConversationActions}
+                      style={styles.conversationActionButton}>
+                      <ThemedText style={styles.conversationActionButtonText}>取消</ThemedText>
+                    </Pressable>
+                  </>
+                )}
+              </View>
+            </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 
@@ -1576,6 +1923,93 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
   },
+  conversationActionRoot: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+    backgroundColor: 'rgba(15, 23, 42, 0.28)',
+  },
+  conversationActionKeyboardAvoider: {
+    width: '100%',
+  },
+  conversationActionSheet: {
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 14,
+  },
+  conversationActionTitleButton: {
+    paddingBottom: 12,
+  },
+  conversationActionTitle: {
+    color: '#111827',
+    fontSize: 16,
+    fontWeight: '700',
+    lineHeight: 24,
+  },
+  conversationActionTitleHint: {
+    marginTop: 4,
+    color: '#0F9D8A',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  conversationActionSubtitle: {
+    color: '#334155',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  conversationActionLabel: {
+    marginBottom: 10,
+    color: '#0F172A',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  conversationActionInput: {
+    minHeight: 46,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D6E4FF',
+    backgroundColor: '#F8FAFF',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#111827',
+    fontSize: 16,
+    lineHeight: 22,
+  },
+  conversationActionHint: {
+    marginTop: 8,
+    marginBottom: 20,
+    color: '#64748B',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  conversationActionButtonRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 18,
+  },
+  conversationActionButton: {
+    minWidth: 64,
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  conversationActionButtonDisabled: {
+    opacity: 0.5,
+  },
+  conversationActionButtonText: {
+    color: '#0F9D8A',
+    fontSize: 15,
+    fontWeight: '700',
+    lineHeight: 22,
+  },
+  conversationActionButtonTextDanger: {
+    color: '#DC2626',
+  },
+  conversationActionButtonTextDisabled: {
+    color: '#94A3B8',
+  },
   knowledgeSection: {
     marginLeft: 13,
     marginBottom: 12,
@@ -1589,6 +2023,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: 10,
     backgroundColor: 'rgba(41, 98, 255, 0.1)',
+  },
+  knowledgeExpandButton: {
+    flex: 1,
+    minWidth: 0,
+    height: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingLeft: 16,
   },
   knowledgeTitle: {
@@ -1597,10 +2038,37 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '800',
     lineHeight: 37,
+    flexShrink: 1,
+  },
+  knowledgeIncludePressable: {
+    width: 34,
+    height: 34,
+    marginLeft: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  knowledgeIncludeButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 999,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  knowledgeIncludeIconLayer: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  knowledgeCaretButton: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   knowledgeCaret: {
-    marginLeft: 'auto',
-    marginRight: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   // [变更] 修改前: 知识库面板高度参与抽屉主布局，展开时会短暂挤压消息列表
   // [变更] 修改后: 面板作为绝对定位浮层覆盖在消息区上方，展开动画不影响主布局

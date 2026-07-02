@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
 import {
@@ -5,6 +6,7 @@ import {
   AI_ASSISTANT_MESSAGES_STORAGE_KEY,
 } from '@/services/storage-keys';
 import { storage } from '@/services/storage';
+import { userStore } from '@/services/store/userStore';
 
 export type AiAssistantMessageRole = 'assistant' | 'user' | 'system';
 
@@ -60,6 +62,20 @@ type ConversationTitleResponse = {
   error?: unknown;
 };
 
+type AiBillingMetrics = {
+  totalCostUsd?: unknown;
+  remainingBalanceUsd?: unknown;
+  totalChargedUsd?: unknown;
+};
+
+type AiUsageMetrics = {
+  promptTokens?: unknown;
+  cachedPromptTokens?: unknown;
+  completionTokens?: unknown;
+  reasoningTokens?: unknown;
+  totalTokens?: unknown;
+};
+
 type AiStreamEvent =
   | {
       event: 'chunk';
@@ -67,7 +83,12 @@ type AiStreamEvent =
     }
   | {
       event: 'done';
-      data: Record<string, never>;
+      data: {
+        requestId?: unknown;
+        providerRequestId?: unknown;
+        usage?: AiUsageMetrics;
+        billing?: AiBillingMetrics;
+      };
     }
   | {
       event: 'error';
@@ -77,15 +98,17 @@ type AiStreamEvent =
 export type AiAssistantReplyStreamOptions = {
   signal?: AbortSignal;
   onChunk?: (chunk: string, fullContent: string) => void;
+  conversationId?: string;
 };
 
 export const DEFAULT_AI_MODEL_ID = 'gemini-3.1-pro-preview';
 export const DEFAULT_AI_CONVERSATION_TITLE = '对话标题';
+export const MAX_AI_CONVERSATION_TITLE_LENGTH = 12;
 
 export const AI_ASSISTANT_WELCOME_MESSAGE: AiAssistantMessage = {
   id: 'assistant-welcome',
   role: 'assistant',
-  content: '你好，我是 Astesia AI。你可以向我提问，我会结合当前屏幕占位上下文一起回答。',
+  content: '你好，我是 Astesia AI。你可以向我提问，也可以按需把当前屏幕知识加入对话。',
   createdAt: '2026-01-01T00:00:00.000Z',
 };
 
@@ -94,6 +117,9 @@ const DEFAULT_AI_API_HOST = Platform.OS === 'android'
   : 'http://127.0.0.1:8787';
 
 const AI_API_HOST = resolveAiApiHost(process.env.EXPO_PUBLIC_AI_API_HOST);
+const AI_USER_TOKEN_STORAGE_KEY = 'userToken';
+const AI_USER_ID_STORAGE_KEY = 'userId';
+const AI_USER_ID_HEADER = 'X-AI-User-Id';
 
 /**
  * 创建 AI 对话消息，统一补齐 id 与创建时间。
@@ -171,7 +197,11 @@ function isAssistantConversation(value: unknown): value is AiAssistantConversati
 
 export async function loadAiAssistantMessages() {
   try {
-    const rawMessages = await storage.getItem(AI_ASSISTANT_MESSAGES_STORAGE_KEY);
+    const storageKey = await getAiAssistantMessagesStorageKey();
+    const rawMessages = await readAiStorageValueWithLegacyFallback(
+      storageKey,
+      AI_ASSISTANT_MESSAGES_STORAGE_KEY
+    );
 
     if (!rawMessages) {
       return [AI_ASSISTANT_WELCOME_MESSAGE];
@@ -187,7 +217,8 @@ export async function loadAiAssistantMessages() {
 }
 
 export async function saveAiAssistantMessages(messages: AiAssistantMessage[]) {
-  await storage.setItem(AI_ASSISTANT_MESSAGES_STORAGE_KEY, JSON.stringify(messages));
+  const storageKey = await getAiAssistantMessagesStorageKey();
+  await storage.setItem(storageKey, JSON.stringify(messages));
 }
 
 export async function clearAiAssistantMessages() {
@@ -197,9 +228,12 @@ export async function clearAiAssistantMessages() {
 
 export async function loadAiAssistantConversations() {
   const localConversations = await loadLocalAiAssistantConversations();
+  const requestHeaders = await createAiRequestHeaders();
 
   try {
-    const response = await fetch(`${AI_API_HOST}/api/ai/conversations`);
+    const response = await fetch(`${AI_API_HOST}/api/ai/conversations`, {
+      headers: requestHeaders,
+    });
     const data = await response.json().catch(() => ({})) as ConversationsResponse;
 
     if (!response.ok) {
@@ -227,15 +261,14 @@ export async function saveAiAssistantConversation(conversation: AiAssistantConve
   const normalizedConversation = normalizeConversation(conversation);
   const localConversations = await loadLocalAiAssistantConversations();
   const nextLocalConversations = mergeAiConversations([normalizedConversation], localConversations);
+  const requestHeaders = await createAiJsonRequestHeaders();
 
   await saveLocalAiAssistantConversations(nextLocalConversations);
 
   try {
     const response = await fetch(`${AI_API_HOST}/api/ai/conversations/${encodeURIComponent(normalizedConversation.id)}`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: requestHeaders,
       body: JSON.stringify({ conversation: normalizedConversation }),
     });
     const data = await response.json().catch(() => ({})) as ConversationsResponse;
@@ -268,6 +301,7 @@ export async function saveAiAssistantConversation(conversation: AiAssistantConve
 
 export async function deleteAiAssistantConversation(conversationId: string) {
   const localConversations = await loadLocalAiAssistantConversations();
+  const requestHeaders = await createAiRequestHeaders();
   await saveLocalAiAssistantConversations(
     localConversations.filter((conversation) => conversation.id !== conversationId)
   );
@@ -275,6 +309,7 @@ export async function deleteAiAssistantConversation(conversationId: string) {
   try {
     const response = await fetch(`${AI_API_HOST}/api/ai/conversations/${encodeURIComponent(conversationId)}`, {
       method: 'DELETE',
+      headers: requestHeaders,
     });
     const data = await response.json().catch(() => ({})) as ConversationsResponse;
 
@@ -295,6 +330,7 @@ export async function requestAiConversationTitle(messages: AiAssistantMessage[])
     .filter(isAssistantMessage)
     .filter((message) => message.content.trim().length > 0)
     .map(({ role, content }) => ({ role, content }));
+  const requestHeaders = await createAiJsonRequestHeaders();
 
   if (titleMessages.length === 0) {
     return DEFAULT_AI_CONVERSATION_TITLE;
@@ -302,9 +338,7 @@ export async function requestAiConversationTitle(messages: AiAssistantMessage[])
 
   const response = await fetch(`${AI_API_HOST}/api/ai/conversations/summarize-title`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: requestHeaders,
     body: JSON.stringify({ messages: titleMessages }),
   });
   const data = await response.json().catch(() => ({})) as ConversationTitleResponse;
@@ -313,7 +347,7 @@ export async function requestAiConversationTitle(messages: AiAssistantMessage[])
     throw new Error(typeof data.error === 'string' ? data.error : '对话标题总结失败。');
   }
 
-  return normalizeConversationTitle(data.title);
+  return normalizeAiConversationTitle(data.title);
 }
 
 export function isDefaultAiConversationTitle(title: string) {
@@ -333,7 +367,7 @@ function normalizeConversation(value: AiAssistantConversation): AiAssistantConve
 
   return {
     ...value,
-    title: normalizeConversationTitle(value.title),
+    title: normalizeAiConversationTitle(value.title),
     messages: messages.length > 0 ? messages : [AI_ASSISTANT_WELCOME_MESSAGE],
     createdAt: normalizeIsoString(value.createdAt),
     updatedAt: normalizeIsoString(value.updatedAt),
@@ -341,7 +375,15 @@ function normalizeConversation(value: AiAssistantConversation): AiAssistantConve
   };
 }
 
-function normalizeConversationTitle(value: unknown) {
+/**
+ * 规范化 AI 对话标题，统一处理空值、引号、空白字符和长度上限。
+ *
+ * @param value - 原始标题文本，可来自接口响应或用户手动输入
+ * @returns 可直接展示和持久化的标题文本
+ * @example
+ *   normalizeAiConversationTitle('“Git 强制 推送”')
+ */
+export function normalizeAiConversationTitle(value: unknown) {
   if (typeof value !== 'string') {
     return DEFAULT_AI_CONVERSATION_TITLE;
   }
@@ -355,7 +397,7 @@ function normalizeConversationTitle(value: unknown) {
     return DEFAULT_AI_CONVERSATION_TITLE;
   }
 
-  return Array.from(normalizedTitle).slice(0, 12).join('');
+  return Array.from(normalizedTitle).slice(0, MAX_AI_CONVERSATION_TITLE_LENGTH).join('');
 }
 
 function normalizeIsoString(value: unknown) {
@@ -394,7 +436,11 @@ function compareConversationsByUpdatedAt(
 
 async function loadLocalAiAssistantConversations() {
   try {
-    const rawConversations = await storage.getItem(AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY);
+    const storageKey = await getAiAssistantConversationsStorageKey();
+    const rawConversations = await readAiStorageValueWithLegacyFallback(
+      storageKey,
+      AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY
+    );
 
     if (rawConversations) {
       const parsedConversations = JSON.parse(rawConversations);
@@ -420,8 +466,9 @@ async function loadLocalAiAssistantConversations() {
 }
 
 async function saveLocalAiAssistantConversations(conversations: AiAssistantConversation[]) {
+  const storageKey = await getAiAssistantConversationsStorageKey();
   await storage.setItem(
-    AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY,
+    storageKey,
     JSON.stringify(mergeAiConversations(conversations))
   );
 }
@@ -432,6 +479,104 @@ function getErrorMessage(error: unknown) {
   }
 
   return 'AI 服务暂时不可用，请稍后再试。';
+}
+
+async function resolveAiUserContext() {
+  // [变更] 修改前: AI 服务请求不感知当前用户，本地缓存和远端读写都按全局单桶处理
+  // [变更] 修改后: 优先使用 userStore 中的用户信息，其次回退到本地 userId/userToken
+  // [原因] AI 对话已经接入按用户计费，前后端都必须以同一用户维度隔离数据和结算
+  const [storedUserId, storedUserToken] = await Promise.all([
+    readAiUserIdentityValue(AI_USER_ID_STORAGE_KEY),
+    readAiUserIdentityValue(AI_USER_TOKEN_STORAGE_KEY),
+  ]);
+  const storeUser = userStore.getUser();
+  const normalizedUserId = normalizeAiUserIdCandidate(
+    storeUser?.userId ?? storedUserId ?? null
+  );
+  const authorizationToken = normalizeAuthorizationToken(storedUserToken);
+
+  return {
+    userId: normalizedUserId,
+    authorizationToken,
+  };
+}
+
+async function createAiRequestHeaders(initHeaders?: HeadersInit) {
+  const requestHeaders = new Headers(initHeaders);
+  const aiUserContext = await resolveAiUserContext();
+
+  if (aiUserContext.authorizationToken) {
+    requestHeaders.set('Authorization', `Bearer ${aiUserContext.authorizationToken}`);
+  }
+
+  if (aiUserContext.userId) {
+    requestHeaders.set(AI_USER_ID_HEADER, aiUserContext.userId);
+  }
+
+  return requestHeaders;
+}
+
+async function createAiJsonRequestHeaders(initHeaders?: HeadersInit) {
+  const requestHeaders = await createAiRequestHeaders(initHeaders);
+  requestHeaders.set('Content-Type', 'application/json');
+  return requestHeaders;
+}
+
+async function getAiAssistantConversationsStorageKey() {
+  const aiUserContext = await resolveAiUserContext();
+
+  return aiUserContext.userId
+    ? `${AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY}:${aiUserContext.userId}`
+    : AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY;
+}
+
+async function getAiAssistantMessagesStorageKey() {
+  const aiUserContext = await resolveAiUserContext();
+
+  return aiUserContext.userId
+    ? `${AI_ASSISTANT_MESSAGES_STORAGE_KEY}:${aiUserContext.userId}`
+    : AI_ASSISTANT_MESSAGES_STORAGE_KEY;
+}
+
+async function readAiUserIdentityValue(key: string) {
+  const [secureValue, asyncValue] = await Promise.all([
+    storage.getItem(key),
+    AsyncStorage.getItem(key),
+  ]);
+
+  return secureValue ?? asyncValue;
+}
+
+async function readAiStorageValueWithLegacyFallback(primaryKey: string, legacyKey: string) {
+  const primaryValue = await storage.getItem(primaryKey);
+
+  if (primaryValue || primaryKey === legacyKey) {
+    return primaryValue;
+  }
+
+  return storage.getItem(legacyKey);
+}
+
+function normalizeAiUserIdCandidate(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(Math.trunc(value));
+  }
+
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const normalizedValue = value.trim();
+  return normalizedValue.length > 0 ? normalizedValue : '';
+}
+
+function normalizeAuthorizationToken(value: unknown) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const normalizedValue = value.trim();
+  return normalizedValue.replace(/^Bearer\s+/i, '');
 }
 
 function normalizeApiHost(value?: string) {
@@ -502,25 +647,30 @@ export async function requestAiModels() {
 
 export async function requestAiAssistantReply(
   messages: AiAssistantMessage[],
-  screenKnowledge: AiScreenKnowledge,
+  screenKnowledge: AiScreenKnowledge | null,
   model: string,
   options?: AiAssistantReplyStreamOptions
 ) {
-  try {
-    const requestBody = JSON.stringify({
-      model,
-      messages: messages.map(({ role, content }) => ({ role, content })),
-      screenKnowledge,
-    });
+  const requestHeaders = await createAiJsonRequestHeaders({
+    Accept: 'text/event-stream',
+  });
 
+  // [变更] 修改前: 每次请求都会无条件透传 screenKnowledge
+  // [变更] 修改后: 除了按需透传 screenKnowledge，还会把当前 conversationId 一起发给服务端
+  // [原因] 服务端需要基于会话维度归档 usage 和扣费记录，避免多轮对话的计费明细丢失上下文
+  const requestBody = JSON.stringify({
+    model,
+    ...(options?.conversationId ? { conversationId: options.conversationId } : {}),
+    messages: messages.map(({ role, content }) => ({ role, content })),
+    ...(screenKnowledge ? { screenKnowledge } : {}),
+  });
+
+  try {
     // 格式化: 本地消息列表 → 过滤为模型可理解的 role/content → 后端 chat payload
     // 说明: 避免把前端 id、时间等渲染字段透传给模型，并优先使用原生流式能力消费 SSE
     const response = await fetch(`${AI_API_HOST}/api/ai/chat`, {
       method: 'POST',
-      headers: {
-        Accept: 'text/event-stream',
-        'Content-Type': 'application/json',
-      },
+        headers: requestHeaders,
       signal: options?.signal,
       body: requestBody,
     });
@@ -536,19 +686,13 @@ export async function requestAiAssistantReply(
       // [变更] 修改前: 原生端没有 ReadableStream 时直接报错退出
       // [变更] 修改后: 回退到 XMLHttpRequest 的增量 responseText，继续解析 SSE
       // [原因] Expo / React Native 环境通常不支持 fetch.getReader，但仍支持通过 XHR 实现流式输出
-      return requestAiAssistantReplyWithXhr(requestBody, options);
+        return requestAiAssistantReplyWithXhr(requestBody, requestHeaders, options);
     }
 
     return consumeAssistantReplyReader(reader, options);
   } catch (error) {
     if (error instanceof Error && error.message === '当前环境不支持 AI 流式返回。') {
-      const requestBody = JSON.stringify({
-        model,
-        messages: messages.map(({ role, content }) => ({ role, content })),
-        screenKnowledge,
-      });
-
-      return requestAiAssistantReplyWithXhr(requestBody, options);
+      return requestAiAssistantReplyWithXhr(requestBody, requestHeaders, options);
     }
 
     throw new Error(getErrorMessage(error));
@@ -608,6 +752,7 @@ async function consumeAssistantReplyReader(
  */
 function requestAiAssistantReplyWithXhr(
   requestBody: string,
+  requestHeaders: Headers,
   options?: AiAssistantReplyStreamOptions
 ) {
   return new Promise<string>((resolve, reject) => {
@@ -691,8 +836,9 @@ function requestAiAssistantReplyWithXhr(
     };
 
     xhr.open('POST', `${AI_API_HOST}/api/ai/chat`);
-    xhr.setRequestHeader('Accept', 'text/event-stream');
-    xhr.setRequestHeader('Content-Type', 'application/json');
+      requestHeaders.forEach((headerValue, headerKey) => {
+        xhr.setRequestHeader(headerKey, headerValue);
+      });
 
     if (options?.signal) {
       options.signal.addEventListener('abort', handleAbort);
