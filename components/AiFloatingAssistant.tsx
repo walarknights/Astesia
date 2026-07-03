@@ -11,6 +11,7 @@ import {
   Image,
   Easing,
   KeyboardAvoidingView,
+  type LayoutChangeEvent,
   Modal,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -109,6 +110,10 @@ export function AiFloatingAssistant() {
   const [isTitleSummarizing, setIsTitleSummarizing] = useState(false);
   const [conversationSyncError, setConversationSyncError] = useState<string | null>(null);
   const [isKnowledgeExpanded, setIsKnowledgeExpanded] = useState(false);
+  // [变更] 修改前: 知识库浮层直接挂在 knowledgeSection 内，并依赖局部绝对定位覆盖消息区
+  // [变更] 修改后: 记录知识库入口在抽屉中的锚点位置，把浮层提升到抽屉级绝对定位层
+  // [原因] 避免 Android 上子视图超出父容器边界后可见但不可触摸，导致内容无法滚动
+  const [knowledgePanelAnchor, setKnowledgePanelAnchor] = useState<{ left: number; top: number } | null>(null);
   // [变更] 修改前: 屏幕知识会在发送消息时默认参与 AI 请求
   // [变更] 修改后: 增加显式选择状态，只有用户主动开启时才把当前屏幕知识带入对话
   // [原因] 满足“默认不添加到对话中，由用户自己选择”的交互要求
@@ -558,6 +563,28 @@ export function AiFloatingAssistant() {
     void refreshScreenKnowledge();
   }, [refreshScreenKnowledge]);
 
+  useEffect(() => {
+    if (!isDrawerVisible) {
+      return;
+    }
+
+    // [变更] 修改前: 屏幕知识只会在路由变化时刷新一次，同一路由内的异步数据更新不会重新读取
+    // [变更] 修改后: 每次打开 AI 抽屉时重新读取当前页面摘要
+    // [原因] 首页天气、笔记列表和待办列表会在当前路由内继续加载或编辑，需要在查看前拿到最新内容
+    void refreshScreenKnowledge();
+  }, [isDrawerVisible, refreshScreenKnowledge]);
+
+  useEffect(() => {
+    if (!isDrawerVisible || !isKnowledgeExpanded) {
+      return;
+    }
+
+    // [变更] 修改前: 抽屉打开后若页面内容继续变化，展开知识库时仍可能看到旧摘要
+    // [变更] 修改后: 知识库展开时再次触发一次刷新
+    // [原因] 保证用户真正查看“当前屏幕知识库”时拿到尽可能新的页面上下文
+    void refreshScreenKnowledge();
+  }, [isDrawerVisible, isKnowledgeExpanded, refreshScreenKnowledge]);
+
   const appendImageAttachment = useCallback((attachment: Omit<PendingImageAttachment, 'id'>) => {
     setPendingImageAttachments((currentAttachments) => [
       ...currentAttachments,
@@ -647,6 +674,20 @@ export function AiFloatingAssistant() {
     setActiveConversationActionId(null);
     setConversationTitleDraft('');
     setIsConversationTitleEditing(false);
+  }, []);
+
+  const handleKnowledgeSectionLayout = useCallback((event: LayoutChangeEvent) => {
+    const { height: layoutHeight, x, y } = event.nativeEvent.layout;
+    const nextAnchor = {
+      left: Math.round(x),
+      top: Math.round(y + layoutHeight),
+    };
+
+    setKnowledgePanelAnchor((currentAnchor) => (
+      currentAnchor && currentAnchor.left === nextAnchor.left && currentAnchor.top === nextAnchor.top
+        ? currentAnchor
+        : nextAnchor
+    ));
   }, []);
 
   // [变更] 修改前: 历史对话长按直接使用系统 Alert，标题只能作为静态文案展示
@@ -1050,7 +1091,7 @@ export function AiFloatingAssistant() {
                * 展示内容: 当前屏幕知识库入口、是否加入对话的选择按钮，展开后显示可滚动摘要小窗和刷新入口
                * 数据来源: expo-router 当前路径、路由参数、本地页面业务数据和 shouldIncludeScreenKnowledge 状态
                */}
-              <View style={styles.knowledgeSection}>
+              <View onLayout={handleKnowledgeSectionLayout} style={styles.knowledgeSection}>
                 <View style={styles.knowledgeToggle}>
                   <Pressable
                     accessibilityLabel="展开或收起当前屏幕知识库"
@@ -1102,17 +1143,27 @@ export function AiFloatingAssistant() {
                     </Animated.View>
                   </Pressable>
                 </View>
+              </View>
+              {knowledgePanelAnchor ? (
                 <Animated.View
                   pointerEvents={isKnowledgeExpanded ? 'auto' : 'none'}
-                  style={[styles.knowledgePanelShell, knowledgePanelAnimatedStyle]}>
+                  style={[
+                    styles.knowledgePanelShell,
+                    knowledgePanelAnimatedStyle,
+                    {
+                      left: knowledgePanelAnchor.left,
+                      top: knowledgePanelAnchor.top,
+                    },
+                  ]}>
                   {/*
-                   * 渲染位置: AI 抽屉顶部知识库折叠面板
+                   * 渲染位置: AI 抽屉顶部知识库入口下方的浮层面板
                    * 展示内容: 当前页面文字摘要、更新时间和一键截图入口
                    * 数据来源: screenKnowledge 状态、isScreenKnowledgeLoading 状态和截图操作状态
                    */}
                   <View style={styles.knowledgePanel}>
                     <ScrollView
                       contentContainerStyle={styles.knowledgeScrollContent}
+                      keyboardShouldPersistTaps="handled"
                       nestedScrollEnabled
                       showsVerticalScrollIndicator
                       style={styles.knowledgeScroll}>
@@ -1136,7 +1187,7 @@ export function AiFloatingAssistant() {
                     </ScrollView>
                   </View>
                 </Animated.View>
-              </View>
+              ) : null}
 
               {/*
                * 渲染位置: AI 抽屉中部消息区
@@ -2070,13 +2121,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // [变更] 修改前: 知识库面板高度参与抽屉主布局，展开时会短暂挤压消息列表
-  // [变更] 修改后: 面板作为绝对定位浮层覆盖在消息区上方，展开动画不影响主布局
-  // [原因] 屏幕知识库是临时查看内容，不应该改变对话主页面的位置
+  // [变更] 修改前: 知识库面板相对 knowledgeSection 做局部绝对定位，超出父容器部分在 Android 上触摸不稳定
+  // [变更] 修改后: 面板改为相对抽屉根节点的绝对定位浮层，覆盖消息区但不改变主布局
+  // [原因] 保留覆盖式展示效果的同时，让面板完整区域都能接收到滚动手势
   knowledgePanelShell: {
     position: 'absolute',
-    left: 0,
-    top: 37,
     zIndex: 20,
     elevation: 20,
     width: 283,
