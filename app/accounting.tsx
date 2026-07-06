@@ -7,7 +7,7 @@ import { Stack, useRouter } from 'expo-router';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { Image } from 'expo-image';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Line, Rect } from 'react-native-svg';
 import { styles } from '@/styles/accountStyle';
@@ -927,7 +927,13 @@ export default function AccountingScreen() {
     }
   };
 
-  const saveHeroImageFromPicker = async (asset: { uri: string; name?: string | null; mimeType?: string | null }) => {
+  const saveHeroImageFromPicker = async (asset: {
+    uri: string;
+    name?: string | null;
+    mimeType?: string | null;
+    file?: globalThis.File | null;
+    base64?: string | null;
+  }) => {
     try {
       setIsSavingHeroImage(true);
       const nextHeroImageUri = await persistAccountingHeroImage(asset);
@@ -958,6 +964,10 @@ export default function AccountingScreen() {
       allowsEditing: false,
       allowsMultipleSelection: false,
       mediaTypes: ['images'],
+      // [变更] 修改前: Web 端只保存 picker 返回的临时 URI
+      // [变更] 修改后: Web 端额外请求 base64，并把 file/base64 交给持久化层统一转换
+      // [原因] PWA 刷新后 blob 地址会失效，自定义背景图需要保存为可长期复用的数据地址
+      base64: Platform.OS === 'web',
       quality: 1,
     });
 
@@ -969,6 +979,8 @@ export default function AccountingScreen() {
     await saveHeroImageFromPicker({
       uri: asset.uri,
       name: asset.fileName,
+      file: asset.file,
+      base64: asset.base64,
       mimeType: asset.mimeType,
     });
   };
@@ -988,6 +1000,8 @@ export default function AccountingScreen() {
     await saveHeroImageFromPicker({
       uri: asset.uri,
       name: asset.name,
+      file: asset.file,
+      base64: asset.base64,
       mimeType: asset.mimeType,
     });
   };

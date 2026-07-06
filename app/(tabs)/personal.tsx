@@ -8,6 +8,7 @@ import {
   Alert,
   Linking,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -320,7 +321,13 @@ export default function PersonalScreen() {
     setIsBackgroundModalVisible(false);
   };
 
-  const saveBackgroundImageFromPicker = async (asset: { uri: string; name?: string | null; mimeType?: string | null }) => {
+  const saveBackgroundImageFromPicker = async (asset: {
+    uri: string;
+    name?: string | null;
+    mimeType?: string | null;
+    file?: globalThis.File | null;
+    base64?: string | null;
+  }) => {
     try {
       setIsSavingBackgroundImage(true);
       const nextBackgroundImageUri = await persistPersonalBackgroundImage(asset);
@@ -352,6 +359,10 @@ export default function PersonalScreen() {
       allowsEditing: false,
       allowsMultipleSelection: false,
       mediaTypes: ['images'],
+      // [变更] 修改前: Web 端只依赖 picker 返回的临时 URI
+      // [变更] 修改后: Web 端额外请求 base64，并把 file/base64 交给持久化层统一转换
+      // [原因] PWA 刷新后 blob 地址会失效，自定义背景图需要改为可长期保存的数据地址
+      base64: Platform.OS === 'web',
       quality: 1,
     });
 
@@ -363,6 +374,8 @@ export default function PersonalScreen() {
     await saveBackgroundImageFromPicker({
       uri: asset.uri,
       name: asset.fileName,
+      file: asset.file,
+      base64: asset.base64,
       mimeType: asset.mimeType,
     });
   };
@@ -382,6 +395,8 @@ export default function PersonalScreen() {
     await saveBackgroundImageFromPicker({
       uri: asset.uri,
       name: asset.name,
+      file: asset.file,
+      base64: asset.base64,
       mimeType: asset.mimeType,
     });
   };

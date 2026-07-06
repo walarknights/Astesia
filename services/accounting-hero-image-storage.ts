@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 
 import { storage } from '@/services/storage';
 import { ACCOUNTING_HERO_IMAGE_STORAGE_KEY } from '@/services/storage-keys';
+import { getPersistentWebImageUri } from '@/services/web-image';
 
 const BACKGROUND_IMAGE_DIRECTORY_NAME = 'accounting-background-images';
 const BACKGROUND_IMAGE_FILE_PREFIX = 'hero-background';
@@ -21,6 +22,8 @@ type PersistAccountingHeroImageInput = {
   uri: string;
   name?: string | null;
   mimeType?: string | null;
+  file?: globalThis.File | null;
+  base64?: string | null;
 };
 
 function getBackgroundImageDirectory() {
@@ -104,11 +107,12 @@ export async function persistAccountingHeroImage(input: PersistAccountingHeroIma
   }
 
   // [变更] 修改前: 背景图固定使用应用内置图片
-  // [变更] 修改后: 将用户图片复制到应用文档目录并记录 URI
-  // [原因] 用户再次打开页面时仍能看到最后一次上传的背景图
+  // [变更] 修改后: 原生端继续落盘文件，Web / PWA 端改为写入可持久化的 data URL
+  // [原因] 浏览器选择器返回的 blob 地址刷新后会失效，不能直接拿来做本地持久化
   if (Platform.OS === 'web') {
-    await storage.setItem(ACCOUNTING_HERO_IMAGE_STORAGE_KEY, input.uri);
-    return input.uri;
+    const persistentImageUri = await getPersistentWebImageUri(input);
+    await storage.setItem(ACCOUNTING_HERO_IMAGE_STORAGE_KEY, persistentImageUri);
+    return persistentImageUri;
   }
 
   const directory = getBackgroundImageDirectory();

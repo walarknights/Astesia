@@ -1085,7 +1085,15 @@ function configureNextTodoLayout() {
 }
 
 async function scheduleTodoNotification(todo: TodoRecord) {
-  if (!todo.reminderAt || todo.completedAt || Platform.OS === 'web') {
+  if (!todo.reminderAt || todo.completedAt) {
+    return null;
+  }
+
+  // [变更] 修改前: Web / PWA 端直接静默跳过提醒调度
+  // [变更] 修改后: 保留待办保存，但明确提示当前 Web 版本暂不支持定时本地提醒
+  // [原因] 避免用户误以为提醒已经生效，实际却没有任何通知触达
+  if (Platform.OS === 'web') {
+    Alert.alert('提醒暂不可用', '当前 PWA 版本暂不支持系统级定时提醒，已为你保存待办内容。');
     return null;
   }
 

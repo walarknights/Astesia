@@ -7,6 +7,7 @@ import { useEffect } from 'react';
 import 'react-native-reanimated';
 
 import { AiFloatingAssistant } from '@/components/AiFloatingAssistant';
+import { PwaInstallBanner } from '@/components/PwaInstallBanner';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AppSettingsProvider } from '@/services/app-settings';
 import { ScreenCaptureProvider, ScreenCaptureRoot } from '@/services/screen-capture';
@@ -82,6 +83,12 @@ function RootNavigator() {
          * 数据来源: AiFloatingAssistant 内部状态和当前路由信息
          */}
         <AiFloatingAssistant />
+        {/*
+         * 渲染位置: 应用根布局最上层浮层区域
+         * 展示内容: 仅在 Web / PWA 可安装场景出现的安装提示条
+         * 数据来源: 浏览器 beforeinstallprompt 事件与本地关闭状态
+         */}
+        <PwaInstallBanner />
       </ScreenCaptureProvider>
       <StatusBar style="auto" />
     </ThemeProvider>

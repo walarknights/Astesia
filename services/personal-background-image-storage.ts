@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 
 import { PERSONAL_BACKGROUND_IMAGE_STORAGE_KEY } from '@/services/storage-keys';
 import { storage } from '@/services/storage';
+import { getPersistentWebImageUri } from '@/services/web-image';
 
 const BACKGROUND_IMAGE_DIRECTORY_NAME = 'personal-background-images';
 const BACKGROUND_IMAGE_FILE_PREFIX = 'personal-background';
@@ -21,6 +22,8 @@ type PersistPersonalBackgroundImageInput = {
   uri: string;
   name?: string | null;
   mimeType?: string | null;
+  file?: globalThis.File | null;
+  base64?: string | null;
 };
 
 function getBackgroundImageDirectory() {
@@ -104,11 +107,12 @@ export async function persistPersonalBackgroundImage(input: PersistPersonalBackg
   }
 
   // [变更] 修改前: 个人页背景只能从内置图片中选择
-  // [变更] 修改后: 用户图片会复制到应用文档目录并记录 URI
-  // [原因] 保证重启应用后仍能展示用户上传的个人页背景
+  // [变更] 修改后: 原生端继续复制到文档目录，Web / PWA 端改为写入可持久化的 data URL
+  // [原因] 浏览器返回的临时 blob 地址刷新后会失效，不能直接写进本地存储
   if (Platform.OS === 'web') {
-    await storage.setItem(PERSONAL_BACKGROUND_IMAGE_STORAGE_KEY, input.uri);
-    return input.uri;
+    const persistentImageUri = await getPersistentWebImageUri(input);
+    await storage.setItem(PERSONAL_BACKGROUND_IMAGE_STORAGE_KEY, persistentImageUri);
+    return persistentImageUri;
   }
 
   const directory = getBackgroundImageDirectory();
@@ -153,4 +157,3 @@ export async function loadPersonalBackgroundImageUri() {
   await storage.removeItem(PERSONAL_BACKGROUND_IMAGE_STORAGE_KEY);
   return null;
 }
-

@@ -1,5 +1,5 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { File } from 'expo-file-system';
+import { File as ExpoFile } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
@@ -27,6 +27,7 @@ import {
   saveNote,
   type NoteRecord,
 } from '@/services/notes-storage';
+import { getPersistentWebImageUri } from '@/services/web-image';
 
 const EDITOR_PLACEHOLDER = '开始写下今天的想法...';
 const IMAGE_MIME_TYPE_BY_EXTENSION: Record<string, string> = {
@@ -104,6 +105,10 @@ export default function NoteEditorScreen() {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: true,
+      // [变更] 修改前: Web 端沿用原生选择参数，只拿到临时 URI
+      // [变更] 修改后: Web 端额外请求 base64，必要时可转成持久化 data URL
+      // [原因] PWA 刷新后 blob 地址会失效，需要保存真正可落盘的图片内容
+      base64: Platform.OS === 'web',
       quality: 0.86,
     });
 
@@ -123,6 +128,8 @@ export default function NoteEditorScreen() {
       const editorImageSource = await getEditorImageSource({
         uri: imageUri,
         fileName: imageAsset.fileName,
+        file: imageAsset.file,
+        base64: imageAsset.base64,
         mimeType: imageAsset.mimeType,
       });
 
@@ -297,17 +304,31 @@ function getImageMimeType(uri: string, fileName?: string | null, mimeType?: stri
 async function getEditorImageSource({
   uri,
   fileName,
+  file,
+  base64,
   mimeType,
 }: {
   uri: string;
   fileName?: string | null;
+  file?: globalThis.File | null;
+  base64?: string | null;
   mimeType?: string | null;
 }) {
+  if (Platform.OS === 'web') {
+    return getPersistentWebImageUri({
+      uri,
+      name: fileName,
+      file,
+      base64,
+      mimeType,
+    });
+  }
+
   if (uri.startsWith('data:') || uri.startsWith('http://') || uri.startsWith('https://')) {
     return uri;
   }
 
-  const base64Image = await new File(uri).base64();
+  const base64Image = await new ExpoFile(uri).base64();
 
   return `data:${getImageMimeType(uri, fileName, mimeType)};base64,${base64Image}`;
 }
