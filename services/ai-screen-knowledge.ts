@@ -11,7 +11,7 @@ import { loadTodos, type TodoRecord } from '@/services/todo-storage';
 export type AiScreenKnowledgeSnapshot = {
   route: string;
   summary: string;
-  source: 'route-data' | 'fallback';
+  source: 'route-data' | 'fallback' | 'user-edited';
   updatedAt: string;
 };
 
@@ -90,6 +90,15 @@ function buildWeatherSummary() {
     `湿度与风力：${current.humidity}，${current.wind}。`,
     `天气建议：${current.suggestion}`,
   ];
+
+  if (dashboard.dailyForecasts.length > 0) {
+    lines.push('近7日天气：');
+    // 格式化: DailyTemperatureSnapshot[] → 逐天拼接为“日期/天气/高低温”摘要行 → 屏幕知识库中的近 7 日天气文本
+    // 说明: 让 AI 在天气页能够读到未来一周预报，而不是只看到实时天气
+    lines.push(...dashboard.dailyForecasts.slice(0, 7).map((item, index) => (
+      `${index + 1}. ${item.dayLabel}（${item.date}）：${item.textDay}，最高 ${item.tempMax}°，最低 ${item.tempMin}°。`
+    )));
+  }
 
   if (dashboard.airQuality) {
     lines.push(`空气质量：AQI ${dashboard.airQuality.aqi}，${dashboard.airQuality.category}，首要污染物 ${dashboard.airQuality.primaryPollutant || '暂无'}。`);

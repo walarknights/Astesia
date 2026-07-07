@@ -55,7 +55,7 @@ const DRAWER_MAX_WIDTH = 350;
 const DRAWER_ANIMATION_MS = 240;
 const KNOWLEDGE_PANEL_ANIMATION_MS = 180;
 const KNOWLEDGE_INCLUDE_TOGGLE_ANIMATION_MS = 220;
-const KNOWLEDGE_PANEL_HEIGHT = 128;
+const KNOWLEDGE_PANEL_HEIGHT = 220;
 const FLOATING_BUTTON_SIZE = 56;
 const FLOATING_BUTTON_MARGIN = 12;
 const FLOATING_BUTTON_INITIAL_TOP = 220;
@@ -78,6 +78,11 @@ type PendingImageAttachment = {
   uri: string;
   name: string;
   source: 'screenshot' | 'library';
+};
+
+type ScreenKnowledgeOverride = {
+  key: string;
+  snapshot: AiScreenKnowledgeSnapshot;
 };
 
 export function AiFloatingAssistant() {
@@ -127,6 +132,9 @@ export function AiFloatingAssistant() {
     updatedAt: new Date().toISOString(),
   }));
   const [isScreenKnowledgeLoading, setIsScreenKnowledgeLoading] = useState(false);
+  const [isKnowledgeEditing, setIsKnowledgeEditing] = useState(false);
+  const [screenKnowledgeDraft, setScreenKnowledgeDraft] = useState('');
+  const [screenKnowledgeOverride, setScreenKnowledgeOverride] = useState<ScreenKnowledgeOverride | null>(null);
   const isMountedRef = useRef(true);
   const messageScrollRef = useRef<ScrollView | null>(null);
   const messagesRef = useRef<AiAssistantMessage[]>([AI_ASSISTANT_WELCOME_MESSAGE]);
@@ -143,6 +151,10 @@ export function AiFloatingAssistant() {
     () => JSON.parse(routeParamSignature) as Record<string, string | string[] | undefined>,
     [routeParamSignature]
   );
+  const currentKnowledgeKey = useMemo(
+    () => `${pathname}::${routeParamSignature}`,
+    [pathname, routeParamSignature]
+  );
 
   useEffect(() => {
     return () => {
@@ -153,6 +165,10 @@ export function AiFloatingAssistant() {
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    setIsKnowledgeEditing(false);
+  }, [currentKnowledgeKey]);
 
   useEffect(() => {
     currentConversationRef.current = currentConversation;
@@ -226,6 +242,19 @@ export function AiFloatingAssistant() {
   // [原因] 历史标题和时间需要更充足的展示空间，避免在窄屏下列表信息被过度压缩
   const conversationDrawerWidth = drawerWidth * CONVERSATION_DRAWER_WIDTH_RATIO;
   const conversationTitle = currentConversation.title || DEFAULT_AI_CONVERSATION_TITLE;
+  const activeScreenKnowledge = useMemo(() => {
+    if (screenKnowledgeOverride?.key === currentKnowledgeKey) {
+      return screenKnowledgeOverride.snapshot;
+    }
+
+    return screenKnowledge;
+  }, [currentKnowledgeKey, screenKnowledge, screenKnowledgeOverride]);
+  const isVisibleScreenKnowledgeLoading = isScreenKnowledgeLoading && activeScreenKnowledge.source !== 'user-edited';
+  useEffect(() => {
+    if (!isKnowledgeEditing) {
+      setScreenKnowledgeDraft(activeScreenKnowledge.summary);
+    }
+  }, [activeScreenKnowledge, isKnowledgeEditing]);
   const activeConversationAction = useMemo(() => {
     if (!activeConversationActionId) {
       return null;
@@ -558,6 +587,50 @@ export function AiFloatingAssistant() {
   // [变更] 修改后: 路由或参数变化时重建页面文字摘要
   // [原因] 让 AI 对话能够结合当前页面真实业务文本回答
   }, [pathname, screenKnowledgeRouteParams]);
+
+  const startEditingScreenKnowledge = useCallback(() => {
+    setScreenKnowledgeDraft(activeScreenKnowledge.summary);
+    setIsKnowledgeEditing(true);
+  }, [activeScreenKnowledge.summary]);
+
+  const cancelEditingScreenKnowledge = useCallback(() => {
+    setScreenKnowledgeDraft(activeScreenKnowledge.summary);
+    setIsKnowledgeEditing(false);
+  }, [activeScreenKnowledge.summary]);
+
+  const saveScreenKnowledgeEdit = useCallback(() => {
+    const nextSummary = screenKnowledgeDraft.trim();
+
+    if (!nextSummary) {
+      Alert.alert('无法保存', '屏幕知识库内容不能为空。');
+      return;
+    }
+
+    // [变更] 修改前: 屏幕知识只能展示自动读取结果，用户无法修正或补充内容
+    // [变更] 修改后: 允许用户保存一份当前路由下的手动摘要覆盖自动读取结果
+    // [原因] 满足“用户能够编辑屏幕知识库内容”的需求，同时保留自动读取作为可恢复的基础数据
+    const nextSnapshot: AiScreenKnowledgeSnapshot = {
+      ...activeScreenKnowledge,
+      summary: nextSummary,
+      source: 'user-edited',
+      updatedAt: new Date().toISOString(),
+    };
+
+    setScreenKnowledgeOverride({
+      key: currentKnowledgeKey,
+      snapshot: nextSnapshot,
+    });
+    setScreenKnowledgeDraft(nextSummary);
+    setIsKnowledgeEditing(false);
+  }, [activeScreenKnowledge, currentKnowledgeKey, screenKnowledgeDraft]);
+
+  const restoreAutoScreenKnowledge = useCallback(() => {
+    setScreenKnowledgeOverride((currentOverride) => (
+      currentOverride?.key === currentKnowledgeKey ? null : currentOverride
+    ));
+    setIsKnowledgeEditing(false);
+    void refreshScreenKnowledge();
+  }, [currentKnowledgeKey, refreshScreenKnowledge]);
 
   useEffect(() => {
     void refreshScreenKnowledge();
@@ -898,7 +971,7 @@ export function AiFloatingAssistant() {
     // [变更] 修改后: 仅在用户显式开启后，才把 route/summary 注入本轮 AI 请求
     // [原因] 当前屏幕知识属于可选辅助上下文，不应默认影响所有对话
     const requestScreenKnowledge = shouldIncludeScreenKnowledge
-      ? { route: screenKnowledge.route, summary: screenKnowledge.summary }
+      ? { route: activeScreenKnowledge.route, summary: activeScreenKnowledge.summary }
       : null;
 
     // [变更] 修改前: 图片附件状态会拼接成用户气泡里的说明文字
@@ -966,7 +1039,7 @@ export function AiFloatingAssistant() {
   }, [
     draftMessage,
     isSending,
-    screenKnowledge,
+    activeScreenKnowledge,
     scrollMessagesToEnd,
     selectedModel,
     shouldIncludeScreenKnowledge,
@@ -1157,34 +1230,130 @@ export function AiFloatingAssistant() {
                   ]}>
                   {/*
                    * 渲染位置: AI 抽屉顶部知识库入口下方的浮层面板
-                   * 展示内容: 当前页面文字摘要、更新时间和一键截图入口
-                   * 数据来源: screenKnowledge 状态、isScreenKnowledgeLoading 状态和截图操作状态
+                   * 展示内容: 当前页面文字摘要、手动编辑区和知识库操作按钮
+                   * 数据来源: activeScreenKnowledge、screenKnowledgeDraft、isKnowledgeEditing 与截图操作状态
                    */}
                   <View style={styles.knowledgePanel}>
-                    <ScrollView
-                      contentContainerStyle={styles.knowledgeScrollContent}
-                      keyboardShouldPersistTaps="handled"
-                      nestedScrollEnabled
-                      showsVerticalScrollIndicator
-                      style={styles.knowledgeScroll}>
-                      <ThemedText style={styles.knowledgeMeta}>
-                        {isScreenKnowledgeLoading
-                          ? '正在读取屏幕文字...'
-                          : `${shouldIncludeScreenKnowledge ? '已加入对话' : '未加入对话'} · 更新时间：${formatKnowledgeTime(screenKnowledge.updatedAt)}`}
-                      </ThemedText>
-                      <ThemedText style={styles.knowledgeText}>{screenKnowledge.summary}</ThemedText>
-                      <Pressable
-                        disabled={isScreenKnowledgeLoading || isCapturingScreenImage}
-                        onPress={captureCurrentScreen}
-                        style={[
-                          styles.captureButton,
-                          (isScreenKnowledgeLoading || isCapturingScreenImage) && styles.captureButtonDisabled,
-                        ]}>
-                        <ThemedText style={styles.captureText}>
-                          {isCapturingScreenImage ? '截图中...' : isScreenKnowledgeLoading ? '读取中...' : '读取当前屏幕（一键截图）'}
+                    {isKnowledgeEditing ? (
+                      <>
+                        <ThemedText style={styles.knowledgeMeta}>
+                          编辑模式 · 保存后会覆盖当前屏幕知识库内容
                         </ThemedText>
-                      </Pressable>
-                    </ScrollView>
+                        {/*
+                         * 渲染位置: 屏幕知识库浮层面板内部
+                         * 展示内容: 可手动编辑的屏幕知识库文本输入框
+                         * 数据来源: screenKnowledgeDraft 状态
+                         */}
+                        <TextInput
+                          multiline
+                          onChangeText={setScreenKnowledgeDraft}
+                          placeholder="可手动补充当前页面重点，例如用户意图、隐藏信息或需要 AI 特别注意的内容"
+                          placeholderTextColor="#94A3B8"
+                          style={styles.knowledgeEditor}
+                          textAlignVertical="top"
+                          value={screenKnowledgeDraft}
+                        />
+                        {/*
+                         * 渲染位置: 屏幕知识库浮层底部
+                         * 展示内容: 编辑态下的保存与取消操作
+                         * 数据来源: isKnowledgeEditing 状态和 screenKnowledgeDraft 状态
+                         */}
+                        <View style={styles.knowledgeActionRow}>
+                          <Pressable
+                            accessibilityLabel="保存屏幕知识库内容"
+                            accessibilityRole="button"
+                            onPress={saveScreenKnowledgeEdit}
+                            style={styles.knowledgeActionButton}>
+                            <ThemedText style={styles.knowledgeActionButtonText}>保存</ThemedText>
+                          </Pressable>
+                          <Pressable
+                            accessibilityLabel="取消编辑屏幕知识库内容"
+                            accessibilityRole="button"
+                            onPress={cancelEditingScreenKnowledge}
+                            style={[styles.knowledgeActionButton, styles.knowledgeActionButtonSecondary]}>
+                            <ThemedText
+                              style={[
+                                styles.knowledgeActionButtonText,
+                                styles.knowledgeActionButtonTextSecondary,
+                              ]}>
+                              取消
+                            </ThemedText>
+                          </Pressable>
+                        </View>
+                      </>
+                    ) : (
+                      <ScrollView
+                        contentContainerStyle={styles.knowledgeScrollContent}
+                        keyboardShouldPersistTaps="handled"
+                        nestedScrollEnabled
+                        showsVerticalScrollIndicator
+                        style={styles.knowledgeScroll}>
+                        <ThemedText style={styles.knowledgeMeta}>
+                          {isVisibleScreenKnowledgeLoading
+                            ? '正在读取屏幕文字...'
+                            : `${shouldIncludeScreenKnowledge ? '已加入对话' : '未加入对话'} · ${formatKnowledgeSourceLabel(activeScreenKnowledge.source)} · 更新时间：${formatKnowledgeTime(activeScreenKnowledge.updatedAt)}`}
+                        </ThemedText>
+                        <ThemedText style={styles.knowledgeText}>{activeScreenKnowledge.summary}</ThemedText>
+                        {/*
+                         * 渲染位置: 屏幕知识库浮层底部
+                         * 展示内容: 编辑、恢复自动读取/重新读取、读取当前屏幕三类操作按钮
+                         * 数据来源: activeScreenKnowledge.source、isScreenKnowledgeLoading 和截图操作状态
+                         */}
+                        <View style={styles.knowledgeActionRow}>
+                          <Pressable
+                            accessibilityLabel="编辑屏幕知识库内容"
+                            accessibilityRole="button"
+                            disabled={isVisibleScreenKnowledgeLoading}
+                            onPress={startEditingScreenKnowledge}
+                            style={[
+                              styles.knowledgeActionButton,
+                              styles.knowledgeActionButtonSecondary,
+                              isVisibleScreenKnowledgeLoading && styles.knowledgeActionButtonDisabled,
+                            ]}>
+                            <ThemedText
+                              style={[
+                                styles.knowledgeActionButtonText,
+                                styles.knowledgeActionButtonTextSecondary,
+                              ]}>
+                              编辑
+                            </ThemedText>
+                          </Pressable>
+                          <Pressable
+                            accessibilityLabel={activeScreenKnowledge.source === 'user-edited' ? '恢复自动读取的屏幕知识库内容' : '重新读取当前屏幕知识库内容'}
+                            accessibilityRole="button"
+                            disabled={isVisibleScreenKnowledgeLoading}
+                            onPress={activeScreenKnowledge.source === 'user-edited'
+                              ? restoreAutoScreenKnowledge
+                              : () => void refreshScreenKnowledge()}
+                            style={[
+                              styles.knowledgeActionButton,
+                              styles.knowledgeActionButtonSecondary,
+                              isVisibleScreenKnowledgeLoading && styles.knowledgeActionButtonDisabled,
+                            ]}>
+                            <ThemedText
+                              style={[
+                                styles.knowledgeActionButtonText,
+                                styles.knowledgeActionButtonTextSecondary,
+                              ]}>
+                              {activeScreenKnowledge.source === 'user-edited' ? '恢复自动读取' : '重新读取'}
+                            </ThemedText>
+                          </Pressable>
+                          <Pressable
+                            accessibilityLabel="读取当前屏幕并截图"
+                            accessibilityRole="button"
+                            disabled={isVisibleScreenKnowledgeLoading || isCapturingScreenImage}
+                            onPress={captureCurrentScreen}
+                            style={[
+                              styles.knowledgeActionButton,
+                              (isVisibleScreenKnowledgeLoading || isCapturingScreenImage) && styles.knowledgeActionButtonDisabled,
+                            ]}>
+                            <ThemedText style={styles.knowledgeActionButtonText}>
+                              {isCapturingScreenImage ? '截图中...' : '读取当前屏幕'}
+                            </ThemedText>
+                          </Pressable>
+                        </View>
+                      </ScrollView>
+                    )}
                   </View>
                 </Animated.View>
               ) : null}
@@ -1629,6 +1798,18 @@ function formatKnowledgeTime(value: string) {
   }
 
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function formatKnowledgeSourceLabel(source: AiScreenKnowledgeSnapshot['source']) {
+  if (source === 'user-edited') {
+    return '手动编辑';
+  }
+
+  if (source === 'fallback') {
+    return '基础读取';
+  }
+
+  return '自动读取';
 }
 
 function formatAttachmentTime(date: Date) {
@@ -2159,6 +2340,45 @@ const styles = StyleSheet.create({
     color: '#64748B',
     fontSize: 11,
     lineHeight: 16,
+  },
+  knowledgeEditor: {
+    flex: 1,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#D6E4FF',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    color: '#334155',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+  knowledgeActionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+  },
+  knowledgeActionButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: '#1664FF',
+  },
+  knowledgeActionButtonSecondary: {
+    backgroundColor: '#EAF2FF',
+  },
+  knowledgeActionButtonDisabled: {
+    opacity: 0.56,
+  },
+  knowledgeActionButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  knowledgeActionButtonTextSecondary: {
+    color: '#1664FF',
   },
   captureButton: {
     alignSelf: 'flex-start',

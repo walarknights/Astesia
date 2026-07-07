@@ -11,6 +11,7 @@ export const TODO_ITEMS_STORAGE_KEY = 'astesia-todo-items';
 export const PERSONAL_BACKGROUND_IMAGE_STORAGE_KEY = 'astesia-personal-background-image';
 export const AI_ASSISTANT_MESSAGES_STORAGE_KEY = 'astesia-ai-assistant-messages';
 export const AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY = 'astesia-ai-assistant-conversations';
+export const AUTH_USER_PROFILE_STORAGE_KEY = 'astesia-auth-user-profile';
 
 export const KNOWN_STORAGE_KEYS = [
   APP_SETTINGS_STORAGE_KEY,
@@ -26,4 +27,5 @@ export const KNOWN_STORAGE_KEYS = [
   PERSONAL_BACKGROUND_IMAGE_STORAGE_KEY,
   AI_ASSISTANT_MESSAGES_STORAGE_KEY,
   AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY,
+  AUTH_USER_PROFILE_STORAGE_KEY,
 ];

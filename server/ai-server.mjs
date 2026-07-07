@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 
 import { serve } from '@hono/node-server';
@@ -60,8 +61,22 @@ const AI_INITIAL_BALANCE_USD = normalizeNonNegativeNumber(
   0
 );
 const AI_USER_ID_HEADER = 'x-ai-user-id';
+const AUTH_REGISTER_CODE_PURPOSE = 'register';
+const AUTH_VERIFICATION_CODE_TTL_MS = 10 * 60 * 1000;
+const AUTH_DEFAULT_PLAN_NAME = 'Free';
+const AUTH_DEFAULT_SIGNATURE = '欢迎来到 Astesia';
+const AUTH_TOKEN_ISSUER = 'astesia-auth';
+const AUTH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
+const AUTH_TOKEN_SECRET = getEnvValue('AUTH_TOKEN_SECRET') || 'astesia-local-auth-secret';
 
 class AiAuthenticationError extends Error {}
+
+class RequestValidationError extends Error {
+  constructor(message, status = 400) {
+    super(message);
+    this.status = status;
+  }
+}
 
 class InsufficientAiBalanceError extends Error {
   constructor(balanceUsd, requiredUsd) {
@@ -76,6 +91,85 @@ app.use('*', cors({
 }));
 
 app.get('/health', (c) => c.json({ ok: true }));
+
+app.post('/api/auth/register/code', async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const email = normalizeAuthEmail(body?.email);
+
+  if (!email) {
+    return c.json({ error: '请输入有效的邮箱地址。' }, 400);
+  }
+
+  try {
+    const existingUser = await readAuthUserByEmail(email);
+
+    if (existingUser) {
+      throw new RequestValidationError('该邮箱已注册，请直接使用邮箱和密码登录。', 409);
+    }
+
+    const verification = await createEmailVerificationCode(email, AUTH_REGISTER_CODE_PURPOSE);
+
+    return c.json({
+      message: '验证码已生成，10 分钟内有效。',
+      verificationCode: verification.code,
+      expiresAt: verification.expiresAt,
+    });
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
+  }
+});
+
+app.post('/api/auth/register', async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const email = normalizeAuthEmail(body?.email);
+  const verificationCode = normalizeVerificationCode(body?.verificationCode);
+  const password = normalizeAuthPassword(body?.password);
+
+  if (!email) {
+    return c.json({ error: '请输入有效的邮箱地址。' }, 400);
+  }
+
+  if (!verificationCode) {
+    return c.json({ error: '请输入 6 位验证码。' }, 400);
+  }
+
+  if (!password) {
+    return c.json({ error: '密码至少需要 6 位。' }, 400);
+  }
+
+  try {
+    const user = await registerAuthUser({
+      email,
+      verificationCode,
+      password,
+    });
+
+    return c.json(buildAuthSuccessResponse(user));
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
+  }
+});
+
+app.post('/api/auth/login', async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const email = normalizeAuthEmail(body?.email);
+  const password = normalizeAuthPassword(body?.password);
+
+  if (!email) {
+    return c.json({ error: '请输入有效的邮箱地址。' }, 400);
+  }
+
+  if (!password) {
+    return c.json({ error: '请输入正确的邮箱和密码。' }, 400);
+  }
+
+  try {
+    const user = await loginAuthUser({ email, password });
+    return c.json(buildAuthSuccessResponse(user));
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
+  }
+});
 
 app.get('/api/ai/models', async (c) => {
   const [deepseekModels, nitroModels] = await Promise.all([
@@ -547,6 +641,14 @@ function normalizeAiUserId(value) {
     : '';
 }
 
+function encodeBase64Url(value) {
+  return Buffer.from(value, 'utf8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
 function getBearerToken(value) {
   if (typeof value !== 'string') {
     return '';
@@ -562,7 +664,22 @@ function extractUserIdFromBearerToken(token) {
   }
 
   try {
-    const payload = JSON.parse(decodeBase64Url(token.split('.')[1]));
+    const [headerSegment, payloadSegment, signatureSegment = ''] = token.split('.');
+    const payload = JSON.parse(decodeBase64Url(payloadSegment));
+
+    if (payload?.iss === AUTH_TOKEN_ISSUER) {
+      const expectedSignature = createAuthTokenSignature(`${headerSegment}.${payloadSegment}`);
+
+      if (!safeEqualSignature(signatureSegment, expectedSignature)) {
+        return '';
+      }
+
+      const expiresAt = normalizeFiniteNumber(payload?.exp, 0);
+
+      if (expiresAt > 0 && expiresAt <= Math.floor(Date.now() / 1000)) {
+        return '';
+      }
+    }
 
     for (const key of ['userId', 'user_id', 'uid', 'sub']) {
       const normalizedUserId = normalizeAiUserId(String(payload?.[key] ?? ''));
@@ -1289,6 +1406,301 @@ async function getAiBillingSummary(userId) {
   };
 }
 
+async function createEmailVerificationCode(email, purpose) {
+  const pool = getDatabasePool();
+  const verificationCode = String(normalizeNonNegativeInteger(Math.floor(Math.random() * 1_000_000), 0))
+    .padStart(6, '0');
+  const codeHash = createPasswordHash(verificationCode);
+  const expiresAt = new Date(Date.now() + AUTH_VERIFICATION_CODE_TTL_MS).toISOString();
+
+  await pool.query(`
+    INSERT INTO auth_email_verification_codes (
+      email,
+      purpose,
+      code_hash,
+      expires_at
+    )
+    VALUES ($1, $2, $3, $4::timestamptz)
+  `, [email, purpose, codeHash, expiresAt]);
+
+  return {
+    code: verificationCode,
+    expiresAt,
+  };
+}
+
+async function registerAuthUser({
+  email,
+  verificationCode,
+  password,
+}) {
+  const pool = getDatabasePool();
+  const existingUser = await readAuthUserByEmail(email);
+
+  if (existingUser) {
+    throw new RequestValidationError('该邮箱已注册，请直接使用邮箱和密码登录。', 409);
+  }
+
+  const verificationRecord = await readLatestVerificationCode(email, AUTH_REGISTER_CODE_PURPOSE);
+
+  if (!verificationRecord) {
+    throw new RequestValidationError('请先获取验证码。');
+  }
+
+  if (verificationRecord.usedAt) {
+    throw new RequestValidationError('该验证码已使用，请重新获取。');
+  }
+
+  if (Date.now() > new Date(verificationRecord.expiresAt).getTime()) {
+    throw new RequestValidationError('验证码已过期，请重新获取。');
+  }
+
+  if (!verifyPasswordHash(verificationCode, verificationRecord.codeHash)) {
+    throw new RequestValidationError('验证码不正确，请重新输入。');
+  }
+
+  const passwordHash = createPasswordHash(password);
+  const displayName = buildDefaultDisplayName(email);
+
+  const { rows } = await pool.query(`
+    INSERT INTO auth_users (
+      email,
+      password_hash,
+      display_name,
+      role,
+      plan_name,
+      signature
+    )
+    VALUES ($1, $2, $3, 'user', $4, $5)
+    RETURNING id, email, display_name, role, plan_name, signature, avatar_url, created_at
+  `, [email, passwordHash, displayName, AUTH_DEFAULT_PLAN_NAME, AUTH_DEFAULT_SIGNATURE]);
+
+  await pool.query(`
+    UPDATE auth_email_verification_codes
+    SET used_at = now()
+    WHERE id = $1
+  `, [verificationRecord.id]);
+
+  return normalizeAuthUserRow(rows[0]);
+}
+
+async function loginAuthUser({ email, password }) {
+  const user = await readAuthUserByEmail(email);
+
+  if (!user || !verifyPasswordHash(password, user.passwordHash)) {
+    throw new RequestValidationError('邮箱或密码不正确。', 401);
+  }
+
+  return user;
+}
+
+async function readAuthUserByEmail(email) {
+  const pool = getDatabasePool();
+  const { rows } = await pool.query(`
+    SELECT
+      id,
+      email,
+      password_hash,
+      display_name,
+      role,
+      plan_name,
+      signature,
+      avatar_url,
+      created_at
+    FROM auth_users
+    WHERE email = $1
+    LIMIT 1
+  `, [email]);
+
+  return normalizeAuthUserRow(rows[0]);
+}
+
+async function readLatestVerificationCode(email, purpose) {
+  const pool = getDatabasePool();
+  const { rows } = await pool.query(`
+    SELECT
+      id,
+      email,
+      purpose,
+      code_hash,
+      expires_at,
+      used_at,
+      created_at
+    FROM auth_email_verification_codes
+    WHERE email = $1 AND purpose = $2
+    ORDER BY created_at DESC
+    LIMIT 1
+  `, [email, purpose]);
+
+  return normalizeVerificationRow(rows[0]);
+}
+
+function normalizeAuthUserRow(row) {
+  if (!row || typeof row !== 'object') {
+    return null;
+  }
+
+  const normalizedUserId = normalizeAiUserId(String(row.id ?? ''));
+  const normalizedEmail = normalizeAuthEmail(row.email);
+
+  if (!normalizedUserId || !normalizedEmail) {
+    return null;
+  }
+
+  return {
+    userId: normalizedUserId,
+    email: normalizedEmail,
+    passwordHash: typeof row.password_hash === 'string' ? row.password_hash : '',
+    name: sanitizeDisplayName(row.display_name, normalizedEmail),
+    role: typeof row.role === 'string' && row.role.trim() ? row.role.trim() : 'user',
+    planName: typeof row.plan_name === 'string' && row.plan_name.trim() ? row.plan_name.trim() : AUTH_DEFAULT_PLAN_NAME,
+    signature: typeof row.signature === 'string' && row.signature.trim() ? row.signature.trim() : AUTH_DEFAULT_SIGNATURE,
+    avatarUrl: typeof row.avatar_url === 'string' && row.avatar_url.trim() ? row.avatar_url.trim() : null,
+    createdAt: normalizeIsoString(row.created_at, new Date().toISOString()),
+  };
+}
+
+function normalizeVerificationRow(row) {
+  if (!row || typeof row !== 'object') {
+    return null;
+  }
+
+  return {
+    id: normalizeNonNegativeInteger(row.id, 0),
+    email: normalizeAuthEmail(row.email),
+    purpose: typeof row.purpose === 'string' ? row.purpose : '',
+    codeHash: typeof row.code_hash === 'string' ? row.code_hash : '',
+    expiresAt: normalizeIsoString(row.expires_at, new Date().toISOString()),
+    usedAt: row.used_at ? normalizeIsoString(row.used_at, new Date().toISOString()) : '',
+    createdAt: normalizeIsoString(row.created_at, new Date().toISOString()),
+  };
+}
+
+function buildAuthSuccessResponse(user) {
+  if (!user) {
+    throw new RequestValidationError('用户信息生成失败，请稍后重试。', 500);
+  }
+
+  return {
+    token: createAuthToken(user),
+    user: {
+      userId: user.userId,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      planName: user.planName,
+      signature: user.signature,
+      avatarUrl: user.avatarUrl,
+    },
+  };
+}
+
+function createAuthToken(user) {
+  const header = encodeBase64Url(JSON.stringify({
+    alg: 'HS256',
+    typ: 'JWT',
+  }));
+  const payload = encodeBase64Url(JSON.stringify({
+    userId: user.userId,
+    email: user.email,
+    role: user.role,
+    planName: user.planName,
+    iss: AUTH_TOKEN_ISSUER,
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + AUTH_TOKEN_TTL_SECONDS,
+  }));
+  const unsignedToken = `${header}.${payload}`;
+
+  return `${unsignedToken}.${createAuthTokenSignature(unsignedToken)}`;
+}
+
+function normalizeAuthEmail(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedValue)
+    ? normalizedValue
+    : '';
+}
+
+function normalizeVerificationCode(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const normalizedValue = value.trim();
+  return /^\d{6}$/.test(normalizedValue) ? normalizedValue : '';
+}
+
+function normalizeAuthPassword(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const normalizedValue = value.trim();
+  return normalizedValue.length >= 6 ? normalizedValue : '';
+}
+
+function createPasswordHash(value) {
+  const salt = randomBytes(16).toString('hex');
+  const hash = scryptSync(value, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function createAuthTokenSignature(value) {
+  return createHmac('sha256', AUTH_TOKEN_SECRET)
+    .update(value)
+    .digest('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function safeEqualSignature(currentSignature, expectedSignature) {
+  if (typeof currentSignature !== 'string' || !currentSignature || !expectedSignature) {
+    return false;
+  }
+
+  const currentBuffer = Buffer.from(currentSignature);
+  const expectedBuffer = Buffer.from(expectedSignature);
+
+  return currentBuffer.length === expectedBuffer.length
+    && timingSafeEqual(currentBuffer, expectedBuffer);
+}
+
+function verifyPasswordHash(value, storedHash) {
+  if (typeof storedHash !== 'string' || !storedHash.includes(':')) {
+    return false;
+  }
+
+  const [salt, hash] = storedHash.split(':');
+
+  if (!salt || !hash) {
+    return false;
+  }
+
+  const calculatedHash = scryptSync(value, salt, 64);
+  const expectedHash = Buffer.from(hash, 'hex');
+
+  return expectedHash.length === calculatedHash.length
+    && timingSafeEqual(expectedHash, calculatedHash);
+}
+
+function buildDefaultDisplayName(email) {
+  return sanitizeDisplayName(email.split('@')[0], email);
+}
+
+function sanitizeDisplayName(value, fallbackEmail = '') {
+  if (typeof value !== 'string') {
+    return fallbackEmail ? fallbackEmail.split('@')[0] || 'Astesia 用户' : 'Astesia 用户';
+  }
+
+  const normalizedValue = value.trim().slice(0, 24);
+  return normalizedValue || (fallbackEmail.split('@')[0] || 'Astesia 用户');
+}
+
 async function readConversations(userId) {
   const pool = getDatabasePool();
   const { rows } = await pool.query(`
@@ -1737,6 +2149,18 @@ function getRuntimeErrorMessage(error) {
   }
 
   return 'AI 服务暂时不可用，请稍后再试。';
+}
+
+function getErrorStatus(error) {
+  if (typeof error?.status === 'number' && Number.isInteger(error.status)) {
+    return error.status;
+  }
+
+  if (error instanceof AiAuthenticationError) {
+    return 401;
+  }
+
+  return 500;
 }
 
 function getEnvValue(key) {
