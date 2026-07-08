@@ -573,11 +573,11 @@ export function AiFloatingAssistant() {
     try {
       const nextKnowledge = await buildAiScreenKnowledge(pathname, screenKnowledgeRouteParams);
 
-      if (!isMountedRef.current) {
-        return;
+      if (isMountedRef.current) {
+        setScreenKnowledge(nextKnowledge);
       }
 
-      setScreenKnowledge(nextKnowledge);
+      return nextKnowledge;
     } finally {
       if (isMountedRef.current) {
         setIsScreenKnowledgeLoading(false);
@@ -967,11 +967,30 @@ export function AiFloatingAssistant() {
       return;
     }
 
+    setIsSending(true);
+
+    let requestKnowledgeSnapshot = activeScreenKnowledge;
+
+    if (shouldIncludeScreenKnowledge && activeScreenKnowledge.source !== 'user-edited') {
+      try {
+        // [变更] 修改前: 发送时直接复用当前面板里的屏幕知识，可能落后于同页内最新图表状态
+        // [变更] 修改后: 自动知识库在发送前再次读取当前页面摘要，手动编辑内容仍保留用户版本
+        // [原因] 股票区间切换、天气更新等同路由内数据变化，需要在真正发起对话前拿到最新上下文
+        const latestKnowledge = await refreshScreenKnowledge();
+
+        if (latestKnowledge) {
+          requestKnowledgeSnapshot = latestKnowledge;
+        }
+      } catch {
+        requestKnowledgeSnapshot = activeScreenKnowledge;
+      }
+    }
+
     // [变更] 修改前: 每次发送都会无条件携带当前屏幕知识
     // [变更] 修改后: 仅在用户显式开启后，才把 route/summary 注入本轮 AI 请求
     // [原因] 当前屏幕知识属于可选辅助上下文，不应默认影响所有对话
     const requestScreenKnowledge = shouldIncludeScreenKnowledge
-      ? { route: activeScreenKnowledge.route, summary: activeScreenKnowledge.summary }
+      ? { route: requestKnowledgeSnapshot.route, summary: requestKnowledgeSnapshot.summary }
       : null;
 
     // [变更] 修改前: 图片附件状态会拼接成用户气泡里的说明文字
@@ -991,7 +1010,6 @@ export function AiFloatingAssistant() {
     updateMessages(pendingMessages);
     setDraftMessage('');
     setPendingImageAttachments([]);
-    setIsSending(true);
     scrollMessagesToEnd();
 
     try {
@@ -1040,6 +1058,7 @@ export function AiFloatingAssistant() {
     draftMessage,
     isSending,
     activeScreenKnowledge,
+    refreshScreenKnowledge,
     scrollMessagesToEnd,
     selectedModel,
     shouldIncludeScreenKnowledge,

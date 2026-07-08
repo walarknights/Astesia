@@ -37,6 +37,7 @@ import {
   type SecuritySearchResult,
   type SecurityTrendResult,
 } from '@/services/akshare';
+import { setCachedAccountingScreenSnapshot } from '@/services/accounting-screen-store';
 
 const HERO_IMAGE = require('@/assets/images/cloudy.jpg');
 const WEEK_DAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'] as const;
@@ -373,6 +374,36 @@ function getFallbackSecurityOptions(keyword: string) {
   });
 }
 
+/**
+ * 将新拉取到的单一区间行情并回当前证券状态，保留已存在的其他区间数据。
+ *
+ * @param {SecurityTrendResult} currentSecurity - 组件当前持有的证券状态
+ * @param {SecurityTrendResult} nextSecurity - 本次接口返回的证券状态
+ * @param {AssetRangeLabel} range - 本次更新的区间标签
+ * @returns {SecurityTrendResult} 合并后的证券状态
+ * @example
+ *   mergeSecurityRangeData(currentSecurity, nextSecurity, '近7日')
+ */
+function mergeSecurityRangeData(
+  currentSecurity: SecurityTrendResult,
+  nextSecurity: SecurityTrendResult,
+  range: AssetRangeLabel
+) {
+  return {
+    ...currentSecurity,
+    price: nextSecurity.price,
+    changeRate: nextSecurity.changeRate,
+    trend: {
+      ...currentSecurity.trend,
+      [range]: nextSecurity.trend[range],
+    },
+    candles: {
+      ...currentSecurity.candles,
+      [range]: nextSecurity.candles[range],
+    },
+  };
+}
+
 export default function AccountingScreen() {
   const router = useRouter();
   const [currentDate, setCurrentDate] = useState(() => new Date());
@@ -535,6 +566,20 @@ export default function AccountingScreen() {
       ? `¥${selectedSecurity.price.toFixed(2)}`
       : '加载中';
   const selectedSecurityChangeRate = selectedSecurityRangeChangeRate;
+
+  useEffect(() => {
+    // [变更] 修改前: 资产页内选中的证券、区间和 K 线明细只保存在组件状态里
+    // [变更] 修改后: 同步缓存当前资产页摘要，供屏幕知识库和 AI 发送前刷新读取
+    // [原因] 同一路由内切换股票区间不会触发路由变化，需要额外暴露页面内部的实时数据
+    setCachedAccountingScreenSnapshot({
+      activeTab,
+      selectedAssetRange,
+      selectedSecurity,
+      selectedSecurityCandle,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [activeTab, selectedAssetRange, selectedSecurity, selectedSecurityCandle]);
+
   const availableYearOptions = useMemo(() => {
     const currentYear = new Date().getFullYear();
     const yearSet = new Set([currentYear - 1, currentYear, currentYear + 1]);
@@ -642,19 +687,7 @@ export default function AccountingScreen() {
               return currentSecurity;
             }
 
-            return {
-              ...currentSecurity,
-              price: nextSecurity.price,
-              changeRate: nextSecurity.changeRate,
-              trend: {
-                ...currentSecurity.trend,
-                [selectedAssetRange]: nextSecurity.trend[selectedAssetRange],
-              },
-              candles: {
-                ...currentSecurity.candles,
-                [selectedAssetRange]: nextSecurity.candles[selectedAssetRange],
-              },
-            };
+            return mergeSecurityRangeData(currentSecurity, nextSecurity, selectedAssetRange);
           });
         }
       } finally {
@@ -665,6 +698,49 @@ export default function AccountingScreen() {
     };
 
     void syncSelectedSecurityTrend();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedAssetRange, selectedSecurity]);
+
+  useEffect(() => {
+    if (!selectedSecurity) {
+      return;
+    }
+
+    const missingShortRanges = (['近7日', '近一个月'] as const).filter((range) => (
+      range !== selectedAssetRange && selectedSecurity.trend[range].length === 0
+    ));
+    const nextShortRange = missingShortRanges[0];
+
+    if (!nextShortRange) {
+      return;
+    }
+
+    let active = true;
+
+    const prefetchSecurityShortRange = async () => {
+      try {
+        const nextSecurity = await loadSecurityTrend(selectedSecurity, nextShortRange);
+
+        if (!active) {
+          return;
+        }
+
+        setSelectedSecurity((currentSecurity) => {
+          if (!currentSecurity || currentSecurity.code !== nextSecurity.code || currentSecurity.type !== nextSecurity.type) {
+            return currentSecurity;
+          }
+
+          return mergeSecurityRangeData(currentSecurity, nextSecurity, nextShortRange);
+        });
+      } catch {
+        return;
+      }
+    };
+
+    void prefetchSecurityShortRange();
 
     return () => {
       active = false;
