@@ -1,5 +1,5 @@
 import type { PropsWithChildren, ReactElement } from 'react';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import Animated, {
   interpolate,
   useAnimatedRef,
@@ -10,6 +10,7 @@ import Animated, {
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useThemeColor } from '@/hooks/use-theme-color';
+import { DESKTOP_WEB_CONTENT_MAX_WIDTH, useWebLayout } from '@/hooks/use-web-layout';
 
 const HEADER_HEIGHT = 250;
 
@@ -25,6 +26,7 @@ export default function ParallaxScrollView({
 }: Props) {
   const backgroundColor = useThemeColor({}, 'background');
   const colorScheme = useColorScheme() ?? 'light';
+  const { isDesktopWeb } = useWebLayout();
   const scrollRef = useAnimatedRef<Animated.ScrollView>();
   const scrollOffset = useScrollOffset(scrollRef);
   const headerAnimatedStyle = useAnimatedStyle(() => {
@@ -57,7 +59,16 @@ export default function ParallaxScrollView({
         ]}>
         {headerImage}
       </Animated.View>
-      <ThemedView style={styles.content}>{children}</ThemedView>
+      <ThemedView style={styles.content}>
+        {/*
+         * 渲染位置: 视差滚动页面的正文内容区
+         * 展示内容: 桌面 Web 下居中且限宽的内容列，移动端保持原始满宽滚动
+         * 数据来源: useWebLayout 的桌面端判定结果与页面 children
+         */}
+        <View style={[styles.contentInner, isDesktopWeb ? styles.contentInnerDesktop : null]}>
+          {children}
+        </View>
+      </ThemedView>
     </Animated.ScrollView>
   );
 }
@@ -74,6 +85,12 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 32,
     gap: 16,
-    
+  },
+  contentInner: {
+    width: '100%',
+  },
+  contentInnerDesktop: {
+    maxWidth: DESKTOP_WEB_CONTENT_MAX_WIDTH,
+    alignSelf: 'center',
   },
 });
