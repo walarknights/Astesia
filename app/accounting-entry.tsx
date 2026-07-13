@@ -6,7 +6,6 @@ import {
   Modal,
   Pressable,
   ScrollView,
-  StyleSheet,
   TextInput,
   View,
 } from 'react-native';
@@ -781,4 +780,3 @@ function SelectorModal({
     </Modal>
   );
 }
-

@@ -621,19 +621,22 @@ function shouldUseDatabaseSsl(databaseUrl) {
 function resolveRequiredAiUser(c) {
   const headerUserId = normalizeAiUserId(c.req.header(AI_USER_ID_HEADER));
   const bearerToken = getBearerToken(c.req.header('authorization'));
+
+  if (!bearerToken) {
+    throw new AiAuthenticationError('缺少登录 token，请重新登录后再继续使用 AI 对话。');
+  }
+
   const tokenUserId = extractUserIdFromBearerToken(bearerToken);
 
-  if (headerUserId && tokenUserId && headerUserId !== tokenUserId) {
+  if (!tokenUserId) {
+    throw new AiAuthenticationError('登录 token 已失效，请重新登录后再继续使用 AI 对话。');
+  }
+
+  if (headerUserId && headerUserId !== tokenUserId) {
     throw new AiAuthenticationError('AI 用户身份校验失败，请重新登录后再试。');
   }
 
-  const userId = tokenUserId || headerUserId;
-
-  if (!userId) {
-    throw new AiAuthenticationError('缺少 AI 用户身份，请先登录后再继续使用 AI 对话。');
-  }
-
-  return { userId };
+  return { userId: tokenUserId };
 }
 
 function normalizeAiUserId(value) {
@@ -673,18 +676,20 @@ function extractUserIdFromBearerToken(token) {
     const [headerSegment, payloadSegment, signatureSegment = ''] = token.split('.');
     const payload = JSON.parse(decodeBase64Url(payloadSegment));
 
-    if (payload?.iss === AUTH_TOKEN_ISSUER) {
-      const expectedSignature = createAuthTokenSignature(`${headerSegment}.${payloadSegment}`);
+    if (payload?.iss !== AUTH_TOKEN_ISSUER) {
+      return '';
+    }
 
-      if (!safeEqualSignature(signatureSegment, expectedSignature)) {
-        return '';
-      }
+    const expectedSignature = createAuthTokenSignature(`${headerSegment}.${payloadSegment}`);
 
-      const expiresAt = normalizeFiniteNumber(payload?.exp, 0);
+    if (!safeEqualSignature(signatureSegment, expectedSignature)) {
+      return '';
+    }
 
-      if (expiresAt > 0 && expiresAt <= Math.floor(Date.now() / 1000)) {
-        return '';
-      }
+    const expiresAt = normalizeFiniteNumber(payload?.exp, 0);
+
+    if (expiresAt <= Math.floor(Date.now() / 1000)) {
+      return '';
     }
 
     for (const key of ['userId', 'user_id', 'uid', 'sub']) {

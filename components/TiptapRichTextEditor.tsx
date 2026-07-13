@@ -2,9 +2,9 @@
 
 import TiptapImage from '@tiptap/extension-image';
 import TiptapPlaceholder from '@tiptap/extension-placeholder';
-import { EditorContent, useEditor } from '@tiptap/react';
+import TiptapUnderline from '@tiptap/extension-underline';
+import { EditorContent, type Editor, useEditor } from '@tiptap/react';
 import TiptapStarterKit from '@tiptap/starter-kit';
-import { type Editor } from '@tiptap/core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 type TiptapRichTextEditorProps = {
@@ -66,6 +66,7 @@ export default function TiptapRichTextEditor({
         inline: false,
         allowBase64: true,
       }),
+      TiptapUnderline,
       TiptapPlaceholder.configure({
         placeholder,
       }),
