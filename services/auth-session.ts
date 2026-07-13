@@ -14,7 +14,10 @@ const AUTH_API_HOST = resolveApiHost(process.env.EXPO_PUBLIC_AI_API_HOST);
 const USER_TOKEN_STORAGE_KEY = 'userToken';
 const USER_ID_STORAGE_KEY = 'userId';
 const AI_USER_ID_HEADER = 'X-AI-User-Id';
-const DEFAULT_PLAN_NAME = 'Free';
+// [变更] 修改前: 前端默认计划名沿用 Free
+// [变更] 修改后: 默认计划统一展示为“普通计划”
+// [原因] 当前阶段未接入支付渠道，登录后计划文案需要与服务端保持一致
+const DEFAULT_PLAN_NAME = '普通计划';
 
 type AuthResponse = {
   token?: unknown;
@@ -277,7 +280,10 @@ function normalizeAuthUserProfile(value: unknown, fallbackUserId?: string) {
     name: normalizedName,
     email: normalizedEmail,
     role: normalizeStoredString(user.role) || 'user',
-    planName: normalizeStoredString(user.planName) || DEFAULT_PLAN_NAME,
+    // [变更] 修改前: 直接透传本地缓存或接口返回的 planName，历史会话会继续展示 Free
+    // [变更] 修改后: 统一将空值和历史 Free 归一为“普通计划”
+    // [原因] 保证老会话、本地缓存和新登录响应的计划展示口径一致
+    planName: normalizePlanName(user.planName),
     signature: normalizeStoredString(user.signature) || '欢迎来到 Astesia',
     avatarUrl: normalizeOptionalAvatarUrl(user.avatarUrl),
   } satisfies AuthUserProfile;
@@ -294,6 +300,26 @@ function normalizeUserId(value: unknown) {
 function normalizeEmail(value: unknown) {
   const email = normalizeStoredString(value).toLowerCase();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
+}
+
+/**
+ * 统一归一化登录态中的计划名称，兼容历史 Free 文案并回退到当前默认计划
+ *
+ * @param value - 本地缓存或接口返回的原始计划名称
+ * @returns 当前页面可直接展示的计划名称
+ * @example
+ *   normalizePlanName('Free') // => '普通计划'
+ */
+function normalizePlanName(value: unknown) {
+  const normalizedPlanName = normalizeStoredString(value);
+
+  if (!normalizedPlanName) {
+    return DEFAULT_PLAN_NAME;
+  }
+
+  return normalizedPlanName.toLowerCase() === 'free'
+    ? DEFAULT_PLAN_NAME
+    : normalizedPlanName;
 }
 
 function normalizeStoredString(value: unknown) {

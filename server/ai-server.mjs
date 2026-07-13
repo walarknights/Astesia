@@ -19,6 +19,7 @@ const DEFAULT_MODEL = 'gemini-3.1-pro-preview';
 const DEFAULT_DEEPSEEK_TITLE_MODEL = 'deepseek-v4-flash';
 const DEFAULT_CONVERSATION_TITLE = '对话标题';
 const DEFAULT_CHAT_MAX_OUTPUT_TOKENS = 4096;
+const DEFAULT_AI_SERVER_HOST = '127.0.0.1';
 const CHAT_MAX_OUTPUT_TOKENS = normalizePositiveInteger(
   getEnvValue('AI_CHAT_MAX_OUTPUT_TOKENS'),
   DEFAULT_CHAT_MAX_OUTPUT_TOKENS
@@ -51,6 +52,7 @@ const DEFAULT_MODEL_PRICING = Object.freeze({
   },
 });
 const PORT = Number(getEnvValue('AI_SERVER_PORT') || 8787);
+const HOST = normalizeServerHost(getEnvValue('AI_SERVER_HOST')) || DEFAULT_AI_SERVER_HOST;
 const { Pool } = pg;
 
 const app = new Hono();
@@ -58,12 +60,12 @@ let databasePool = null;
 const modelPricingMap = createModelPricingMap(getEnvValue('AI_MODEL_PRICING_JSON'));
 const AI_INITIAL_BALANCE_USD = normalizeNonNegativeNumber(
   getEnvValue('AI_INITIAL_BALANCE_USD'),
-  0
+  1
 );
 const AI_USER_ID_HEADER = 'x-ai-user-id';
 const AUTH_REGISTER_CODE_PURPOSE = 'register';
 const AUTH_VERIFICATION_CODE_TTL_MS = 10 * 60 * 1000;
-const AUTH_DEFAULT_PLAN_NAME = 'Free';
+const AUTH_DEFAULT_PLAN_NAME = '普通计划';
 const AUTH_DEFAULT_SIGNATURE = '欢迎来到 Astesia';
 const AUTH_TOKEN_ISSUER = 'astesia-auth';
 const AUTH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
@@ -600,6 +602,10 @@ function normalizeDatabaseUrl(value) {
     : '';
 }
 
+function normalizeServerHost(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 function shouldUseDatabaseSsl(databaseUrl) {
   if (getEnvValue('DATABASE_SSL') === 'true') {
     return true;
@@ -960,11 +966,52 @@ async function getWalletSnapshot(queryable, userId) {
     WHERE user_id = $1
   `, [userId]);
 
-  return normalizeAiWalletRow(rows[0]) ?? {
+  const wallet = normalizeAiWalletRow(rows[0]);
+
+  if (wallet) {
+    return ensureAiWalletQuotaLimit(queryable, wallet);
+  }
+
+  return {
     userId,
     balanceUsd: roundUsdAmount(AI_INITIAL_BALANCE_USD),
     totalChargedUsd: 0,
   };
+}
+
+async function ensureAiWalletQuotaLimit(queryable, wallet) {
+  const activeReservedUsd = await readActiveReservedUsd(queryable, wallet.userId);
+  const targetBalanceUsd = roundUsdAmount(
+    Math.max(AI_INITIAL_BALANCE_USD - wallet.totalChargedUsd - activeReservedUsd, 0)
+  );
+
+  if (targetBalanceUsd === wallet.balanceUsd) {
+    return wallet;
+  }
+
+  const { rows } = await queryable.query(`
+    UPDATE ai_user_wallets
+    SET balance_usd = $2,
+        updated_at = now()
+    WHERE user_id = $1
+    RETURNING user_id, balance_usd, total_charged_usd
+  `, [wallet.userId, targetBalanceUsd]);
+
+  return normalizeAiWalletRow(rows[0]) ?? {
+    ...wallet,
+    balanceUsd: targetBalanceUsd,
+  };
+}
+
+async function readActiveReservedUsd(queryable, userId) {
+  const { rows } = await queryable.query(`
+    SELECT COALESCE(SUM(reserved_usd), 0) AS active_reserved_usd
+    FROM ai_wallet_reservations
+    WHERE user_id = $1
+      AND status = 'reserved'
+  `, [userId]);
+
+  return roundUsdAmount(rows[0]?.active_reserved_usd);
 }
 
 function normalizeAiWalletRow(row) {
@@ -1553,7 +1600,7 @@ function normalizeAuthUserRow(row) {
     passwordHash: typeof row.password_hash === 'string' ? row.password_hash : '',
     name: sanitizeDisplayName(row.display_name, normalizedEmail),
     role: typeof row.role === 'string' && row.role.trim() ? row.role.trim() : 'user',
-    planName: typeof row.plan_name === 'string' && row.plan_name.trim() ? row.plan_name.trim() : AUTH_DEFAULT_PLAN_NAME,
+    planName: normalizeAuthPlanName(row.plan_name),
     signature: typeof row.signature === 'string' && row.signature.trim() ? row.signature.trim() : AUTH_DEFAULT_SIGNATURE,
     avatarUrl: typeof row.avatar_url === 'string' && row.avatar_url.trim() ? row.avatar_url.trim() : null,
     createdAt: normalizeIsoString(row.created_at, new Date().toISOString()),
@@ -1623,6 +1670,22 @@ function normalizeAuthEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedValue)
     ? normalizedValue
     : '';
+}
+
+function normalizeAuthPlanName(value) {
+  if (typeof value !== 'string') {
+    return AUTH_DEFAULT_PLAN_NAME;
+  }
+
+  const normalizedPlanName = value.trim();
+
+  if (!normalizedPlanName) {
+    return AUTH_DEFAULT_PLAN_NAME;
+  }
+
+  return normalizedPlanName.toLowerCase() === 'free'
+    ? AUTH_DEFAULT_PLAN_NAME
+    : normalizedPlanName;
 }
 
 function normalizeVerificationCode(value) {
@@ -2202,7 +2265,8 @@ function loadLocalEnv() {
 
 serve({
   fetch: app.fetch,
+  hostname: HOST,
   port: PORT,
 });
 
-console.log(`AI server is running on http://127.0.0.1:${PORT}`);
+console.log(`AI server is running on http://${HOST}:${PORT}`);
