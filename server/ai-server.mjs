@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import nodemailer from 'nodemailer';
 import pg from 'pg';
 
 loadLocalEnv();
@@ -57,6 +58,8 @@ const { Pool } = pg;
 
 const app = new Hono();
 let databasePool = null;
+let brevoSmtpTransporter = null;
+let hasLoggedBrevoSmtpConfigWarning = false;
 const modelPricingMap = createModelPricingMap(getEnvValue('AI_MODEL_PRICING_JSON'));
 const AI_INITIAL_BALANCE_USD = normalizeNonNegativeNumber(
   getEnvValue('AI_INITIAL_BALANCE_USD'),
@@ -70,6 +73,18 @@ const AUTH_DEFAULT_SIGNATURE = '欢迎来到 Astesia';
 const AUTH_TOKEN_ISSUER = 'astesia-auth';
 const AUTH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 const AUTH_TOKEN_SECRET = getEnvValue('AUTH_TOKEN_SECRET') || 'astesia-local-auth-secret';
+const BREVO_SMTP_HOST = getEnvValue('BREVO_SMTP_HOST') || 'smtp-relay.brevo.com';
+const BREVO_SMTP_PORT = normalizePositiveInteger(getEnvValue('BREVO_SMTP_PORT'), 587);
+const BREVO_SMTP_USER = getEnvValue('BREVO_SMTP_USER');
+const BREVO_SMTP_KEY = getEnvValue('BREVO_SMTP_KEY')
+  || getEnvValue('BREVO_SMTP_API_KEY')
+  || getEnvValue('BREVO_SMTP_PASSWORD');
+const BREVO_SMTP_FROM_EMAIL = normalizeAuthEmail(getEnvValue('BREVO_SMTP_FROM_EMAIL'));
+const BREVO_SMTP_FROM_NAME = getEnvValue('BREVO_SMTP_FROM_NAME') || 'Astesia';
+const AUTH_RETURN_DEBUG_VERIFICATION_CODE = normalizeBooleanEnv(
+  getEnvValue('AUTH_RETURN_DEBUG_VERIFICATION_CODE'),
+  false
+);
 
 class AiAuthenticationError extends Error {}
 
@@ -109,11 +124,11 @@ app.post('/api/auth/register/code', async (c) => {
       throw new RequestValidationError('该邮箱已注册，请直接使用邮箱和密码登录。', 409);
     }
 
-    const verification = await createEmailVerificationCode(email, AUTH_REGISTER_CODE_PURPOSE);
+    const verification = await issueEmailVerificationCode(email, AUTH_REGISTER_CODE_PURPOSE);
 
     return c.json({
-      message: '验证码已生成，10 分钟内有效。',
-      verificationCode: verification.code,
+      message: verification.message,
+      verificationCode: verification.debugCode || undefined,
       expiresAt: verification.expiresAt,
     });
   } catch (error) {
@@ -737,6 +752,24 @@ function normalizeFiniteNumber(value, fallbackValue = 0) {
 function normalizeNonNegativeNumber(value, fallbackValue = 0) {
   const numericValue = normalizeFiniteNumber(value, fallbackValue);
   return numericValue >= 0 ? numericValue : fallbackValue;
+}
+
+function normalizeBooleanEnv(value, fallbackValue = false) {
+  if (typeof value !== 'string') {
+    return fallbackValue;
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+
+  if (['1', 'true', 'yes', 'on'].includes(normalizedValue)) {
+    return true;
+  }
+
+  if (['0', 'false', 'no', 'off'].includes(normalizedValue)) {
+    return false;
+  }
+
+  return fallbackValue;
 }
 
 function roundUsdAmount(value) {
@@ -1458,6 +1491,41 @@ async function getAiBillingSummary(userId) {
   };
 }
 
+async function issueEmailVerificationCode(email, purpose) {
+  const verification = await createEmailVerificationCode(email, purpose);
+
+  if (!isBrevoSmtpConfigured()) {
+    if (!AUTH_RETURN_DEBUG_VERIFICATION_CODE) {
+      warnMissingBrevoSmtpConfigOnce();
+      await deleteEmailVerificationCode(verification.id).catch(() => null);
+      throw new RequestValidationError('当前服务端未配置验证码邮件发送能力，请联系管理员。', 503);
+    }
+
+    return {
+      message: '验证码已生成，当前为调试模式。',
+      debugCode: verification.code,
+      expiresAt: verification.expiresAt,
+    };
+  }
+
+  try {
+    await sendRegisterVerificationEmail({
+      email,
+      verificationCode: verification.code,
+    });
+  } catch (error) {
+    await deleteEmailVerificationCode(verification.id).catch(() => null);
+    console.error('Failed to send verification email:', error);
+    throw new RequestValidationError('验证码发送失败，请稍后重试。', 502);
+  }
+
+  return {
+    message: '验证码已发送至邮箱，10 分钟内有效。',
+    debugCode: AUTH_RETURN_DEBUG_VERIFICATION_CODE ? verification.code : '',
+    expiresAt: verification.expiresAt,
+  };
+}
+
 async function createEmailVerificationCode(email, purpose) {
   const pool = getDatabasePool();
   const verificationCode = String(normalizeNonNegativeInteger(Math.floor(Math.random() * 1_000_000), 0))
@@ -1465,7 +1533,7 @@ async function createEmailVerificationCode(email, purpose) {
   const codeHash = createPasswordHash(verificationCode);
   const expiresAt = new Date(Date.now() + AUTH_VERIFICATION_CODE_TTL_MS).toISOString();
 
-  await pool.query(`
+  const { rows } = await pool.query(`
     INSERT INTO auth_email_verification_codes (
       email,
       purpose,
@@ -1473,12 +1541,135 @@ async function createEmailVerificationCode(email, purpose) {
       expires_at
     )
     VALUES ($1, $2, $3, $4::timestamptz)
+    RETURNING id
   `, [email, purpose, codeHash, expiresAt]);
 
   return {
+    id: normalizeNonNegativeInteger(rows[0]?.id, 0),
     code: verificationCode,
     expiresAt,
   };
+}
+
+async function deleteEmailVerificationCode(id) {
+  const normalizedId = normalizeNonNegativeInteger(id, 0);
+
+  if (normalizedId <= 0) {
+    return;
+  }
+
+  const pool = getDatabasePool();
+  await pool.query(`
+    DELETE FROM auth_email_verification_codes
+    WHERE id = $1
+  `, [normalizedId]);
+}
+
+function isBrevoSmtpConfigured() {
+  return Boolean(BREVO_SMTP_USER && BREVO_SMTP_KEY && BREVO_SMTP_FROM_EMAIL);
+}
+
+function warnMissingBrevoSmtpConfigOnce() {
+  if (hasLoggedBrevoSmtpConfigWarning) {
+    return;
+  }
+
+  const missingKeys = [];
+
+  if (!BREVO_SMTP_USER) {
+    missingKeys.push('BREVO_SMTP_USER');
+  }
+
+  if (!BREVO_SMTP_KEY) {
+    missingKeys.push('BREVO_SMTP_KEY');
+  }
+
+  if (!BREVO_SMTP_FROM_EMAIL) {
+    missingKeys.push('BREVO_SMTP_FROM_EMAIL');
+  }
+
+  console.warn(`Brevo SMTP is not fully configured. Missing env: ${missingKeys.join(', ')}`);
+  hasLoggedBrevoSmtpConfigWarning = true;
+}
+
+function getBrevoSmtpTransporter() {
+  if (!isBrevoSmtpConfigured()) {
+    return null;
+  }
+
+  if (!brevoSmtpTransporter) {
+    brevoSmtpTransporter = nodemailer.createTransport({
+      host: BREVO_SMTP_HOST,
+      port: BREVO_SMTP_PORT,
+      secure: BREVO_SMTP_PORT === 465,
+      auth: {
+        user: BREVO_SMTP_USER,
+        pass: BREVO_SMTP_KEY,
+      },
+    });
+  }
+
+  return brevoSmtpTransporter;
+}
+
+async function sendRegisterVerificationEmail({
+  email,
+  verificationCode,
+}) {
+  const transporter = getBrevoSmtpTransporter();
+
+  if (!transporter) {
+    throw new Error('Brevo SMTP transporter is unavailable.');
+  }
+
+  const result = await transporter.sendMail({
+    from: {
+      name: BREVO_SMTP_FROM_NAME,
+      address: BREVO_SMTP_FROM_EMAIL,
+    },
+    to: email,
+    subject: 'Astesia 注册验证码',
+    text: buildRegisterVerificationEmailText(verificationCode),
+    html: buildRegisterVerificationEmailHtml(verificationCode),
+  });
+
+  if (Array.isArray(result.rejected) && result.rejected.length > 0) {
+    throw new Error(`Brevo SMTP rejected recipients: ${result.rejected.join(', ')}`);
+  }
+}
+
+function buildRegisterVerificationEmailText(verificationCode) {
+  return [
+    '你好，',
+    '',
+    '你正在注册 Astesia。',
+    '',
+    `本次验证码：${verificationCode}`,
+    '验证码 10 分钟内有效。',
+    '',
+    '如果这不是你的操作，请直接忽略此邮件。',
+  ].join('\n');
+}
+
+function buildRegisterVerificationEmailHtml(verificationCode) {
+  const escapedCode = escapeHtml(verificationCode);
+
+  return `
+    <div style="margin:0;padding:24px;background:#f5f7fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1f2937;">
+      <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:20px;padding:32px;box-shadow:0 12px 32px rgba(15,23,42,0.08);">
+        <div style="font-size:24px;font-weight:700;color:#111827;">Astesia</div>
+        <div style="margin-top:12px;font-size:16px;line-height:1.7;">
+          你正在注册 Astesia，下面是本次操作的验证码：
+        </div>
+        <div style="margin-top:24px;padding:16px 20px;border-radius:16px;background:#eef2ff;text-align:center;font-size:32px;font-weight:700;letter-spacing:8px;color:#312e81;">
+          ${escapedCode}
+        </div>
+        <div style="margin-top:20px;font-size:14px;line-height:1.8;color:#4b5563;">
+          验证码 10 分钟内有效。若这不是你的操作，请直接忽略此邮件。
+        </div>
+      </div>
+    </div>
+  `.trim();
 }
 
 async function registerAuthUser({
@@ -1767,6 +1958,19 @@ function sanitizeDisplayName(value, fallbackEmail = '') {
 
   const normalizedValue = value.trim().slice(0, 24);
   return normalizedValue || (fallbackEmail.split('@')[0] || 'Astesia 用户');
+}
+
+function escapeHtml(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 async function readConversations(userId) {

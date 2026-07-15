@@ -49,6 +49,7 @@
     "hono": "^4.10.7",
     "mobx": "^6.15.3",
     "mobx-react-lite": "^4.1.1",
+    "nodemailer": "^9.0.3",
     "pg": "^8.22.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
