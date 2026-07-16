@@ -26,6 +26,10 @@ import {
 } from '@/services/auth-session';
 
 type AuthMode = 'login' | 'register';
+type VerificationCooldownState = {
+  email: string;
+  remainingSeconds: number;
+};
 
 const SETTINGS_ICON = require('@/assets/figma-icons/personal-user-panel/settings.png');
 const ARROW_ICON = require('@/assets/figma-icons/personal-user-panel/arrow-rise.png');
@@ -37,11 +41,16 @@ export function PersonalUserPanel() {
   const [isQuotaLoading, setIsQuotaLoading] = useState(false);
   const [isAuthModalVisible, setIsAuthModalVisible] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>('login');
+  const [authDisplayName, setAuthDisplayName] = useState('');
   const [authEmail, setAuthEmail] = useState('');
   const [authVerificationCode, setAuthVerificationCode] = useState('');
   const [authPassword, setAuthPassword] = useState('');
+  const [authConfirmPassword, setAuthConfirmPassword] = useState('');
   const [isSendingCode, setIsSendingCode] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const [isConfirmPasswordVisible, setIsConfirmPasswordVisible] = useState(false);
+  const [verificationCooldown, setVerificationCooldown] = useState<VerificationCooldownState | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -92,6 +101,34 @@ export function PersonalUserPanel() {
     };
   }, []);
 
+  // [变更] 修改前: 获取验证码按钮只在请求进行中短暂禁用，请求结束后会立即恢复可点击
+  // [变更] 修改后: 为当前邮箱维护剩余倒计时，并按秒递减到 0 后自动解除禁用
+  // [原因] 降低重复点击造成的无效发码请求，同时让用户在前端直接看到节流状态
+  useEffect(() => {
+    if (!verificationCooldown || verificationCooldown.remainingSeconds <= 0) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setVerificationCooldown((currentValue) => {
+        if (!currentValue) {
+          return null;
+        }
+
+        if (currentValue.remainingSeconds <= 1) {
+          return null;
+        }
+
+        return {
+          ...currentValue,
+          remainingSeconds: currentValue.remainingSeconds - 1,
+        };
+      });
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [verificationCooldown]);
+
   const sessionUser = session?.user ?? null;
 
   const avatarFallbackText = useMemo(() => {
@@ -116,15 +153,44 @@ export function PersonalUserPanel() {
     return sessionUser.email;
   }, [sessionUser]);
 
+  // [变更] 修改前: 倒计时状态与当前输入邮箱无关，若用户输错邮箱后改正，前端无法细粒度放行
+  // [变更] 修改后: 将按钮禁用态与“当前输入邮箱 + 剩余秒数”绑定，仅命中同一邮箱时才展示节流
+  // [原因] 既拦住同邮箱重复发码，也不影响用户修正邮箱后重新获取验证码
+  const normalizedAuthEmail = authEmail.trim().toLowerCase();
+  const verificationCooldownSeconds = verificationCooldown?.email === normalizedAuthEmail
+    ? verificationCooldown.remainingSeconds
+    : 0;
+  const isVerificationCoolingDown = verificationCooldownSeconds > 0;
+  const isVerificationButtonDisabled = isSendingCode || isVerificationCoolingDown;
+  const verificationButtonText = isSendingCode
+    ? '发送中'
+    : isVerificationCoolingDown
+      ? `${verificationCooldownSeconds}s后重试`
+      : '获取验证码';
+
   // 格式化: quotaSummary/null + loading 状态 → 可直接展示的计划与额度文案 → 用户中心指标区展示文本
   // 说明: 未登录时不展示指标，已登录时透出计划与剩余额度
   const planLabel = `所属计划: ${sessionUser?.planName ?? '--'}`;
   const quotaLabel = `AI 剩余额度: ${getQuotaText(quotaSummary, isQuotaLoading)}`;
 
-  const openAuthModal = (mode: AuthMode) => {
+  // [变更] 修改前: 登录 / 注册切换时仅重置验证码与密码，注册新增字段会残留在弹层里
+  // [变更] 修改后: 统一在模式切换时重置验证码、密码、确认密码和显隐状态，登录态顺手清空注册用户名
+  // [原因] 避免在登录与注册之间来回切换时带出旧表单数据
+  const switchAuthMode = (mode: AuthMode) => {
     setAuthMode(mode);
     setAuthVerificationCode('');
     setAuthPassword('');
+    setAuthConfirmPassword('');
+    setIsPasswordVisible(false);
+    setIsConfirmPasswordVisible(false);
+
+    if (mode === 'login') {
+      setAuthDisplayName('');
+    }
+  };
+
+  const openAuthModal = (mode: AuthMode) => {
+    switchAuthMode(mode);
     setIsAuthModalVisible(true);
   };
 
@@ -157,17 +223,24 @@ export function PersonalUserPanel() {
   };
 
   const handleSendVerificationCode = async () => {
-    const normalizedEmail = authEmail.trim();
-
-    if (!normalizedEmail) {
+    if (!normalizedAuthEmail) {
       Alert.alert('邮箱不能为空', '请先输入邮箱地址。');
+      return;
+    }
+
+    if (isVerificationCoolingDown) {
+      Alert.alert('请稍后再试', `验证码已发送，请在 ${verificationCooldownSeconds} 秒后重试。`);
       return;
     }
 
     setIsSendingCode(true);
 
     try {
-      const result = await requestRegisterCode(normalizedEmail);
+      const result = await requestRegisterCode(normalizedAuthEmail);
+      setVerificationCooldown({
+        email: normalizedAuthEmail,
+        remainingSeconds: result.cooldownSeconds,
+      });
 
       Alert.alert(
         '验证码已发送',
@@ -176,18 +249,34 @@ export function PersonalUserPanel() {
           : result.message
       );
     } catch (error) {
-      Alert.alert('发送失败', getErrorMessage(error));
+      const retryAfterSeconds = getRetryAfterSeconds(error);
+
+      if (retryAfterSeconds > 0) {
+        setVerificationCooldown({
+          email: normalizedAuthEmail,
+          remainingSeconds: retryAfterSeconds,
+        });
+      }
+
+      Alert.alert(retryAfterSeconds > 0 ? '请稍后再试' : '发送失败', getErrorMessage(error));
     } finally {
       setIsSendingCode(false);
     }
   };
 
   const handleSubmitAuth = async () => {
+    const normalizedDisplayName = authDisplayName.trim();
     const normalizedEmail = authEmail.trim();
     const normalizedPassword = authPassword.trim();
+    const normalizedConfirmPassword = authConfirmPassword.trim();
 
     if (!normalizedEmail) {
       Alert.alert('邮箱不能为空', '请输入邮箱地址。');
+      return;
+    }
+
+    if (authMode === 'register' && !normalizedDisplayName) {
+      Alert.alert('用户名不能为空', '请输入注册用户名。');
       return;
     }
 
@@ -201,6 +290,16 @@ export function PersonalUserPanel() {
       return;
     }
 
+    if (authMode === 'register' && !normalizedConfirmPassword) {
+      Alert.alert('确认密码不能为空', '请再次输入登录密码。');
+      return;
+    }
+
+    if (authMode === 'register' && normalizedPassword !== normalizedConfirmPassword) {
+      Alert.alert('两次密码不一致', '请确认两次输入的密码完全一致。');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -208,13 +307,15 @@ export function PersonalUserPanel() {
         await registerWithEmailCode(
           normalizedEmail,
           authVerificationCode.trim(),
-          normalizedPassword
+          normalizedPassword,
+          normalizedDisplayName
         );
       } else {
         await loginWithEmailPassword(normalizedEmail, normalizedPassword);
       }
 
       setIsAuthModalVisible(false);
+      setVerificationCooldown(null);
       await refreshSessionState();
       Alert.alert(authMode === 'register' ? '注册成功' : '登录成功', '用户信息已经同步到当前设备。');
     } catch (error) {
@@ -369,21 +470,32 @@ export function PersonalUserPanel() {
               <AuthModeButton
                 active={authMode === 'login'}
                 label="登录"
-                onPress={() => setAuthMode('login')}
+                onPress={() => switchAuthMode('login')}
               />
               <AuthModeButton
                 active={authMode === 'register'}
                 label="注册"
-                onPress={() => setAuthMode('register')}
+                onPress={() => switchAuthMode('register')}
               />
             </View>
 
             {/*
              * 渲染位置: 用户身份弹层表单区域
-             * 展示内容: 邮箱、验证码、密码输入，以及发送验证码与提交操作
-             * 数据来源: authEmail、authVerificationCode、authPassword 本地表单状态
+             * 展示内容: 用户名、邮箱、验证码、密码、确认密码输入，以及发送验证码与提交操作
+             * 数据来源: authDisplayName、authEmail、authVerificationCode、authPassword、authConfirmPassword 本地表单状态
              */}
             <View style={styles.formGroup}>
+              {authMode === 'register' ? (
+                <TextInput
+                  maxLength={24}
+                  placeholder="请输入用户名"
+                  placeholderTextColor="#94A3B8"
+                  style={styles.input}
+                  value={authDisplayName}
+                  onChangeText={setAuthDisplayName}
+                />
+              ) : null}
+
               <TextInput
                 autoCapitalize="none"
                 keyboardType="email-address"
@@ -396,6 +508,11 @@ export function PersonalUserPanel() {
 
               {authMode === 'register' ? (
                 <View style={styles.verificationRow}>
+                  {/*
+                   * 渲染位置: 注册弹层的验证码输入区域
+                   * 展示内容: 验证码输入框与获取验证码按钮，按钮会展示发送中或剩余倒计时
+                   * 数据来源: authVerificationCode、isSendingCode、verificationCooldown 本地状态
+                   */}
                   <TextInput
                     keyboardType="number-pad"
                     maxLength={6}
@@ -407,29 +524,38 @@ export function PersonalUserPanel() {
                   />
                   <Pressable
                     accessibilityRole="button"
-                    disabled={isSendingCode}
-                    style={[styles.verificationButton, isSendingCode ? styles.buttonDisabled : null]}
+                    disabled={isVerificationButtonDisabled}
+                    style={[styles.verificationButton, isVerificationButtonDisabled ? styles.buttonDisabled : null]}
                     onPress={() => void handleSendVerificationCode()}>
                     <ThemedText style={styles.verificationButtonText}>
-                      {isSendingCode ? '发送中' : '获取验证码'}
+                      {verificationButtonText}
                     </ThemedText>
                   </Pressable>
                 </View>
               ) : null}
 
-              <TextInput
-                secureTextEntry
+              <PasswordInputField
+                isVisible={isPasswordVisible}
                 placeholder={authMode === 'register' ? '请设置登录密码' : '请输入登录密码'}
-                placeholderTextColor="#94A3B8"
-                style={styles.input}
                 value={authPassword}
                 onChangeText={setAuthPassword}
+                onToggleVisibility={() => setIsPasswordVisible((currentValue) => !currentValue)}
               />
+
+              {authMode === 'register' ? (
+                <PasswordInputField
+                  isVisible={isConfirmPasswordVisible}
+                  placeholder="请再次输入登录密码"
+                  value={authConfirmPassword}
+                  onChangeText={setAuthConfirmPassword}
+                  onToggleVisibility={() => setIsConfirmPasswordVisible((currentValue) => !currentValue)}
+                />
+              ) : null}
             </View>
 
             <ThemedText style={styles.formHelpText}>
               {authMode === 'register'
-                ? '注册使用邮箱 + 验证码，完成后后续使用邮箱 + 密码登录。'
+                ? '注册使用用户名 + 邮箱 + 验证码，完成后后续使用邮箱 + 密码登录。'
                 : '登录成功后会展示用户头像、所属计划和当前 AI 剩余额度。'}
             </ThemedText>
 
@@ -470,6 +596,48 @@ function AuthModeButton({
   );
 }
 
+function PasswordInputField({
+  isVisible,
+  placeholder,
+  value,
+  onChangeText,
+  onToggleVisibility,
+}: {
+  isVisible: boolean;
+  placeholder: string;
+  value: string;
+  onChangeText: (value: string) => void;
+  onToggleVisibility: () => void;
+}) {
+  return (
+    <View style={styles.passwordInputRow}>
+      {/*
+       * 渲染位置: 登录 / 注册弹层的密码输入行
+       * 展示内容: 密码输入框与显示 / 隐藏密码按钮
+       * 数据来源: PasswordInputField 组件入参中的 value、placeholder、isVisible
+       */}
+      <TextInput
+        autoCapitalize="none"
+        autoCorrect={false}
+        secureTextEntry={!isVisible}
+        placeholder={placeholder}
+        placeholderTextColor="#94A3B8"
+        style={styles.passwordTextInput}
+        value={value}
+        onChangeText={onChangeText}
+      />
+      <Pressable
+        accessibilityLabel={isVisible ? '隐藏密码' : '显示密码'}
+        accessibilityRole="button"
+        hitSlop={8}
+        style={styles.passwordVisibilityButton}
+        onPress={onToggleVisibility}>
+        <MaterialIcons name={isVisible ? 'visibility-off' : 'visibility'} size={20} color="#64748B" />
+      </Pressable>
+    </View>
+  );
+}
+
 /**
  * 将额度摘要和加载状态整理为卡片可直接展示的额度文案
  *
@@ -492,6 +660,22 @@ function getQuotaText(quotaSummary: AiQuotaSummary | null, isQuotaLoading: boole
 }
 
 /**
+ * 从接口异常中提取验证码节流剩余秒数，供按钮倒计时与错误提示复用
+ *
+ * @param error - requestRegisterCode 抛出的异常对象
+ * @returns 服务端返回的剩余等待秒数；没有则返回 0
+ * @example
+ *   getRetryAfterSeconds(Object.assign(new Error('too many requests'), { retryAfterSeconds: 32 })) // => 32
+ */
+function getRetryAfterSeconds(error: unknown) {
+  const retryAfterSeconds = Number((error as { retryAfterSeconds?: unknown })?.retryAfterSeconds);
+
+  return Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+    ? Math.ceil(retryAfterSeconds)
+    : 0;
+}
+
+/**
  * 统一提取接口或运行时异常的可展示文案
  *
  * @param error - 捕获到的异常对象
@@ -501,10 +685,23 @@ function getQuotaText(quotaSummary: AiQuotaSummary | null, isQuotaLoading: boole
  */
 function getErrorMessage(error: unknown) {
   if (error instanceof Error && error.message) {
+    if (isNetworkRequestMessage(error.message)) {
+      return '当前无法连接认证服务，请确认网络连接或稍后重试。';
+    }
+
     return error.message;
   }
 
   return '服务暂时不可用，请稍后重试。';
+}
+
+function isNetworkRequestMessage(value: string) {
+  const normalizedValue = value.trim().toLowerCase();
+
+  return normalizedValue.includes('network request failed')
+    || normalizedValue.includes('failed to fetch')
+    || normalizedValue.includes('fetch failed')
+    || normalizedValue.includes('load failed');
 }
 
 const styles = StyleSheet.create({
@@ -703,6 +900,28 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     fontSize: 14,
     lineHeight: 20,
+  },
+  passwordInputRow: {
+    minHeight: 50,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 16,
+    paddingLeft: 14,
+    paddingRight: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  passwordTextInput: {
+    flex: 1,
+    paddingVertical: 14,
+    color: '#0F172A',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  passwordVisibilityButton: {
+    marginLeft: 8,
+    padding: 4,
   },
   verificationRow: {
     flexDirection: 'row',

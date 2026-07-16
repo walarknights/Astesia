@@ -17,8 +17,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import TiptapRichTextEditor from '@/components/TiptapRichTextEditor';
+import NoteRichTextEditor from '@/components/NoteRichTextEditor';
 import { ThemedText } from '@/components/themed-text';
+import { clearActiveNoteEditorDraft, setActiveNoteEditorDraft } from '@/services/note-editor-draft';
 import {
   createEmptyNote,
   getNoteImageCount,
@@ -52,6 +53,23 @@ export default function NoteEditorScreen() {
 
   const updatedAtLabel = useMemo(() => formatDateTime(note.updatedAt), [note.updatedAt]);
   const imageCount = useMemo(() => getNoteImageCount(note), [note]);
+
+  useEffect(() => {
+    if (isLoading) {
+      return;
+    }
+
+    // [变更] 修改前: 屏幕知识库只能读取已保存的笔记内容，无法看到编辑器内的未保存草稿
+    // [变更] 修改后: 编辑页每次本地草稿变化时同步到内存缓存，供 AI 抽屉实时读取
+    // [原因] 用户在编写笔记时需要让屏幕知识库理解当前正在输入的标题、正文和图片数量
+    setActiveNoteEditorDraft(editingNoteId, note);
+  }, [editingNoteId, isLoading, note]);
+
+  useEffect(() => {
+    return () => {
+      clearActiveNoteEditorDraft(editingNoteId);
+    };
+  }, [editingNoteId]);
 
   useEffect(() => {
     if (!editingNoteId) {
@@ -242,21 +260,24 @@ export default function NoteEditorScreen() {
 
                 {/*
                  * 渲染位置: 笔记编辑页正文区域
-                 * 展示内容: Expo DOM Components 承载的 Tiptap 富文本编辑器
-                 * 数据来源: note.contentHtml、insertedImageUri 和 Tiptap 内部编辑状态
+                 * 展示内容: 平台分流后的富文本编辑器；原生端使用稳定 WebView，Web 端使用 Tiptap
+                 * 数据来源: note.contentHtml、insertedImageUri 和编辑器内部编辑状态
                  */}
                 <View style={styles.richEditorFrame}>
-                  <TiptapRichTextEditor
-                    initialHtml={note.contentHtml}
-                    insertedImageUri={insertedImageUri}
-                    insertedImageToken={insertedImageToken}
-                    placeholder={EDITOR_PLACEHOLDER}
-                    onChangeHtml={handleChangeHtml}
-                    dom={{
-                      matchContents: true,
-                      scrollEnabled: false,
-                    }}
-                  />
+                  {isLoading ? (
+                    <View style={styles.editorLoadingState}>
+                      <ThemedText style={styles.editorLoadingText}>正在加载编辑器内容...</ThemedText>
+                    </View>
+                  ) : (
+                    <NoteRichTextEditor
+                      key={note.id}
+                      initialHtml={note.contentHtml}
+                      insertedImageUri={insertedImageUri}
+                      insertedImageToken={insertedImageToken}
+                      placeholder={EDITOR_PLACEHOLDER}
+                      onChangeHtml={handleChangeHtml}
+                    />
+                  )}
                 </View>
               </View>
             </ScrollView>
@@ -496,5 +517,17 @@ const styles = StyleSheet.create({
     borderColor: '#E9D5FF',
     borderRadius: 24,
     backgroundColor: '#FFFFFF',
+  },
+  editorLoadingState: {
+    minHeight: 560,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  editorLoadingText: {
+    color: '#7C3AED',
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '700',
   },
 });

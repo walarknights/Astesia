@@ -29,7 +29,10 @@ export type SecurityTrendResult = SecuritySearchResult & {
   candles: Record<AssetRangeLabel, SecurityCandle[]>;
 };
 
-const AKSHARE_API_HOST = (process.env.EXPO_PUBLIC_AKSHARE_API_HOST ?? 'http://127.0.0.1:8765').replace(/\/$/, '');
+// [变更] 修改前: 未配置环境变量时默认请求本机 AkShare 服务
+// [变更] 修改后: 默认请求云服务器统一转发的 AkShare 接口
+// [原因] 行情服务已迁移到云服务器，移动端不应依赖开发电脑常驻服务
+const AKSHARE_API_HOST = (process.env.EXPO_PUBLIC_AKSHARE_API_HOST ?? 'http://astesia.cc').replace(/\/$/, '');
 
 async function requestAkShare<T>(endpoint: string) {
   const response = await fetch(`${AKSHARE_API_HOST}${endpoint}`);

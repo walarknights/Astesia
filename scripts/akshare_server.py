@@ -9,21 +9,28 @@ from __future__ import annotations
 import json
 import math
 import os
+import socket
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.request import Request, urlopen
 
 import akshare as ak
 
 
 HOST = os.environ.get("AKSHARE_HOST", "0.0.0.0")
 PORT = int(os.environ.get("AKSHARE_PORT", "8765"))
+NETWORK_TIMEOUT_SECONDS = float(os.environ.get("AKSHARE_NETWORK_TIMEOUT_SECONDS", "12"))
+EASTMONEY_SUGGEST_URL = "https://searchapi.eastmoney.com/api/suggest/get"
+EASTMONEY_SUGGEST_TOKEN = "D43BF722C8E33BD74A214F34064395D0"
 RANGE_DAYS = {
     "近7日": 7,
     "近一个月": 31,
     "近1年": 366,
 }
+
+socket.setdefaulttimeout(NETWORK_TIMEOUT_SECONDS)
 
 
 def _safe_number(value: Any) -> float | None:
@@ -107,7 +114,95 @@ def _search_funds(keyword: str, limit: int) -> list[dict[str, Any]]:
     return results
 
 
+def _eastmoney_security_type(row: dict[str, Any]) -> str | None:
+    classify = str(row.get("Classify", "")).upper()
+    security_type_name = str(row.get("SecurityTypeName", ""))
+    security_type = str(row.get("SecurityType", ""))
+
+    if classify == "ASTOCK" or security_type_name in {"沪A", "深A", "京A"} or security_type in {"1", "2"}:
+        return "股票"
+
+    if "FUND" in classify or "基金" in security_type_name:
+        return "基金"
+
+    return None
+
+
+def _search_eastmoney_suggest(keyword: str, limit: int) -> list[dict[str, Any]]:
+    query = urlencode(
+        {
+            "input": keyword,
+            "type": "14",
+            "token": EASTMONEY_SUGGEST_TOKEN,
+            "count": str(max(limit * 2, limit)),
+        }
+    )
+    request = Request(
+        f"{EASTMONEY_SUGGEST_URL}?{query}",
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 Astesia AkShare Proxy",
+        },
+    )
+
+    with urlopen(request, timeout=NETWORK_TIMEOUT_SECONDS) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    records = payload.get("QuotationCodeTable", {}).get("Data", [])
+    if not isinstance(records, list):
+        return []
+
+    results: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str, str]] = set()
+
+    for row in records:
+        if not isinstance(row, dict):
+            continue
+
+        security_type = _eastmoney_security_type(row)
+        if security_type is None:
+            continue
+
+        code = str(row.get("UnifiedCode") or row.get("Code") or "").strip()
+        name = str(row.get("Name") or "").strip()
+        if not code or not name:
+            continue
+
+        seen_key = (security_type, code, name)
+        if seen_key in seen_keys:
+            continue
+
+        seen_keys.add(seen_key)
+        results.append(
+            {
+                "code": code,
+                "name": name,
+                "type": security_type,
+                "price": None,
+                "changeRate": None,
+            }
+        )
+
+        if len(results) >= limit:
+            break
+
+    return results
+
+
 def search_securities(keyword: str, limit: int) -> list[dict[str, Any]]:
+    limit = max(1, min(limit, 50))
+
+    # [变更] 修改前: 搜索列表完全依赖 AkShare 的全量股票/基金列表接口
+    # [变更] 修改后: 有关键词时优先使用东方财富轻量搜索，AkShare 全量列表作为兜底
+    # [原因] 云服务器访问全量列表源偶发连接重置，轻量搜索能保证 App 搜索框稳定可用
+    if keyword:
+        try:
+            results = _search_eastmoney_suggest(keyword, limit)
+            if results:
+                return results
+        except Exception as error:  # noqa: BLE001 - fallback to AkShare list source
+            print(f"[akshare] EastMoney suggest failed: {error}")
+
     stock_limit = max(1, limit // 2)
     fund_limit = max(1, limit - stock_limit)
     return (_search_stocks(keyword, stock_limit) + _search_funds(keyword, fund_limit))[:limit]

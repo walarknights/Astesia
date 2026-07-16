@@ -1,16 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
 
 import { storage } from '@/services/storage';
 import { AUTH_USER_PROFILE_STORAGE_KEY } from '@/services/storage-keys';
 import { userStore } from '@/services/store/userStore';
 import type { User } from '@/services/types/user';
 
-const DEFAULT_AUTH_API_HOST = Platform.OS === 'android'
-  ? 'http://10.0.2.2:8787'
-  : 'http://127.0.0.1:8787';
-
-const AUTH_API_HOST = resolveApiHost(process.env.EXPO_PUBLIC_AI_API_HOST);
+const DEFAULT_AUTH_API_HOST = 'http://astesia.cc';
+const AUTH_API_HOSTS = resolveApiHosts(process.env.EXPO_PUBLIC_AI_API_HOST);
 const USER_TOKEN_STORAGE_KEY = 'userToken';
 const USER_ID_STORAGE_KEY = 'userId';
 const AI_USER_ID_HEADER = 'X-AI-User-Id';
@@ -89,7 +85,7 @@ export async function loadAuthSession() {
 }
 
 /**
- * 发送注册验证码。当前为最小可运行闭环，后端返回验证码后由前端提示用户输入。
+ * 发送注册验证码，统一请求真实后端服务。
  *
  * @param email - 用户邮箱
  * @returns 本次验证码发送结果
@@ -97,21 +93,35 @@ export async function loadAuthSession() {
  *   await requestRegisterCode('demo@example.com')
  */
 export async function requestRegisterCode(email: string) {
-  const response = await fetch(`${AUTH_API_HOST}/api/auth/register/code`, {
+  const { response, data } = await requestAuthJson<Record<string, unknown>>('/api/auth/register/code', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: email.trim() }),
-  });
-  const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+  }, '验证码发送失败。');
 
   if (!response.ok) {
-    throw new Error(typeof data.error === 'string' ? data.error : '验证码发送失败。');
+    const requestError = new Error(
+      typeof data.error === 'string' ? data.error : '验证码发送失败。'
+    ) as Error & { status?: number; retryAfterSeconds?: number };
+
+    // [变更] 修改前: 验证码接口失败时只抛出文案，前端拿不到后端返回的剩余节流时间
+    // [变更] 修改后: 额外挂载 HTTP 状态和 retryAfterSeconds，供按钮倒计时与提示文案复用
+    // [原因] 让服务端节流与前端交互状态保持一致
+    requestError.status = response.status;
+    const retryAfterSeconds = normalizeNonNegativeInteger(data.retryAfterSeconds);
+
+    if (retryAfterSeconds > 0) {
+      requestError.retryAfterSeconds = retryAfterSeconds;
+    }
+
+    throw requestError;
   }
 
   const verificationCode = normalizeStoredString(data.verificationCode);
   return {
     message: typeof data.message === 'string' ? data.message : '验证码已生成。',
     verificationCode,
+    cooldownSeconds: normalizeNonNegativeInteger(data.cooldownSeconds) || 60,
   };
 }
 
@@ -121,15 +131,22 @@ export async function requestRegisterCode(email: string) {
  * @param email - 注册邮箱
  * @param verificationCode - 验证码
  * @param password - 登录密码
+ * @param displayName - 注册用户名
  * @returns 已写入本地的登录会话
  * @example
- *   await registerWithEmailCode('demo@example.com', '123456', 'password123')
+ *   await registerWithEmailCode('demo@example.com', '123456', 'password123', 'Astesia 用户')
  */
-export async function registerWithEmailCode(email: string, verificationCode: string, password: string) {
+export async function registerWithEmailCode(
+  email: string,
+  verificationCode: string,
+  password: string,
+  displayName: string
+) {
   return createSessionFromResponse(await requestAuth('/api/auth/register', {
     email,
     verificationCode,
     password,
+    displayName,
   }));
 }
 
@@ -187,10 +204,9 @@ export async function getAiQuotaSummary() {
     [AI_USER_ID_HEADER]: String(session.user.userId),
   });
 
-  const response = await fetch(`${AUTH_API_HOST}/api/ai/billing/summary`, {
+  const { response, data } = await requestAuthJson<BillingSummaryResponse>('/api/ai/billing/summary', {
     headers: requestHeaders,
-  });
-  const data = await response.json().catch(() => ({})) as BillingSummaryResponse;
+  }, 'AI 额度获取失败。');
 
   if (!response.ok) {
     throw new Error(typeof data.error === 'string' ? data.error : 'AI 额度获取失败。');
@@ -204,18 +220,51 @@ export async function getAiQuotaSummary() {
 }
 
 async function requestAuth(pathname: string, payload: Record<string, unknown>) {
-  const response = await fetch(`${AUTH_API_HOST}${pathname}`, {
+  const { response, data } = await requestAuthJson<AuthResponse>(pathname, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  });
-  const data = await response.json().catch(() => ({})) as AuthResponse;
+  }, pathname === '/api/auth/register' ? '注册失败。' : '登录失败。');
 
   if (!response.ok) {
-    throw new Error(typeof data.error === 'string' ? data.error : '登录失败。');
+    throw new Error(typeof data.error === 'string' ? data.error : pathname === '/api/auth/register' ? '注册失败。' : '登录失败。');
   }
 
   return data;
+}
+
+/**
+ * 请求鉴权服务，统一使用真实后端域名。
+ *
+ * @param pathname - 接口路径
+ * @param init - fetch 请求配置
+ * @param defaultErrorMessage - 默认错误提示
+ * @returns 接口响应对象与解析后的 JSON 数据
+ * @example
+ *   await requestAuthJson('/api/auth/login', { method: 'POST' }, '登录失败。')
+ */
+async function requestAuthJson<T extends Record<string, unknown>>(
+  pathname: string,
+  init: RequestInit,
+  defaultErrorMessage: string
+) {
+  let latestError: unknown = null;
+
+  for (const host of AUTH_API_HOSTS) {
+    try {
+      const response = await fetch(`${host}${pathname}`, init);
+      const data = await response.json().catch(() => ({})) as T;
+      return { response, data };
+    } catch (error) {
+      latestError = error;
+
+      if (!isRetryableNetworkError(error)) {
+        throw normalizeAuthRequestError(error, defaultErrorMessage);
+      }
+    }
+  }
+
+  throw normalizeAuthRequestError(latestError, defaultErrorMessage);
 }
 
 async function createSessionFromResponse(data: AuthResponse) {
@@ -354,18 +403,46 @@ function normalizeApiHost(value?: string) {
   return value.trim().replace(/[`'"]/g, '').replace(/\/+$/, '');
 }
 
-function resolveApiHost(value?: string) {
+/**
+ * 归一化鉴权服务 host，并把历史本地调试地址收敛到真实后端。
+ *
+ * @param value - 环境变量中的鉴权服务地址
+ * @returns 按优先级排序后的可用 host 列表
+ * @example
+ *   resolveApiHosts('http://127.0.0.1:8787')
+ */
+function resolveApiHosts(value?: string) {
   const normalizedHost = normalizeApiHost(value);
 
-  if (!normalizedHost) {
-    return DEFAULT_AUTH_API_HOST;
+  // [变更] 修改前: 本地调试地址会先请求 10.0.2.2 / 127.0.0.1，再失败回退线上
+  // [变更] 修改后: 缺省值和历史本地调试地址都直接请求真实后端域名
+  // [原因] 当前认证、额度等后端请求必须稳定命中线上服务，避免本地 8787 不可达造成等待或报错
+  const resolvedHost = !normalizedHost || isLocalDebugApiHost(normalizedHost)
+    ? DEFAULT_AUTH_API_HOST
+    : normalizedHost;
+
+  return [resolvedHost];
+}
+
+function isLocalDebugApiHost(value: string) {
+  return /^https?:\/\/(10\.0\.2\.2|127\.0\.0\.1|localhost)(:\d+)?$/i.test(value);
+}
+
+function isRetryableNetworkError(error: unknown) {
+  const errorMessage = error instanceof Error ? error.message.toLowerCase() : '';
+
+  return errorMessage.includes('network request failed')
+    || errorMessage.includes('failed to fetch')
+    || errorMessage.includes('fetch failed')
+    || errorMessage.includes('load failed');
+}
+
+function normalizeAuthRequestError(error: unknown, defaultErrorMessage: string) {
+  if (isRetryableNetworkError(error)) {
+    return new Error('当前无法连接认证服务，请确认网络连接或稍后重试。');
   }
 
-  if (Platform.OS === 'android') {
-    return normalizedHost
-      .replace('://127.0.0.1', '://10.0.2.2')
-      .replace('://localhost', '://10.0.2.2');
-  }
-
-  return normalizedHost;
+  return error instanceof Error && error.message
+    ? error
+    : new Error(defaultErrorMessage);
 }

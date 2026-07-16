@@ -1,5 +1,4 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
 
 import {
   AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY,
@@ -112,9 +111,7 @@ export const AI_ASSISTANT_WELCOME_MESSAGE: AiAssistantMessage = {
   createdAt: '2026-01-01T00:00:00.000Z',
 };
 
-const DEFAULT_AI_API_HOST = Platform.OS === 'android'
-  ? 'http://10.0.2.2:8787'
-  : 'http://127.0.0.1:8787';
+const DEFAULT_AI_API_HOST = 'http://astesia.cc';
 
 const AI_API_HOST = resolveAiApiHost(process.env.EXPO_PUBLIC_AI_API_HOST);
 const AI_USER_TOKEN_STORAGE_KEY = 'userToken';
@@ -590,20 +587,18 @@ function normalizeApiHost(value?: string) {
 function resolveAiApiHost(value?: string) {
   const normalizedHost = normalizeApiHost(value);
 
-  if (!normalizedHost) {
+  // [变更] 修改前: 缺省或 Android 本地调试地址会请求 10.0.2.2 / 127.0.0.1
+  // [变更] 修改后: 缺省值和本地调试地址统一落到真实后端域名
+  // [原因] 当前所有 AI 后端请求都必须走线上服务，避免本地 8787 未启动导致功能失败
+  if (!normalizedHost || isLocalDebugApiHost(normalizedHost)) {
     return DEFAULT_AI_API_HOST;
   }
 
-  // [变更] 修改前: 直接使用环境变量里的 host
-  // [变更] 修改后: Android 下将误配的 localhost / 127.0.0.1 自动改写为模拟器可访问的 10.0.2.2
-  // [原因] Expo Android 模拟器中 127.0.0.1 指向设备自身，不是开发机上的 Hono 代理服务
-  if (Platform.OS === 'android') {
-    return normalizedHost
-      .replace('://127.0.0.1', '://10.0.2.2')
-      .replace('://localhost', '://10.0.2.2');
-  }
-
   return normalizedHost;
+}
+
+function isLocalDebugApiHost(value: string) {
+  return /^https?:\/\/(10\.0\.2\.2|127\.0\.0\.1|localhost)(:\d+)?$/i.test(value);
 }
 
 function isModelItem(value: unknown): value is { id: string } {

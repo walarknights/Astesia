@@ -1,12 +1,15 @@
-import axios from 'axios';
+import { create } from 'axios';
 import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage'; // 用于本地存储Token
 
+const REAL_BACKEND_API_HOST = 'http://astesia.cc';
+
 // 1. 创建 axios 实例
-const request = axios.create({
-  // 注意：真机调试时不能用 localhost，要用你电脑的局域网 IP
-  // Android 模拟器可以使用 10.0.2.2
-  baseURL: 'http://10.0.2.2:8080/api', 
+const request = create({
+  // [变更] 修改前: 遗留 axios 工具写死本地 10.0.2.2:8080
+  // [变更] 修改后: 统一请求真实后端服务器
+  // [原因] 当前所有后端请求都必须绕开本地调试地址
+  baseURL: `${REAL_BACKEND_API_HOST}/api`,
   timeout: 10000, // 超时时间 10秒
   headers: {
     'Content-Type': 'application/json',

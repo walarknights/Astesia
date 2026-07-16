@@ -68,6 +68,8 @@ const AI_INITIAL_BALANCE_USD = normalizeNonNegativeNumber(
 const AI_USER_ID_HEADER = 'x-ai-user-id';
 const AUTH_REGISTER_CODE_PURPOSE = 'register';
 const AUTH_VERIFICATION_CODE_TTL_MS = 10 * 60 * 1000;
+const AUTH_VERIFICATION_CODE_THROTTLE_SECONDS = 60;
+const AUTH_VERIFICATION_CODE_THROTTLE_MS = AUTH_VERIFICATION_CODE_THROTTLE_SECONDS * 1000;
 const AUTH_DEFAULT_PLAN_NAME = '普通计划';
 const AUTH_DEFAULT_SIGNATURE = '欢迎来到 Astesia';
 const AUTH_TOKEN_ISSUER = 'astesia-auth';
@@ -89,9 +91,13 @@ const AUTH_RETURN_DEBUG_VERIFICATION_CODE = normalizeBooleanEnv(
 class AiAuthenticationError extends Error {}
 
 class RequestValidationError extends Error {
-  constructor(message, status = 400) {
+  constructor(message, status = 400, details = null) {
     super(message);
     this.status = status;
+
+    if (details && typeof details === 'object') {
+      Object.assign(this, details);
+    }
   }
 }
 
@@ -130,9 +136,13 @@ app.post('/api/auth/register/code', async (c) => {
       message: verification.message,
       verificationCode: verification.debugCode || undefined,
       expiresAt: verification.expiresAt,
+      cooldownSeconds: AUTH_VERIFICATION_CODE_THROTTLE_SECONDS,
     });
   } catch (error) {
-    return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
+    return c.json({
+      error: getRuntimeErrorMessage(error),
+      retryAfterSeconds: getRetryAfterSeconds(error),
+    }, getErrorStatus(error));
   }
 });
 
@@ -141,6 +151,7 @@ app.post('/api/auth/register', async (c) => {
   const email = normalizeAuthEmail(body?.email);
   const verificationCode = normalizeVerificationCode(body?.verificationCode);
   const password = normalizeAuthPassword(body?.password);
+  const displayName = body?.displayName;
 
   if (!email) {
     return c.json({ error: '请输入有效的邮箱地址。' }, 400);
@@ -159,6 +170,7 @@ app.post('/api/auth/register', async (c) => {
       email,
       verificationCode,
       password,
+      displayName,
     });
 
     return c.json(buildAuthSuccessResponse(user));
@@ -1528,27 +1540,72 @@ async function issueEmailVerificationCode(email, purpose) {
 
 async function createEmailVerificationCode(email, purpose) {
   const pool = getDatabasePool();
+  const client = await pool.connect();
   const verificationCode = String(normalizeNonNegativeInteger(Math.floor(Math.random() * 1_000_000), 0))
     .padStart(6, '0');
   const codeHash = createPasswordHash(verificationCode);
   const expiresAt = new Date(Date.now() + AUTH_VERIFICATION_CODE_TTL_MS).toISOString();
 
-  const { rows } = await pool.query(`
-    INSERT INTO auth_email_verification_codes (
-      email,
-      purpose,
-      code_hash,
-      expires_at
-    )
-    VALUES ($1, $2, $3, $4::timestamptz)
-    RETURNING id
-  `, [email, purpose, codeHash, expiresAt]);
+  try {
+    await client.query('BEGIN');
+    await client.query(`
+      SELECT pg_advisory_xact_lock(hashtext($1))
+    `, [`auth-verification:${purpose}:${email}`]);
 
-  return {
-    id: normalizeNonNegativeInteger(rows[0]?.id, 0),
-    code: verificationCode,
-    expiresAt,
-  };
+    const latestVerificationResult = await client.query(`
+      SELECT
+        id,
+        email,
+        purpose,
+        code_hash,
+        expires_at,
+        used_at,
+        created_at
+      FROM auth_email_verification_codes
+      WHERE email = $1 AND purpose = $2
+      ORDER BY created_at DESC
+      LIMIT 1
+      FOR UPDATE
+    `, [email, purpose]);
+
+    const latestVerification = normalizeVerificationRow(latestVerificationResult.rows[0]);
+
+    if (latestVerification) {
+      const retryAfterSeconds = getVerificationCodeRetryAfterSeconds(latestVerification.createdAt);
+
+      if (retryAfterSeconds > 0) {
+        throw new RequestValidationError(
+          `验证码发送过于频繁，请在 ${retryAfterSeconds} 秒后重试。`,
+          429,
+          { retryAfterSeconds }
+        );
+      }
+    }
+
+    const { rows } = await client.query(`
+      INSERT INTO auth_email_verification_codes (
+        email,
+        purpose,
+        code_hash,
+        expires_at
+      )
+      VALUES ($1, $2, $3, $4::timestamptz)
+      RETURNING id
+    `, [email, purpose, codeHash, expiresAt]);
+
+    await client.query('COMMIT');
+
+    return {
+      id: normalizeNonNegativeInteger(rows[0]?.id, 0),
+      code: verificationCode,
+      expiresAt,
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => null);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function deleteEmailVerificationCode(id) {
@@ -1676,6 +1733,7 @@ async function registerAuthUser({
   email,
   verificationCode,
   password,
+  displayName,
 }) {
   const pool = getDatabasePool();
   const existingUser = await readAuthUserByEmail(email);
@@ -1703,7 +1761,7 @@ async function registerAuthUser({
   }
 
   const passwordHash = createPasswordHash(password);
-  const displayName = buildDefaultDisplayName(email);
+  const normalizedDisplayName = sanitizeDisplayName(displayName, email);
 
   const { rows } = await pool.query(`
     INSERT INTO auth_users (
@@ -1716,7 +1774,7 @@ async function registerAuthUser({
     )
     VALUES ($1, $2, $3, 'user', $4, $5)
     RETURNING id, email, display_name, role, plan_name, signature, avatar_url, created_at
-  `, [email, passwordHash, displayName, AUTH_DEFAULT_PLAN_NAME, AUTH_DEFAULT_SIGNATURE]);
+  `, [email, passwordHash, normalizedDisplayName, AUTH_DEFAULT_PLAN_NAME, AUTH_DEFAULT_SIGNATURE]);
 
   await pool.query(`
     UPDATE auth_email_verification_codes
@@ -1945,10 +2003,6 @@ function verifyPasswordHash(value, storedHash) {
 
   return expectedHash.length === calculatedHash.length
     && timingSafeEqual(expectedHash, calculatedHash);
-}
-
-function buildDefaultDisplayName(email) {
-  return sanitizeDisplayName(email.split('@')[0], email);
 }
 
 function sanitizeDisplayName(value, fallbackEmail = '') {
@@ -2433,6 +2487,30 @@ function getErrorStatus(error) {
   }
 
   return 500;
+}
+
+function getRetryAfterSeconds(error) {
+  const retryAfterSeconds = Number(error?.retryAfterSeconds);
+
+  if (!Number.isFinite(retryAfterSeconds) || retryAfterSeconds <= 0) {
+    return undefined;
+  }
+
+  return Math.ceil(retryAfterSeconds);
+}
+
+function getVerificationCodeRetryAfterSeconds(createdAt) {
+  const createdAtMs = new Date(createdAt).getTime();
+
+  if (!Number.isFinite(createdAtMs)) {
+    return 0;
+  }
+
+  const retryAfterMs = createdAtMs + AUTH_VERIFICATION_CODE_THROTTLE_MS - Date.now();
+
+  return retryAfterMs > 0
+    ? Math.ceil(retryAfterMs / 1000)
+    : 0;
 }
 
 function getEnvValue(key) {

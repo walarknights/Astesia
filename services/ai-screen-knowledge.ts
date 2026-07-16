@@ -10,6 +10,7 @@ import {
   type AccountingEntryRecord,
 } from '@/services/accounting-entry-storage';
 import type { AssetRangeLabel, SecurityCandle, SecurityTrendResult } from '@/services/akshare';
+import { getActiveNoteEditorDraft, type ActiveNoteEditorDraft } from '@/services/note-editor-draft';
 import { getNoteImageCount, getNotePlainText, loadNoteById, loadNotes, type NoteRecord } from '@/services/notes-storage';
 import { loadTodos, type TodoRecord } from '@/services/todo-storage';
 
@@ -140,6 +141,12 @@ async function buildNotesSummary() {
 }
 
 async function buildNoteEditorSummary(noteId: string) {
+  const activeDraft = getActiveNoteEditorDraft(noteId);
+
+  if (activeDraft) {
+    return buildActiveNoteEditorDraftSummary(activeDraft, noteId);
+  }
+
   if (!noteId) {
     return '当前页面：新建笔记编辑器。可见内容包括标题输入框、富文本编辑器、插图按钮和保存按钮；当前笔记尚未保存。';
   }
@@ -156,6 +163,22 @@ async function buildNoteEditorSummary(noteId: string) {
     `正文：${truncateText(getNotePlainText(note) || '暂无纯文本正文')}`,
     `图片数量：${getNoteImageCount(note)}`,
     `最近编辑：${formatDateTime(note.updatedAt)}`,
+  ]);
+}
+
+function buildActiveNoteEditorDraftSummary(draft: ActiveNoteEditorDraft, noteId: string) {
+  const note = draft.note;
+  const title = note.title.trim() || '未命名笔记';
+  const plainText = getNotePlainText(note);
+  const editorMode = noteId ? '编辑已有笔记' : '新建笔记';
+
+  return limitSummary([
+    `当前页面：${editorMode}编辑器。`,
+    '读取来源：当前屏幕内正在编写的未保存草稿。',
+    `标题：${title}`,
+    `正文：${truncateText(plainText || '暂无纯文本正文')}`,
+    `图片数量：${getNoteImageCount(note)}`,
+    `草稿同步：${formatDateTime(draft.updatedAt)}`,
   ]);
 }
 
