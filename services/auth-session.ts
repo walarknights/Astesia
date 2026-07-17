@@ -1,11 +1,9 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
 import { storage } from '@/services/storage';
 import { AUTH_USER_PROFILE_STORAGE_KEY } from '@/services/storage-keys';
 import { userStore } from '@/services/store/userStore';
 import type { User } from '@/services/types/user';
 
-const DEFAULT_AUTH_API_HOST = 'http://astesia.cc';
+const DEFAULT_AUTH_API_HOST = 'https://astesia.cc';
 const AUTH_API_HOSTS = resolveApiHosts(process.env.EXPO_PUBLIC_AI_API_HOST);
 const USER_TOKEN_STORAGE_KEY = 'userToken';
 const USER_ID_STORAGE_KEY = 'userId';
@@ -24,6 +22,7 @@ type AuthResponse = {
 type BillingSummaryResponse = {
   balanceUsd?: unknown;
   totalChargedUsd?: unknown;
+  totalRequests?: unknown;
   totalTokens?: unknown;
   error?: unknown;
 };
@@ -42,6 +41,7 @@ export type AuthSession = {
 export type AiQuotaSummary = {
   remainingBalanceUsd: string;
   totalChargedUsd: string;
+  totalRequests: number;
   totalTokens: number;
 };
 
@@ -54,9 +54,9 @@ export type AiQuotaSummary = {
  */
 export async function loadAuthSession() {
   const [token, storedProfile, storedUserId] = await Promise.all([
-    readIdentityValue(USER_TOKEN_STORAGE_KEY),
+    storage.getItem(USER_TOKEN_STORAGE_KEY),
     storage.getItem(AUTH_USER_PROFILE_STORAGE_KEY),
-    readIdentityValue(USER_ID_STORAGE_KEY),
+    storage.getItem(USER_ID_STORAGE_KEY),
   ]);
 
   const normalizedToken = normalizeStoredString(token);
@@ -178,8 +178,6 @@ export async function clearAuthSession() {
     storage.removeItem(USER_TOKEN_STORAGE_KEY),
     storage.removeItem(USER_ID_STORAGE_KEY),
     storage.removeItem(AUTH_USER_PROFILE_STORAGE_KEY),
-    AsyncStorage.removeItem(USER_TOKEN_STORAGE_KEY),
-    AsyncStorage.removeItem(USER_ID_STORAGE_KEY),
   ]);
 
   userStore.setUser(null);
@@ -215,6 +213,7 @@ export async function getAiQuotaSummary() {
   return {
     remainingBalanceUsd: normalizeCurrencyText(data.balanceUsd),
     totalChargedUsd: normalizeCurrencyText(data.totalChargedUsd),
+    totalRequests: normalizeNonNegativeInteger(data.totalRequests),
     totalTokens: normalizeNonNegativeInteger(data.totalTokens),
   } satisfies AiQuotaSummary;
 }
@@ -289,24 +288,16 @@ async function createSessionFromResponse(data: AuthResponse) {
 async function persistAuthSession(session: AuthSession) {
   const userIdText = String(session.user.userId);
 
+  // [变更] 修改前: token 同时写入 SecureStore 与 AsyncStorage，攻击者可绕过安全存储读取明文副本
+  // [变更] 修改后: 登录凭证只通过统一安全存储层持久化
+  // [原因] 原生端必须确保 token 仅落入 SecureStore
   await Promise.all([
     storage.setItem(USER_TOKEN_STORAGE_KEY, session.token),
     storage.setItem(USER_ID_STORAGE_KEY, userIdText),
     storage.setItem(AUTH_USER_PROFILE_STORAGE_KEY, JSON.stringify(session.user)),
-    AsyncStorage.setItem(USER_TOKEN_STORAGE_KEY, session.token),
-    AsyncStorage.setItem(USER_ID_STORAGE_KEY, userIdText),
   ]);
 
   userStore.setUser(session.user);
-}
-
-async function readIdentityValue(key: string) {
-  const [secureValue, asyncValue] = await Promise.all([
-    storage.getItem(key),
-    AsyncStorage.getItem(key),
-  ]);
-
-  return secureValue ?? asyncValue;
 }
 
 function normalizeAuthUserProfile(value: unknown, fallbackUserId?: string) {

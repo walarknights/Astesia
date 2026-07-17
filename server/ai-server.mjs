@@ -236,6 +236,18 @@ app.get('/api/ai/billing/summary', async (c) => {
   }
 });
 
+app.get('/api/admin/ai/statistics', async (c) => {
+  try {
+    await resolveRequiredAdminUser(c);
+    const userLimit = normalizeBoundedPositiveInteger(c.req.query('userLimit'), 100, 500);
+    const topLimit = normalizeBoundedPositiveInteger(c.req.query('topLimit'), 10, 50);
+
+    return c.json(await getAiUsageStatistics({ userLimit, topLimit }));
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
+  }
+});
+
 app.get('/api/ai/conversations', async (c) => {
   try {
     const aiUser = resolveRequiredAiUser(c);
@@ -411,23 +423,37 @@ app.post('/api/ai/chat', async (c) => {
     return c.json({ error: getRuntimeErrorMessage(error) }, 500);
   }
 
-  const upstreamResponse = await fetch(chatUpstream.url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${chatUpstream.apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      stream: true,
-      stream_options: {
-        include_usage: true,
+  let upstreamResponse;
+
+  try {
+    upstreamResponse = await fetch(chatUpstream.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${chatUpstream.apiKey}`,
       },
-      max_tokens: CHAT_MAX_OUTPUT_TOKENS,
-      messages: chatMessages,
-    }),
-    signal: c.req.raw.signal,
-  });
+      body: JSON.stringify({
+        model,
+        stream: true,
+        stream_options: {
+          include_usage: true,
+        },
+        max_tokens: CHAT_MAX_OUTPUT_TOKENS,
+        messages: chatMessages,
+      }),
+      signal: c.req.raw.signal,
+    });
+  } catch (error) {
+    // [变更] 修改前: 额度预留后若上游连接直接失败，reservation 会一直占用用户余额
+    // [变更] 修改后: 上游尚未产生有效响应时立即释放预留额度
+    // [原因] 保证请求失败路径与正常结算路径都能闭合钱包事务
+    await releaseAiWalletReservation({
+      userId: aiUser.userId,
+      requestId: usageRequestId,
+    }).catch(() => null);
+
+    return c.json({ error: getRuntimeErrorMessage(error) }, 502);
+  }
 
   if (!upstreamResponse.ok) {
     const upstreamData = await upstreamResponse.json().catch(() => null);
@@ -666,6 +692,21 @@ function resolveRequiredAiUser(c) {
   return { userId: tokenUserId };
 }
 
+async function resolveRequiredAdminUser(c) {
+  const aiUser = resolveRequiredAiUser(c);
+  const user = await readAuthUserById(aiUser.userId);
+
+  if (!user) {
+    throw new AiAuthenticationError('登录用户不存在，请重新登录后再试。');
+  }
+
+  if (user.role !== 'admin') {
+    throw new RequestValidationError('仅管理员可以查看 AI 用量统计。', 403);
+  }
+
+  return user;
+}
+
 function normalizeAiUserId(value) {
   if (typeof value !== 'string') {
     return '';
@@ -747,6 +788,10 @@ function normalizePositiveInteger(value, fallbackValue) {
   return Number.isInteger(numericValue) && numericValue > 0
     ? numericValue
     : fallbackValue;
+}
+
+function normalizeBoundedPositiveInteger(value, fallbackValue, maxValue) {
+  return Math.min(normalizePositiveInteger(value, fallbackValue), maxValue);
 }
 
 function normalizeNonNegativeInteger(value, fallbackValue = 0) {
@@ -893,7 +938,7 @@ function estimateMessageTokenCount(messages) {
 
 function estimateTextTokenCount(value) {
   return typeof value === 'string' && value.trim()
-    ? Math.max(Array.from(value).length, 1)
+    ? Math.max(Buffer.byteLength(value, 'utf8'), 1)
     : 0;
 }
 
@@ -1354,7 +1399,7 @@ async function finalizeAiUsageCharge({
 
     const { rows } = await client.query(`
       UPDATE ai_user_wallets
-      SET balance_usd = balance_usd + $2 - $3,
+      SET balance_usd = GREATEST(balance_usd + $2 - $3, 0),
           total_charged_usd = total_charged_usd + $4,
           updated_at = now()
       WHERE user_id = $1
@@ -1501,6 +1546,207 @@ async function getAiBillingSummary(userId) {
     models: modelSummaries,
     recentUsage,
   };
+}
+
+async function getAiUsageStatistics({ userLimit, topLimit }) {
+  const pool = getDatabasePool();
+  const [
+    totalsResult,
+    userSummaryResult,
+    topUsersByTokensResult,
+    modelSummaryResult,
+    dailyTrendResult,
+    weeklyTrendResult,
+    monthlyTrendResult,
+  ] = await Promise.all([
+    pool.query(`
+      SELECT
+        COUNT(*) AS request_count,
+        COUNT(DISTINCT user_id) AS active_user_count,
+        COALESCE(SUM(total_tokens), 0) AS total_tokens,
+        COALESCE(SUM(total_cost_usd), 0) AS total_cost_usd
+      FROM ai_usage_records
+    `),
+    pool.query(`
+      SELECT
+        u.id::text AS user_id,
+        u.email,
+        u.display_name,
+        COUNT(r.id) AS request_count,
+        COALESCE(SUM(r.total_tokens), 0) AS total_tokens,
+        COALESCE(SUM(r.total_cost_usd), 0) AS total_cost_usd,
+        MAX(r.created_at) AS last_used_at
+      FROM auth_users AS u
+      LEFT JOIN ai_usage_records AS r ON r.user_id = u.id::text
+      GROUP BY u.id, u.email, u.display_name
+      ORDER BY COALESCE(SUM(r.total_cost_usd), 0) DESC,
+               COALESCE(SUM(r.total_tokens), 0) DESC,
+               u.id ASC
+      LIMIT $1
+    `, [userLimit]),
+    pool.query(`
+      SELECT
+        u.id::text AS user_id,
+        u.email,
+        u.display_name,
+        COUNT(r.id) AS request_count,
+        COALESCE(SUM(r.total_tokens), 0) AS total_tokens,
+        COALESCE(SUM(r.total_cost_usd), 0) AS total_cost_usd,
+        MAX(r.created_at) AS last_used_at
+      FROM auth_users AS u
+      INNER JOIN ai_usage_records AS r ON r.user_id = u.id::text
+      GROUP BY u.id, u.email, u.display_name
+      ORDER BY COALESCE(SUM(r.total_tokens), 0) DESC,
+               COALESCE(SUM(r.total_cost_usd), 0) DESC,
+               u.id ASC
+      LIMIT $1
+    `, [topLimit]),
+    pool.query(`
+      SELECT
+        model,
+        COUNT(*) AS request_count,
+        COUNT(DISTINCT user_id) AS active_user_count,
+        COALESCE(SUM(total_tokens), 0) AS total_tokens,
+        COALESCE(SUM(total_cost_usd), 0) AS total_cost_usd,
+        MAX(created_at) AS last_used_at
+      FROM ai_usage_records
+      GROUP BY model
+      ORDER BY total_cost_usd DESC, total_tokens DESC, model ASC
+    `),
+    readAiUsageTrend(pool, 'day', 30),
+    readAiUsageTrend(pool, 'week', 12),
+    readAiUsageTrend(pool, 'month', 12),
+  ]);
+
+  const totalsRow = totalsResult.rows[0] ?? {};
+  const users = userSummaryResult.rows
+    .map(normalizeAiStatisticsUserRow)
+    .filter(Boolean);
+  const models = modelSummaryResult.rows
+    .map(normalizeAiStatisticsModelRow)
+    .filter(Boolean);
+  const modelsByTokens = [...models].sort(compareUsageByTokens);
+  const usersByTokens = topUsersByTokensResult.rows
+    .map(normalizeAiStatisticsUserRow)
+    .filter(Boolean);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    currency: 'USD',
+    totals: {
+      activeUsers: normalizeNonNegativeInteger(totalsRow.active_user_count, 0),
+      requests: normalizeNonNegativeInteger(totalsRow.request_count, 0),
+      tokens: normalizeNonNegativeInteger(totalsRow.total_tokens, 0),
+      costUsd: formatUsdAmount(totalsRow.total_cost_usd),
+    },
+    users,
+    models,
+    modelHighlights: {
+      mostTokens: modelsByTokens[0] ?? null,
+      highestCost: models[0] ?? null,
+    },
+    trends: {
+      daily: dailyTrendResult.rows.map(normalizeAiStatisticsTrendRow).filter(Boolean),
+      weekly: weeklyTrendResult.rows.map(normalizeAiStatisticsTrendRow).filter(Boolean),
+      monthly: monthlyTrendResult.rows.map(normalizeAiStatisticsTrendRow).filter(Boolean),
+    },
+    top: {
+      usersByCost: users.slice(0, topLimit),
+      usersByTokens,
+      modelsByCost: models.slice(0, topLimit),
+      modelsByTokens: modelsByTokens.slice(0, topLimit),
+    },
+  };
+}
+
+function readAiUsageTrend(pool, granularity, periodCount) {
+  const trendConfig = {
+    day: { step: '1 day', lookback: periodCount - 1 },
+    week: { step: '1 week', lookback: periodCount - 1 },
+    month: { step: '1 month', lookback: periodCount - 1 },
+  }[granularity];
+
+  if (!trendConfig) {
+    throw new Error('不支持的 AI 用量趋势粒度。');
+  }
+
+  return pool.query(`
+    WITH periods AS (
+      SELECT generate_series(
+        date_trunc('${granularity}', now()) - interval '${trendConfig.lookback} ${granularity}',
+        date_trunc('${granularity}', now()),
+        interval '${trendConfig.step}'
+      ) AS period_start
+    ),
+    usage_by_period AS (
+      SELECT
+        date_trunc('${granularity}', created_at) AS period_start,
+        COUNT(*) AS request_count,
+        COALESCE(SUM(total_tokens), 0) AS total_tokens,
+        COALESCE(SUM(total_cost_usd), 0) AS total_cost_usd
+      FROM ai_usage_records
+      WHERE created_at >= date_trunc('${granularity}', now())
+        - interval '${trendConfig.lookback} ${granularity}'
+      GROUP BY date_trunc('${granularity}', created_at)
+    )
+    SELECT
+      periods.period_start,
+      COALESCE(usage_by_period.request_count, 0) AS request_count,
+      COALESCE(usage_by_period.total_tokens, 0) AS total_tokens,
+      COALESCE(usage_by_period.total_cost_usd, 0) AS total_cost_usd
+    FROM periods
+    LEFT JOIN usage_by_period USING (period_start)
+    ORDER BY periods.period_start ASC
+  `);
+}
+
+function normalizeAiStatisticsUserRow(row) {
+  if (!row || typeof row !== 'object' || typeof row.user_id !== 'string') {
+    return null;
+  }
+
+  return {
+    userId: row.user_id,
+    email: normalizeAuthEmail(row.email),
+    displayName: typeof row.display_name === 'string' ? row.display_name : '',
+    requestCount: normalizeNonNegativeInteger(row.request_count, 0),
+    totalTokens: normalizeNonNegativeInteger(row.total_tokens, 0),
+    totalCostUsd: formatUsdAmount(row.total_cost_usd),
+    lastUsedAt: row.last_used_at
+      ? normalizeIsoString(row.last_used_at, new Date().toISOString())
+      : null,
+  };
+}
+
+function normalizeAiStatisticsModelRow(row) {
+  const modelSummary = normalizeAiBillingModelRow(row);
+
+  if (!modelSummary) {
+    return null;
+  }
+
+  return {
+    ...modelSummary,
+    activeUsers: normalizeNonNegativeInteger(row.active_user_count, 0),
+  };
+}
+
+function normalizeAiStatisticsTrendRow(row) {
+  if (!row || typeof row !== 'object' || !row.period_start) {
+    return null;
+  }
+
+  return {
+    periodStart: normalizeIsoString(row.period_start, new Date().toISOString()),
+    requestCount: normalizeNonNegativeInteger(row.request_count, 0),
+    totalTokens: normalizeNonNegativeInteger(row.total_tokens, 0),
+    totalCostUsd: formatUsdAmount(row.total_cost_usd),
+  };
+}
+
+function compareUsageByTokens(left, right) {
+  return right.totalTokens - left.totalTokens
+    || Number(right.totalCostUsd) - Number(left.totalCostUsd);
 }
 
 async function issueEmailVerificationCode(email, purpose) {
@@ -1812,6 +2058,27 @@ async function readAuthUserByEmail(email) {
     WHERE email = $1
     LIMIT 1
   `, [email]);
+
+  return normalizeAuthUserRow(rows[0]);
+}
+
+async function readAuthUserById(userId) {
+  const pool = getDatabasePool();
+  const { rows } = await pool.query(`
+    SELECT
+      id,
+      email,
+      password_hash,
+      display_name,
+      role,
+      plan_name,
+      signature,
+      avatar_url,
+      created_at
+    FROM auth_users
+    WHERE id::text = $1
+    LIMIT 1
+  `, [userId]);
 
   return normalizeAuthUserRow(rows[0]);
 }

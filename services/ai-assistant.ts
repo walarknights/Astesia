@@ -1,5 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
 import {
   AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY,
   AI_ASSISTANT_MESSAGES_STORAGE_KEY,
@@ -111,7 +109,7 @@ export const AI_ASSISTANT_WELCOME_MESSAGE: AiAssistantMessage = {
   createdAt: '2026-01-01T00:00:00.000Z',
 };
 
-const DEFAULT_AI_API_HOST = 'http://astesia.cc';
+const DEFAULT_AI_API_HOST = 'https://astesia.cc';
 
 const AI_API_HOST = resolveAiApiHost(process.env.EXPO_PUBLIC_AI_API_HOST);
 const AI_USER_TOKEN_STORAGE_KEY = 'userToken';
@@ -480,11 +478,11 @@ function getErrorMessage(error: unknown) {
 
 async function resolveAiUserContext() {
   // [变更] 修改前: AI 服务请求不感知当前用户，本地缓存和远端读写都按全局单桶处理
-  // [变更] 修改后: 优先使用 userStore 中的用户信息，其次回退到本地 userId/userToken
-  // [原因] AI 对话已经接入按用户计费，前后端都必须以同一用户维度隔离数据和结算
+  // [变更] 修改后: 用户信息优先取自 userStore，身份凭证仅从统一安全存储层读取
+  // [原因] AI 对话需按用户隔离结算，且不能从 AsyncStorage 回退读取明文 token
   const [storedUserId, storedUserToken] = await Promise.all([
-    readAiUserIdentityValue(AI_USER_ID_STORAGE_KEY),
-    readAiUserIdentityValue(AI_USER_TOKEN_STORAGE_KEY),
+    storage.getItem(AI_USER_ID_STORAGE_KEY),
+    storage.getItem(AI_USER_TOKEN_STORAGE_KEY),
   ]);
   const storeUser = userStore.getUser();
   const normalizedUserId = normalizeAiUserIdCandidate(
@@ -533,15 +531,6 @@ async function getAiAssistantMessagesStorageKey() {
   return aiUserContext.userId
     ? `${AI_ASSISTANT_MESSAGES_STORAGE_KEY}:${aiUserContext.userId}`
     : AI_ASSISTANT_MESSAGES_STORAGE_KEY;
-}
-
-async function readAiUserIdentityValue(key: string) {
-  const [secureValue, asyncValue] = await Promise.all([
-    storage.getItem(key),
-    AsyncStorage.getItem(key),
-  ]);
-
-  return secureValue ?? asyncValue;
 }
 
 async function readAiStorageValueWithLegacyFallback(primaryKey: string, legacyKey: string) {

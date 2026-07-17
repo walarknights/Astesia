@@ -1,8 +1,9 @@
 import { create } from 'axios';
 import { Alert } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // 用于本地存储Token
 
-const REAL_BACKEND_API_HOST = 'http://astesia.cc';
+import { storage } from '@/services/storage';
+
+const REAL_BACKEND_API_HOST = 'https://astesia.cc';
 
 // 1. 创建 axios 实例
 const request = create({
@@ -19,8 +20,10 @@ const request = create({
 // 2. 请求拦截器 (Request Interceptor)
 request.interceptors.request.use(
   async (config) => {
-    // 每次发送请求前，从本地获取 Token 并携带上
-    const token = await AsyncStorage.getItem('userToken');
+    // [变更] 修改前: axios 直接从 AsyncStorage 读取明文 token
+    // [变更] 修改后: 统一从安全存储层读取登录凭证
+    // [原因] 原生端禁止绕过 SecureStore 获取 token
+    const token = await storage.getItem('userToken');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }

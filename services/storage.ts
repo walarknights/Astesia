@@ -6,6 +6,8 @@ import { KNOWN_STORAGE_KEYS } from '@/services/storage-keys';
 
 const STORAGE_INDEX_KEY = 'astesia-secure-storage-index';
 const STORAGE_MIGRATION_KEY = 'astesia-secure-storage-migrated';
+const AUTH_STORAGE_MIGRATION_KEY = 'astesia-auth-secure-storage-migrated';
+const AUTH_IDENTITY_STORAGE_KEYS = ['userToken', 'userId'] as const;
 
 const secureStore = Platform.OS === 'web'
   ? null
@@ -33,33 +35,68 @@ async function migrateLegacyAsyncStorage() {
   try {
     const hasMigrated = await secureStore.getItemAsync(STORAGE_MIGRATION_KEY);
 
-    if (hasMigrated === '1') {
-      return;
+    if (hasMigrated !== '1') {
+      await migrateStorageKeys(KNOWN_STORAGE_KEYS);
+      await secureStore.setItemAsync(STORAGE_MIGRATION_KEY, '1');
     }
 
-    const legacyPairs = await AsyncStorage.multiGet(KNOWN_STORAGE_KEYS);
-    const pairsToMigrate = legacyPairs.filter(
-      (entry): entry is [string, string] => typeof entry[1] === 'string'
-    );
+    const hasMigratedAuthIdentity = await secureStore.getItemAsync(AUTH_STORAGE_MIGRATION_KEY);
 
-    if (pairsToMigrate.length > 0) {
-      await Promise.all(
-        pairsToMigrate.map(([key, value]) => secureStore.setItemAsync(key, value))
-      );
-
-      const indexedKeys = await getIndexedKeys();
-      const mergedKeys = Array.from(
-        new Set([...indexedKeys, ...pairsToMigrate.map(([key]) => key)])
-      );
-
-      await setIndexedKeys(mergedKeys);
-      await AsyncStorage.multiRemove(pairsToMigrate.map(([key]) => key));
+    if (hasMigratedAuthIdentity !== '1') {
+      // [变更] 修改前: token 由业务代码持续从 AsyncStorage 回退读取，迁移完成后仍可能保留明文副本
+      // [变更] 修改后: 原生端一次性迁移登录凭证到 SecureStore，并删除 AsyncStorage 中的遗留值
+      // [原因] 防止绕过系统安全存储直接读取登录 token
+      await migrateStorageKeys([...AUTH_IDENTITY_STORAGE_KEYS], { preserveSecureValue: true });
+      await secureStore.setItemAsync(AUTH_STORAGE_MIGRATION_KEY, '1');
     }
-
-    await secureStore.setItemAsync(STORAGE_MIGRATION_KEY, '1');
   } catch {
     // Keep reads/writes available even if migration fails on a specific device.
   }
+}
+
+/**
+ * 将指定 AsyncStorage 数据迁移到原生 SecureStore，并移除原明文副本。
+ *
+ * @param keys - 需要迁移的存储键
+ * @param options - 是否保留 SecureStore 中已经存在的值
+ * @returns Promise<void>
+ * @example
+ *   await migrateStorageKeys(['userToken'], { preserveSecureValue: true })
+ */
+async function migrateStorageKeys(
+  keys: readonly string[],
+  options: { preserveSecureValue?: boolean } = {}
+) {
+  if (!secureStore) {
+    return;
+  }
+
+  const legacyPairs = await AsyncStorage.multiGet([...keys]);
+  const pairsToMigrate = legacyPairs.filter(
+    (entry): entry is [string, string] => typeof entry[1] === 'string'
+  );
+
+  if (pairsToMigrate.length === 0) {
+    return;
+  }
+
+  await Promise.all(
+    pairsToMigrate.map(async ([key, value]) => {
+      const secureValue = options.preserveSecureValue
+        ? await secureStore.getItemAsync(key)
+        : null;
+
+      if (!secureValue) {
+        await secureStore.setItemAsync(key, value);
+      }
+    })
+  );
+
+  const indexedKeys = await getIndexedKeys();
+  await setIndexedKeys(Array.from(
+    new Set([...indexedKeys, ...pairsToMigrate.map(([key]) => key)])
+  ));
+  await AsyncStorage.multiRemove(pairsToMigrate.map(([key]) => key));
 }
 
 async function getIndexedKeys() {
