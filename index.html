@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Astesia — 你的全能生活助手</title>
+  <meta name="description" content="Astesia 是一款集天气、笔记、待办、记账、AI 助手、邮件、股票基金于一体的跨平台个人生活助手应用。">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0" />
+  <style>
+    :root {
+      --brand: #6366f1;
+      --brand-dark: #4f46e5;
+      --brand-light: #818cf8;
+      --accent: #ec4899;
+      --bg: #0f0f1a;
+    }
+    * { font-family: 'Noto Sans SC', sans-serif; }
+    .material-symbols-rounded { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+    .icon-fill { font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+    html { scroll-behavior: smooth; }
+    body { background: var(--bg); color: #e2e8f0; overflow-x: hidden; }
+
+    /* 渐变动画背景 */
+    .hero-bg {
+      background: radial-gradient(ellipse 80% 60% at 50% -10%, rgba(99,102,241,0.35), transparent),
+                  radial-gradient(ellipse 60% 50% at 80% 20%, rgba(236,72,153,0.18), transparent),
+                  radial-gradient(ellipse 50% 40% at 20% 30%, rgba(56,189,248,0.15), transparent);
+    }
+    .grid-bg {
+      background-image: linear-gradient(rgba(99,102,241,0.07) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(99,102,241,0.07) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black, transparent);
+      -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black, transparent);
+    }
+
+    /* 玻璃卡片 */
+    .glass {
+      background: rgba(255,255,255,0.04);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .glass-hover { transition: all .35s cubic-bezier(.4,0,.2,1); }
+    .glass-hover:hover {
+      background: rgba(255,255,255,0.07);
+      border-color: rgba(129,140,248,0.4);
+      transform: translateY(-6px);
+      box-shadow: 0 20px 50px -12px rgba(99,102,241,0.3);
+    }
+
+    /* 渐变文字 */
+    .gradient-text {
+      background: linear-gradient(135deg, #818cf8 0%, #c084fc 50%, #f472b6 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    /* 浮动动画 */
+    @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-14px)} }
+    .float { animation: float 6s ease-in-out infinite; }
+    .float-delay { animation: float 6s ease-in-out infinite; animation-delay: -3s; }
+
+    /* 淡入 */
+    @keyframes fadeUp { from{opacity:0;transform:translateY(30px)} to{opacity:1;transform:translateY(0)} }
+    .reveal { opacity: 0; }
+    .reveal.in { animation: fadeUp .8s cubic-bezier(.16,1,.3,1) forwards; }
+
+    /* 光晕脉冲 */
+    @keyframes pulse-glow { 0%,100%{opacity:.4} 50%{opacity:.8} }
+    .pulse-glow { animation: pulse-glow 4s ease-in-out infinite; }
+
+    /* 手机框架 */
+    .phone-frame {
+      border-radius: 2.5rem;
+      background: linear-gradient(145deg, #1e1e2e, #0f0f1a);
+      padding: 8px;
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 40px 80px -20px rgba(99,102,241,0.4);
+    }
+    .phone-screen {
+      border-radius: 2rem;
+      overflow: hidden;
+      background: #0f0f1a;
+    }
+
+    /* 滚动条 */
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: #0f0f1a; }
+    ::-webkit-scrollbar-thumb { background: #4f46e5; border-radius: 4px; }
+
+    /* AI 聊天气泡 */
+    .chat-bubble-ai {
+      background: linear-gradient(135deg, rgba(99,102,241,0.2), rgba(168,85,247,0.15));
+      border: 1px solid rgba(129,140,248,0.3);
+    }
+    .chat-bubble-user {
+      background: rgba(99,102,241,0.15);
+      border: 1px solid rgba(99,102,241,0.2);
+    }
+
+    /* 标签 */
+    .tag {
+      background: rgba(99,102,241,0.12);
+      border: 1px solid rgba(99,102,241,0.25);
+      color: #a5b4fc;
+    }
+
+    /* 按钮 */
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      box-shadow: 0 10px 30px -8px rgba(99,102,241,0.6);
+      transition: all .3s;
+    }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 16px 40px -8px rgba(99,102,241,0.8);
+    }
+    .btn-ghost {
+      border: 1px solid rgba(255,255,255,0.15);
+      transition: all .3s;
+    }
+    .btn-ghost:hover {
+      border-color: rgba(129,140,248,0.5);
+      background: rgba(99,102,241,0.1);
+    }
+
+    /* 走势图迷你 */
+    .spark-up { stroke: #34d399; }
+    .spark-down { stroke: #f87171; }
+  </style>
+</head>
+<body class="antialiased">
+
+  <!-- ============ 导航栏 ============ -->
+  <nav class="fixed top-0 left-0 right-0 z-50 glass">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <a href="#top" class="flex items-center gap-2.5">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+          <span class="material-symbols-rounded text-white text-xl icon-fill">auto_awesome</span>
+        </div>
+        <span class="text-xl font-bold tracking-tight">Astesia</span>
+      </a>
+      <div class="hidden md:flex items-center gap-8 text-sm text-slate-300">
+        <a href="#features" class="hover:text-white transition">功能</a>
+        <a href="#ai" class="hover:text-white transition">AI 助手</a>
+        <a href="#screens" class="hover:text-white transition">界面预览</a>
+        <a href="#tech" class="hover:text-white transition">技术栈</a>
+      </div>
+      <a href="https://github.com/walarknights/Astesia" target="_blank" rel="noopener" class="btn-ghost px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.3-1.7-1.3-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.79 1.2 1.79 1.2 1.04 1.79 2.73 1.27 3.4.97.11-.75.41-1.27.74-1.56-2.55-.29-5.23-1.28-5.23-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.69 5.41-5.25 5.69.42.36.79 1.08.79 2.18v3.23c0 .31.21.68.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </nav>
+
+  <!-- ============ Hero ============ -->
+  <section id="top" class="relative min-h-screen flex items-center hero-bg overflow-hidden pt-20">
+    <div class="absolute inset-0 grid-bg"></div>
+    <!-- 光斑 -->
+    <div class="absolute top-1/4 left-1/4 w-96 h-96 bg-indigo-600/20 rounded-full blur-[120px] pulse-glow"></div>
+    <div class="absolute bottom-1/4 right-1/4 w-80 h-80 bg-pink-600/15 rounded-full blur-[100px] pulse-glow" style="animation-delay:-2s"></div>
+
+    <div class="relative max-w-7xl mx-auto px-6 py-20 grid lg:grid-cols-2 gap-12 items-center w-full">
+      <!-- 左侧文案 -->
+      <div class="reveal in">
+        <div class="inline-flex items-center gap-2 tag px-4 py-1.5 rounded-full text-sm mb-6">
+          <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
+          全平台 · iOS / Android / Web / PWA
+        </div>
+        <h1 class="text-5xl md:text-6xl lg:text-7xl font-black leading-[1.05] tracking-tight mb-6">
+          一个 App，<br>
+          <span class="gradient-text">掌控你的</span><br>
+          <span class="gradient-text">全部生活</span>
+        </h1>
+        <p class="text-lg text-slate-400 mb-8 max-w-lg leading-relaxed">
+          Astesia 将天气、笔记、待办、记账、AI 助手、邮件与股票基金整合在同一个优雅的应用中。
+          AI 能读懂你屏幕上的内容，随时为你解答、总结、提供建议。
+        </p>
+        <div class="flex flex-wrap items-center gap-4">
+          <a href="https://github.com/walarknights/Astesia" target="_blank" rel="noopener" class="btn-primary px-7 py-3.5 rounded-xl font-semibold text-white flex items-center gap-2">
+            <span class="material-symbols-rounded text-xl">rocket_launch</span>
+            立即体验
+          </a>
+          <a href="#features" class="btn-ghost px-7 py-3.5 rounded-xl font-medium flex items-center gap-2 text-slate-200">
+            <span class="material-symbols-rounded text-xl">explore</span>
+            了解功能
+          </a>
+        </div>
+        <!-- 数据条 -->
+        <div class="flex items-center gap-8 mt-12 pt-8 border-t border-white/5">
+          <div>
+            <div class="text-3xl font-bold gradient-text">7+</div>
+            <div class="text-sm text-slate-500 mt-1">核心功能</div>
+          </div>
+          <div class="w-px h-10 bg-white/10"></div>
+          <div>
+            <div class="text-3xl font-bold gradient-text">4</div>
+            <div class="text-sm text-slate-500 mt-1">运行平台</div>
+          </div>
+          <div class="w-px h-10 bg-white/10"></div>
+          <div>
+            <div class="text-3xl font-bold gradient-text">AI</div>
+            <div class="text-sm text-slate-500 mt-1">屏幕感知</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右侧手机预览 -->
+      <div class="relative flex justify-center reveal in" style="animation-delay:.2s">
+        <!-- 后景手机 -->
+        <div class="absolute -left-8 top-12 phone-frame w-44 float-delay opacity-60 hidden md:block scale-90">
+          <div class="phone-screen aspect-[9/19] p-3 flex flex-col gap-2">
+            <div class="text-center text-xs text-slate-500">天气</div>
+            <div class="text-3xl font-bold text-white">26°</div>
+            <div class="text-xs text-indigo-300">晴 · 北京</div>
+            <div class="flex justify-between text-[10px] text-slate-500 mt-2">
+              <span>周一</span><span>周二</span><span>周三</span>
+            </div>
+            <div class="flex justify-between text-[10px] text-slate-400">
+              <span>28°</span><span>30°</span><span>27°</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 主手机 -->
+        <div class="phone-frame w-64 float relative z-10">
+          <div class="phone-screen aspect-[9/19]">
+            <!-- 状态栏 -->
+            <div class="flex justify-between items-center px-5 pt-3 text-[10px] text-slate-400">
+              <span>9:41</span>
+              <span class="flex gap-1 items-center">
+                <span class="material-symbols-rounded text-[10px]">wifi</span>
+                <span class="material-symbols-rounded text-[10px]">battery_full</span>
+              </span>
+            </div>
+            <!-- 内容 -->
+            <div class="px-4 pt-2 pb-4 flex flex-col gap-3">
+              <!-- 天气卡 -->
+              <div class="rounded-2xl bg-gradient-to-br from-indigo-500/30 to-purple-600/20 p-3 border border-indigo-400/20">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <div class="text-[10px] text-indigo-300">北京 · 晴</div>
+                    <div class="text-2xl font-bold text-white">26°</div>
+                  </div>
+                  <span class="material-symbols-rounded text-yellow-300 text-2xl icon-fill">wb_sunny</span>
+                </div>
+                <div class="text-[9px] text-slate-400 mt-1">湿度 45% · 东南风 3级</div>
+              </div>
+              <!-- 快捷入口 -->
+              <div class="grid grid-cols-3 gap-2">
+                <div class="glass rounded-xl p-2 text-center">
+                  <span class="material-symbols-rounded text-indigo-400 text-lg icon-fill">edit_note</span>
+                  <div class="text-[8px] text-slate-400 mt-0.5">笔记</div>
+                </div>
+                <div class="glass rounded-xl p-2 text-center">
+                  <span class="material-symbols-rounded text-pink-400 text-lg icon-fill">checklist</span>
+                  <div class="text-[8px] text-slate-400 mt-0.5">待办</div>
+                </div>
+                <div class="glass rounded-xl p-2 text-center">
+                  <span class="material-symbols-rounded text-green-400 text-lg icon-fill">account_balance_wallet</span>
+                  <div class="text-[8px] text-slate-400 mt-0.5">记账</div>
+                </div>
+              </div>
+              <!-- AI 对话 -->
+              <div class="glass rounded-2xl p-2.5">
+                <div class="flex items-center gap-1.5 mb-1.5">
+                  <span class="material-symbols-rounded text-purple-400 text-sm icon-fill">auto_awesome</span>
+                  <span class="text-[9px] font-medium text-purple-300">Astesia AI</span>
+                </div>
+                <div class="chat-bubble-ai rounded-lg rounded-tl-sm px-2 py-1.5 text-[9px] text-slate-200 leading-relaxed">
+                  你好！我能读懂你当前屏幕的内容，随时为你解答。
+                </div>
+              </div>
+              <!-- 走势 -->
+              <div class="glass rounded-xl p-2.5">
+                <div class="flex justify-between items-center mb-1">
+                  <span class="text-[9px] text-slate-400">沪深300</span>
+                  <span class="text-[9px] text-green-400">+1.23%</span>
+                </div>
+                <svg viewBox="0 0 100 24" class="w-full h-6">
+                  <polyline points="0,18 15,14 30,16 45,10 60,12 75,6 100,4" fill="none" class="spark-up" stroke-width="1.5"/>
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 前景浮动卡片 -->
+        <div class="absolute -right-4 top-1/3 glass rounded-2xl p-3 float-delay hidden md:block z-20" style="animation-delay:-1.5s">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center">
+              <span class="material-symbols-rounded text-green-400 text-base icon-fill">savings</span>
+            </div>
+            <div>
+              <div class="text-[10px] text-slate-400">本月结余</div>
+              <div class="text-sm font-bold text-white">¥ 8,420</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 向下滚动提示 -->
+    <div class="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-slate-500">
+      <span class="text-xs">向下探索</span>
+      <span class="material-symbols-rounded animate-bounce text-sm">keyboard_arrow_down</span>
+    </div>
+  </section>
+
+  <!-- ============ 功能总览 ============ -->
+  <section id="features" class="relative py-24 px-6">
+    <div class="max-w-7xl mx-auto">
+      <div class="text-center mb-16 reveal">
+        <div class="tag inline-block px-4 py-1.5 rounded-full text-sm mb-4">功能矩阵</div>
+        <h2 class="text-4xl md:text-5xl font-bold mb-4">一切你需要的，<span class="gradient-text">都在这里</span></h2>
+        <p class="text-slate-400 max-w-2xl mx-auto">从清晨看天气，到深夜记账复盘，Astesia 覆盖你日常生活的每一个场景。</p>
+      </div>
+
+      <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- 天气 -->
+        <div class="glass glass-hover rounded-2xl p-7 reveal">
+          <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-400/20 to-orange-500/20 flex items-center justify-center mb-5 border border-amber-400/20">
+            <span class="material-symbols-rounded text-amber-400 text-2xl icon-fill">partly_cloudy_day</span>
+          </div>
+          <h3 class="text-xl font-bold mb-2">实时天气</h3>
+          <p class="text-slate-400 text-sm leading-relaxed mb-4">自动定位当前城市，展示实时天气、7 日预报、空气质量、生活指数与分钟级降水预警。</p>
+          <div class="flex flex-wrap gap-2">
+            <span class="text-xs tag px-2.5 py-1 rounded-md">7日预报</span>
+            <span class="text-xs tag px-2.5 py-1 rounded-md">空气质量</span>
+            <span class="text-xs tag px-2.5 py-1 rounded-md">天气预警</span>
+          </div>
+        </div>
+
+        <!-- 笔记 -->
+        <div class="glass glass-hover rounded-2xl p-7 reveal" style="animation-delay:.1s">
+          <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-400/20 to-blue-500/20 flex items-center justify-center mb-5 border border-indigo-400/20">
+            <span class="material-symbols-rounded text-indigo-400 text-2xl icon-fill">edit_note</span>
+          </div>
+          <h3 class="text-xl font-bold mb-2">富文本笔记</h3>
+          <p class="text-slate-400 text-sm leading-relaxed mb-4">基于 TipTap 的富文本编辑器，支持图文混排、实时草稿保存，灵感来了随时记录。</p>
+          <div class="flex flex-wrap gap-2">
+            <span class="text-xs tag px-2.5 py-1 rounded-md">富文本</span>
+            <span class="text-xs tag px-2.5 py-1 rounded-md">图片笔记</span>
+            <span class="text-xs tag px-2.5 py-1 rounded-md">草稿同步</span>
+          </div>
+        </div>
+
+        <!-- 待办 -->
+        <div class="glass glass-hover rounded-2xl p-7 reveal" style="animation-delay:.2s">
+          <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-pink-400/20 to-rose-500/20 flex items-center justify-center mb-5 border border-pink-400/20">
+            <span class="material-symbols-rounded text-pink-400 text-2xl icon-fill">checklist</span>
+          </div>
+          <h3 class="text-xl font-bold mb-2">智能待办</h3>
+          <p class="text-slate-400 text-sm leading-relaxed mb-4">创建待办事项，设置提醒时间与重复规则，本地推送通知让你不再遗漏任何重要事项。</p>
+          <div class="flex flex-wrap gap-2">
+            <span class="text-xs tag px-2.5 py-1 rounded-md">定时提醒</span>
+            <span class="text-xs tag px-2.5 py-1 rounded-md">重复规则</span>
+            <span class="text-xs tag px-2.5 py-1 rounded-md">本地推送</span>
+          </div>
+        </div>
+
+        <!-- 记账 -->
+        <div class="glass glass-hover rounded-2xl p-7 reveal" style="animation-delay:.3s">
+          <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-green-400/20 to-emerald-500/20 flex items-center justify-center mb-5 border border-green-400/20">
+            <span class="material-symbols-rounded text-green-400 text-2xl icon-fill">account_balance_wallet</span>
+          </div>
+          <h3 class="text-xl font-bold mb-2">记账与资产</h3>
+          <p class="text-slate-400 text-sm leading-relaxed mb-4">记录每笔收支，设置月度预算，追踪总资产变化。支持自定义记账封面图，让记账也有仪式感。</p>
+          <div class="flex flex-wrap gap-2">
+            <span class="text-xs tag px-2.5 py-1 rounded-md">收支记录</span>
+            <span class="text-xs tag px-2.5 py-1 rounded-md">月度预算</span>
+            <span class="text-xs tag px-2.5 py-1 rounded-md">资产管理</span>
+          </div>
+        </div>
+
+        <!-- 股票基金 -->
+        <div class="glass glass-hover rounded-2xl p-7 reveal" style="animation-delay:.4s">
+          <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-red-400/20 to-orange-500/20 flex items-center justify-center mb-5 border border-red-400/20">
+            <span class="material-symbols-rounded text-red-400 text-2xl icon-fill">trending_up</span>
+          </div>
+          <h3 class="text-xl font-bold mb-2">股票基金行情</h3>
+          <p class="text-slate-400 text-sm leading-relaxed mb-4">接入 AkShare 数据源，查看股票基金实时行情与 K 线走势，支持多区间切换，掌握资产动态。</p>
+          <div class="flex flex-wrap gap-2">
+            <span class="text-xs tag px-2.5 py-1 rounded-md">实时行情</span>
+            <span class="text-xs tag px-2.5 py-1 rounded-md">K线走势</span>
+            <span class="text-xs tag px-2.5 py-1 rounded-md">多区间</span>
+          </div>
+        </div>
+
+        <!-- 邮件 -->
+        <div class="glass glass-hover rounded-2xl p-7 reveal" style="animation-delay:.5s">
+          <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-cyan-400/20 to-sky-500/20 flex items-center justify-center mb-5 border border-cyan-400/20">
+            <span class="material-symbols-rounded text-cyan-400 text-2xl icon-fill">mail</span>
+          </div>
+          <h3 class="text-xl font-bold mb-2">邮件发送</h3>
+          <p class="text-slate-400 text-sm leading-relaxed mb-4">内置邮件服务，支持在应用内直接发送邮件，无论是分享笔记还是发送报表，一步到位。</p>
+          <div class="flex flex-wrap gap-2">
+            <span class="text-xs tag px-2.5 py-1 rounded-md">SMTP</span>
+            <span class="text-xs tag px-2.5 py-1 rounded-md">应用内发送</span>
+            <span class="text-xs tag px-2.5 py-1 rounded-md">Nodemailer</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ AI 助手 ============ -->
+  <section id="ai" class="relative py-24 px-6 overflow-hidden">
+    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-purple-600/10 rounded-full blur-[150px]"></div>
+    <div class="relative max-w-7xl mx-auto">
+      <div class="grid lg:grid-cols-2 gap-16 items-center">
+        <!-- 左侧文案 -->
+        <div class="reveal">
+          <div class="inline-flex items-center gap-2 tag px-4 py-1.5 rounded-full text-sm mb-6">
+            <span class="material-symbols-rounded text-sm icon-fill">auto_awesome</span>
+            核心亮点
+          </div>
+          <h2 class="text-4xl md:text-5xl font-bold mb-6 leading-tight">
+            AI 不只是聊天，<br>
+            <span class="gradient-text">它看得见你的屏幕</span>
+          </h2>
+          <p class="text-slate-400 text-lg leading-relaxed mb-8">
+            Astesia AI 拥有独特的「屏幕知识」能力——它能读取你当前页面的真实数据，
+            无论是天气、笔记、待办还是账单走势，AI 都能基于上下文给出精准回答。
+          </p>
+
+          <div class="space-y-5">
+            <div class="flex gap-4">
+              <div class="flex-shrink-0 w-10 h-10 rounded-xl bg-indigo-500/15 flex items-center justify-center border border-indigo-400/20">
+                <span class="material-symbols-rounded text-indigo-400 text-lg icon-fill">visibility</span>
+              </div>
+              <div>
+                <h4 class="font-semibold mb-1">屏幕知识感知</h4>
+                <p class="text-sm text-slate-400 leading-relaxed">自动读取当前路由对应的业务数据，生成结构化上下文注入 AI 对话。</p>
+              </div>
+            </div>
+            <div class="flex gap-4">
+              <div class="flex-shrink-0 w-10 h-10 rounded-xl bg-purple-500/15 flex items-center justify-center border border-purple-400/20">
+                <span class="material-symbols-rounded text-purple-400 text-lg icon-fill">forum</span>
+              </div>
+              <div>
+                <h4 class="font-semibold mb-1">多轮对话与云同步</h4>
+                <p class="text-sm text-slate-400 leading-relaxed">支持多轮对话历史，自动生成对话标题，云端同步 + 本地缓存双保险。</p>
+              </div>
+            </div>
+            <div class="flex gap-4">
+              <div class="flex-shrink-0 w-10 h-10 rounded-xl bg-pink-500/15 flex items-center justify-center border border-pink-400/20">
+                <span class="material-symbols-rounded text-pink-400 text-lg icon-fill">screenshot_monitor</span>
+              </div>
+              <div>
+                <h4 class="font-semibold mb-1">截图与屏幕识别</h4>
+                <p class="text-sm text-slate-400 leading-relaxed">一键截图，AI 自动识别屏幕内容，快速提取信息或生成摘要。</p>
+              </div>
+            </div>
+            <div class="flex gap-4">
+              <div class="flex-shrink-0 w-10 h-10 rounded-xl bg-cyan-500/15 flex items-center justify-center border border-cyan-400/20">
+                <span class="material-symbols-rounded text-cyan-400 text-lg icon-fill">bolt</span>
+              </div>
+              <div>
+                <h4 class="font-semibold mb-1">流式输出与多模型</h4>
+                <p class="text-sm text-slate-400 leading-relaxed">流式实时输出回答，支持多模型切换，按用户维度计量计费。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右侧 AI 对话演示 -->
+        <div class="reveal" style="animation-delay:.2s">
+          <div class="phone-frame mx-auto w-full max-w-sm">
+            <div class="phone-screen p-5">
+              <!-- 对话头 -->
+              <div class="flex items-center gap-3 pb-4 border-b border-white/5 mb-4">
+                <div class="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
+                  <span class="material-symbols-rounded text-white icon-fill">auto_awesome</span>
+                </div>
+                <div>
+                  <div class="font-semibold text-sm">Astesia AI</div>
+                  <div class="text-xs text-green-400 flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-green-400"></span>在线
+                  </div>
+                </div>
+                <div class="ml-auto tag px-2 py-0.5 rounded text-[10px]">屏幕知识已注入</div>
+              </div>
+
+              <!-- 对话内容 -->
+              <div class="space-y-4">
+                <!-- 用户消息 -->
+                <div class="flex justify-end">
+                  <div class="chat-bubble-user rounded-2xl rounded-tr-sm px-4 py-2.5 max-w-[80%]">
+                    <p class="text-sm text-slate-200">帮我看看这个月花了多少钱？</p>
+                  </div>
+                </div>
+                <!-- AI 消息 -->
+                <div class="flex justify-start">
+                  <div class="chat-bubble-ai rounded-2xl rounded-tl-sm px-4 py-3 max-w-[85%]">
+                    <p class="text-sm text-slate-200 leading-relaxed">
+                      根据你当前记账页面的数据：<br>
+                      📊 本月共 <strong class="text-green-400">32</strong> 条账单<br>
+                      💰 收入 <strong class="text-green-400">¥18,500</strong><br>
+                      💸 支出 <strong class="text-red-400">¥10,080</strong><br>
+                      ✅ 净结余 <strong class="text-indigo-300">¥8,420</strong><br>
+                      预算执行率 67%，节奏良好 👍
+                    </p>
+                  </div>
+                </div>
+                <!-- 用户消息 -->
+                <div class="flex justify-end">
+                  <div class="chat-bubble-user rounded-2xl rounded-tr-sm px-4 py-2.5 max-w-[80%]">
+                    <p class="text-sm text-slate-200">沪深300最近走势怎么样？</p>
+                  </div>
+                </div>
+                <!-- AI 消息 -->
+                <div class="flex justify-start">
+                  <div class="chat-bubble-ai rounded-2xl rounded-tl-sm px-4 py-3 max-w-[85%]">
+                    <p class="text-sm text-slate-200 leading-relaxed">
+                      从你资产页的走势图来看：<br>
+                      沪深300 近7日 <strong class="text-green-400">+1.23%</strong>，<br>
+                      最新价 <strong>3,856.42</strong>，整体呈温和上行趋势。
+                    </p>
+                  </div>
+                </div>
+                <!-- 输入中 -->
+                <div class="flex justify-start">
+                  <div class="chat-bubble-ai rounded-2xl rounded-tl-sm px-4 py-3 flex gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style="animation-delay:0s"></span>
+                    <span class="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style="animation-delay:.2s"></span>
+                    <span class="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style="animation-delay:.4s"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 界面预览 ============ -->
+  <section id="screens" class="relative py-24 px-6">
+    <div class="max-w-7xl mx-auto">
+      <div class="text-center mb-16 reveal">
+        <div class="tag inline-block px-4 py-1.5 rounded-full text-sm mb-4">界面预览</div>
+        <h2 class="text-4xl md:text-5xl font-bold mb-4">精致到<span class="gradient-text">每一个像素</span></h2>
+        <p class="text-slate-400 max-w-2xl mx-auto">深色主题、玻璃拟态、流畅动画，每一次交互都赏心悦目。</p>
+      </div>
+
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <!-- 天气页 -->
+        <div class="reveal group">
+          <div class="phone-frame aspect-[9/16] group-hover:scale-105 transition-transform duration-500">
+            <div class="phone-screen h-full p-4 flex flex-col">
+              <div class="text-center mb-3">
+                <div class="text-xs text-indigo-300">北京</div>
+                <div class="text-4xl font-bold text-white">26°</div>
+                <span class="material-symbols-rounded text-yellow-300 text-3xl icon-fill">wb_sunny</span>
+                <div class="text-xs text-slate-400">晴 · 湿度45%</div>
+              </div>
+              <div class="space-y-1.5 mt-2">
+                <div class="glass rounded-lg p-2 flex justify-between text-[10px]">
+                  <span class="text-slate-400">明天</span><span class="text-white">28°/19°</span>
+                </div>
+                <div class="glass rounded-lg p-2 flex justify-between text-[10px]">
+                  <span class="text-slate-400">后天</span><span class="text-white">30°/21°</span>
+                </div>
+                <div class="glass rounded-lg p-2 flex justify-between text-[10px]">
+                  <span class="text-slate-400">大后天</span><span class="text-white">27°/20°</span>
+                </div>
+              </div>
+              <div class="mt-auto glass rounded-lg p-2 text-center">
+                <div class="text-[9px] text-slate-500">空气质量</div>
+                <div class="text-sm font-bold text-green-400">优 · AQI 42</div>
+              </div>
+            </div>
+          </div>
+          <p class="text-center text-sm text-slate-400 mt-4">天气概览</p>
+        </div>
+
+        <!-- 笔记页 -->
+        <div class="reveal group" style="animation-delay:.1s">
+          <div class="phone-frame aspect-[9/16] group-hover:scale-105 transition-transform duration-500">
+            <div class="phone-screen h-full p-4 flex flex-col">
+              <div class="flex justify-between items-center mb-3">
+                <span class="text-sm font-bold text-white">我的笔记</span>
+                <span class="material-symbols-rounded text-indigo-400 text-base icon-fill">add_circle</span>
+              </div>
+              <div class="space-y-2 flex-1">
+                <div class="glass rounded-lg p-2.5">
+                  <div class="text-[11px] font-medium text-white">读书笔记 · 原则</div>
+                  <div class="text-[9px] text-slate-500 mt-1">生活就是一系列决策…</div>
+                  <div class="text-[8px] text-slate-600 mt-1">2小时前</div>
+                </div>
+                <div class="glass rounded-lg p-2.5">
+                  <div class="text-[11px] font-medium text-white">项目复盘</div>
+                  <div class="text-[9px] text-slate-500 mt-1">本周完成了三个核心…</div>
+                  <div class="text-[8px] text-slate-600 mt-1">昨天</div>
+                </div>
+                <div class="glass rounded-lg p-2.5">
+                  <div class="text-[11px] font-medium text-white">灵感记录</div>
+                  <div class="text-[9px] text-slate-500 mt-1">关于产品设计的想法…</div>
+                  <div class="text-[8px] text-slate-600 mt-1">3天前</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="text-center text-sm text-slate-400 mt-4">笔记列表</p>
+        </div>
+
+        <!-- 记账页 -->
+        <div class="reveal group" style="animation-delay:.2s">
+          <div class="phone-frame aspect-[9/16] group-hover:scale-105 transition-transform duration-500">
+            <div class="phone-screen h-full p-4 flex flex-col">
+              <div class="text-center mb-3">
+                <div class="text-[10px] text-slate-400">本月结余</div>
+                <div class="text-2xl font-bold text-green-400">¥8,420</div>
+              </div>
+              <div class="flex gap-2 mb-3">
+                <div class="flex-1 glass rounded-lg p-2 text-center">
+                  <div class="text-[9px] text-slate-500">收入</div>
+                  <div class="text-xs font-bold text-green-400">¥18.5k</div>
+                </div>
+                <div class="flex-1 glass rounded-lg p-2 text-center">
+                  <div class="text-[9px] text-slate-500">支出</div>
+                  <div class="text-xs font-bold text-red-400">¥10.1k</div>
+                </div>
+              </div>
+              <div class="space-y-1.5 flex-1">
+                <div class="glass rounded-lg p-2 flex items-center gap-2">
+                  <div class="w-6 h-6 rounded bg-red-500/20 flex items-center justify-center">
+                    <span class="material-symbols-rounded text-red-400 text-xs icon-fill">restaurant</span>
+                  </div>
+                  <div class="flex-1">
+                    <div class="text-[10px] text-white">餐饮</div>
+                    <div class="text-[8px] text-slate-500">午餐</div>
+                  </div>
+                  <div class="text-[10px] text-red-400">-¥45</div>
+                </div>
+                <div class="glass rounded-lg p-2 flex items-center gap-2">
+                  <div class="w-6 h-6 rounded bg-blue-500/20 flex items-center justify-center">
+                    <span class="material-symbols-rounded text-blue-400 text-xs icon-fill">directions_bus</span>
+                  </div>
+                  <div class="flex-1">
+                    <div class="text-[10px] text-white">交通</div>
+                    <div class="text-[8px] text-slate-500">地铁</div>
+                  </div>
+                  <div class="text-[10px] text-red-400">-¥6</div>
+                </div>
+                <div class="glass rounded-lg p-2 flex items-center gap-2">
+                  <div class="w-6 h-6 rounded bg-green-500/20 flex items-center justify-center">
+                    <span class="material-symbols-rounded text-green-400 text-xs icon-fill">payments</span>
+                  </div>
+                  <div class="flex-1">
+                    <div class="text-[10px] text-white">工资</div>
+                    <div class="text-[8px] text-slate-500">7月薪资</div>
+                  </div>
+                  <div class="text-[10px] text-green-400">+¥15k</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="text-center text-sm text-slate-400 mt-4">记账概览</p>
+        </div>
+
+        <!-- 待办页 -->
+        <div class="reveal group" style="animation-delay:.3s">
+          <div class="phone-frame aspect-[9/16] group-hover:scale-105 transition-transform duration-500">
+            <div class="phone-screen h-full p-4 flex flex-col">
+              <div class="flex justify-between items-center mb-3">
+                <span class="text-sm font-bold text-white">待办事项</span>
+                <span class="material-symbols-rounded text-pink-400 text-base icon-fill">add_task</span>
+              </div>
+              <div class="space-y-2 flex-1">
+                <div class="glass rounded-lg p-2.5 flex items-center gap-2">
+                  <div class="w-4 h-4 rounded-full border-2 border-pink-400 flex-shrink-0"></div>
+                  <div class="flex-1">
+                    <div class="text-[11px] text-white">完成季度报告</div>
+                    <div class="text-[8px] text-pink-400 flex items-center gap-1">
+                      <span class="material-symbols-rounded text-[8px]">schedule</span>今天 18:00
+                    </div>
+                  </div>
+                </div>
+                <div class="glass rounded-lg p-2.5 flex items-center gap-2">
+                  <div class="w-4 h-4 rounded-full border-2 border-indigo-400 flex-shrink-0"></div>
+                  <div class="flex-1">
+                    <div class="text-[11px] text-white">健身打卡</div>
+                    <div class="text-[8px] text-indigo-400 flex items-center gap-1">
+                      <span class="material-symbols-rounded text-[8px]">repeat</span>每天重复
+                    </div>
+                  </div>
+                </div>
+                <div class="glass rounded-lg p-2.5 flex items-center gap-2 opacity-50">
+                  <div class="w-4 h-4 rounded-full bg-green-500 flex-shrink-0 flex items-center justify-center">
+                    <span class="material-symbols-rounded text-white text-[8px] icon-fill">check</span>
+                  </div>
+                  <div class="flex-1">
+                    <div class="text-[11px] text-slate-500 line-through">买牛奶</div>
+                    <div class="text-[8px] text-slate-600">已完成</div>
+                  </div>
+                </div>
+                <div class="glass rounded-lg p-2.5 flex items-center gap-2">
+                  <div class="w-4 h-4 rounded-full border-2 border-amber-400 flex-shrink-0"></div>
+                  <div class="flex-1">
+                    <div class="text-[11px] text-white">预约牙医</div>
+                    <div class="text-[8px] text-amber-400 flex items-center gap-1">
+                      <span class="material-symbols-rounded text-[8px]">schedule</span>明天 10:00
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="text-center text-sm text-slate-400 mt-4">待办列表</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 技术栈 ============ -->
+  <section id="tech" class="relative py-24 px-6">
+    <div class="max-w-5xl mx-auto">
+      <div class="text-center mb-16 reveal">
+        <div class="tag inline-block px-4 py-1.5 rounded-full text-sm mb-4">技术架构</div>
+        <h2 class="text-4xl md:text-5xl font-bold mb-4">现代技术栈，<span class="gradient-text">为性能而生</span></h2>
+        <p class="text-slate-400 max-w-2xl mx-auto">采用业界前沿技术构建，从前端到后端全链路 TypeScript，确保类型安全与开发体验。</p>
+      </div>
+
+      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div class="glass glass-hover rounded-xl p-5 reveal flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center text-2xl font-black text-white">E</div>
+          <div>
+            <div class="font-semibold">Expo / React Native</div>
+            <div class="text-xs text-slate-500">跨平台框架 · 新架构</div>
+          </div>
+        </div>
+        <div class="glass glass-hover rounded-xl p-5 reveal flex items-center gap-4" style="animation-delay:.05s">
+          <div class="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center text-2xl font-black text-white">TS</div>
+          <div>
+            <div class="font-semibold">TypeScript</div>
+            <div class="text-xs text-slate-500">全链路类型安全</div>
+          </div>
+        </div>
+        <div class="glass glass-hover rounded-xl p-5 reveal flex items-center gap-4" style="animation-delay:.1s">
+          <div class="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center text-2xl font-black text-white">H</div>
+          <div>
+            <div class="font-semibold">Hono</div>
+            <div class="text-xs text-slate-500">轻量后端框架</div>
+          </div>
+        </div>
+        <div class="glass glass-hover rounded-xl p-5 reveal flex items-center gap-4" style="animation-delay:.15s">
+          <div class="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center text-2xl font-black text-white">PG</div>
+          <div>
+            <div class="font-semibold">PostgreSQL</div>
+            <div class="text-xs text-slate-500">关系型数据库</div>
+          </div>
+        </div>
+        <div class="glass glass-hover rounded-xl p-5 reveal flex items-center gap-4" style="animation-delay:.2s">
+          <div class="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center text-2xl font-black text-white">M</div>
+          <div>
+            <div class="font-semibold">MobX</div>
+            <div class="text-xs text-slate-500">响应式状态管理</div>
+          </div>
+        </div>
+        <div class="glass glass-hover rounded-xl p-5 reveal flex items-center gap-4" style="animation-delay:.25s">
+          <div class="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center text-2xl font-black text-white">T</div>
+          <div>
+            <div class="font-semibold">TipTap</div>
+            <div class="text-xs text-slate-500">富文本编辑器</div>
+          </div>
+        </div>
+        <div class="glass glass-hover rounded-xl p-5 reveal flex items-center gap-4" style="animation-delay:.3s">
+          <div class="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center text-2xl font-black text-white">PWA</div>
+          <div>
+            <div class="font-semibold">PWA</div>
+            <div class="text-xs text-slate-500">渐进式 Web 应用</div>
+          </div>
+        </div>
+        <div class="glass glass-hover rounded-xl p-5 reveal flex items-center gap-4" style="animation-delay:.35s">
+          <div class="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center text-2xl font-black text-white">AI</div>
+          <div>
+            <div class="font-semibold">AI 多模型</div>
+            <div class="text-xs text-slate-500">流式输出 · 屏幕感知</div>
+          </div>
+        </div>
+        <div class="glass glass-hover rounded-xl p-5 reveal flex items-center gap-4" style="animation-delay:.4s">
+          <div class="w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center text-2xl font-black text-white">AK</div>
+          <div>
+            <div class="font-semibold">AkShare</div>
+            <div class="text-xs text-slate-500">金融数据源</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CTA ============ -->
+  <section class="relative py-24 px-6 overflow-hidden">
+    <div class="absolute inset-0 hero-bg"></div>
+    <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-indigo-600/15 rounded-full blur-[120px]"></div>
+    <div class="relative max-w-4xl mx-auto text-center reveal">
+      <div class="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-gradient-to-br from-indigo-500 to-purple-600 mb-8 shadow-2xl shadow-indigo-500/40">
+        <span class="material-symbols-rounded text-white text-4xl icon-fill">auto_awesome</span>
+      </div>
+      <h2 class="text-4xl md:text-6xl font-black mb-6 leading-tight">
+        准备好让生活<br>
+        <span class="gradient-text">更有条理了吗？</span>
+      </h2>
+      <p class="text-slate-400 text-lg mb-10 max-w-xl mx-auto">
+        开源、免费、跨平台。立即在 GitHub 上获取 Astesia，开启你的高效生活。
+      </p>
+      <div class="flex flex-wrap items-center justify-center gap-4">
+        <a href="https://github.com/walarknights/Astesia" target="_blank" rel="noopener" class="btn-primary px-8 py-4 rounded-xl font-semibold text-white flex items-center gap-2 text-lg">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.3-1.7-1.3-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.79 1.2 1.79 1.2 1.04 1.79 2.73 1.27 3.4.97.11-.75.41-1.27.74-1.56-2.55-.29-5.23-1.28-5.23-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.69 5.41-5.25 5.69.42.36.79 1.08.79 2.18v3.23c0 .31.21.68.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>
+          查看源码
+        </a>
+        <a href="https://github.com/walarknights/Astesia" target="_blank" rel="noopener" class="btn-ghost px-8 py-4 rounded-xl font-medium flex items-center gap-2 text-lg text-slate-200">
+          <span class="material-symbols-rounded">download</span>
+          下载体验
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Footer ============ -->
+  <footer class="border-t border-white/5 py-12 px-6">
+    <div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
+          <span class="material-symbols-rounded text-white text-base icon-fill">auto_awesome</span>
+        </div>
+        <span class="font-bold">Astesia</span>
+        <span class="text-slate-600 text-sm ml-2">© 2026 · 你的全能生活助手</span>
+      </div>
+      <div class="flex items-center gap-6 text-sm text-slate-500">
+        <a href="https://github.com/walarknights/Astesia" target="_blank" rel="noopener" class="hover:text-white transition flex items-center gap-1.5">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.3-1.7-1.3-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.79 1.2 1.79 1.2 1.04 1.79 2.73 1.27 3.4.97.11-.75.41-1.27.74-1.56-2.55-.29-5.23-1.28-5.23-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.69 5.41-5.25 5.69.42.36.79 1.08.79 2.18v3.23c0 .31.21.68.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>
+          GitHub
+        </a>
+        <span class="text-slate-700">|</span>
+        <span>Built with Expo · React Native · TypeScript</span>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // 滚动淡入动画
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('in');
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
+
+    document.querySelectorAll('.reveal:not(.in)').forEach((el) => observer.observe(el));
+
+    // 兜底：1 秒后确保所有内容可见（防止截图/无滚动场景下内容隐藏）
+    setTimeout(() => {
+      document.querySelectorAll('.reveal:not(.in)').forEach((el) => el.classList.add('in'));
+    }, 1000);
+  </script>
+</body>
+</html>
