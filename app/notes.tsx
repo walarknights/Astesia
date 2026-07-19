@@ -9,6 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { BottomSwitchBar } from '@/components/BottomSwitchBar';
 import { ThemedText } from '@/components/themed-text';
+import { AppPalette } from '@/constants/theme';
 import { TodoPanel as TodoListPanel } from '@/app/todo';
 import { getNoteImageCount, getNotePlainText, loadNotes, type NoteRecord } from '@/services/notes-storage';
 
@@ -76,9 +77,9 @@ export default function NotesScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <StatusBar style="dark" backgroundColor="#DDD0FE" />
+      <StatusBar style="light" backgroundColor={AppPalette.background} />
       <LinearGradient
-        colors={['rgba(113, 17, 248, 0.2)', 'rgba(113, 17, 248, 0.2)', 'rgba(245, 63, 63, 0.02)']}
+        colors={['#1E1E3A', '#151526', AppPalette.background]}
         locations={[0, 0.5048, 1]}
         start={{ x: 0.5, y: 0 }}
         end={{ x: 0.5, y: 1 }}
@@ -86,7 +87,7 @@ export default function NotesScreen() {
         <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
           <View style={styles.header}>
             <Pressable style={styles.iconButton} onPress={() => router.back()}>
-              <MaterialIcons name="arrow-back" size={24} color="#262626" />
+              <MaterialIcons name="arrow-back" size={24} color={AppPalette.text} />
             </Pressable>
             <ThemedText style={styles.headerTitle}>笔记</ThemedText>
             <View style={styles.headerSpacer} />
@@ -146,7 +147,7 @@ function NotesPanel({
   if (isLoading) {
     return (
       <View style={styles.loadingCard}>
-        <ActivityIndicator color="#7C3AED" />
+        <ActivityIndicator color={AppPalette.brandLight} />
         <ThemedText style={styles.loadingText}>正在读取笔记...</ThemedText>
       </View>
     );
@@ -155,7 +156,7 @@ function NotesPanel({
   if (notes.length === 0) {
     return (
       <View style={styles.emptyCard}>
-        <MaterialIcons name="edit-note" size={48} color="#7C3AED" />
+        <MaterialIcons name="edit-note" size={48} color={AppPalette.brandLight} />
         <ThemedText style={styles.emptyTitle}>写下第一条笔记</ThemedText>
         <ThemedText style={styles.emptyDescription}>
           支持正文文本和相册图片，保存后会回到这里形成卡片预览。
@@ -171,15 +172,14 @@ function NotesPanel({
     <View style={styles.notesPanel}>
       {/*
        * 渲染位置: 合并入口的笔记主视图
-       * 展示内容: 两列具体笔记预览卡片，点击进入编辑页
+       * 展示内容: 单列具体笔记预览卡片，点击进入编辑页
        * 数据来源: loadNotes() 读取的本地笔记记录
        */}
-      {notes.map((note, index) => (
+      {notes.map((note) => (
         <NotePreviewCard
           key={note.id}
           note={note}
           onPress={() => onPressNote(note.id)}
-          style={index % 2 === 1 ? styles.noteCardStaggered : null}
         />
       ))}
     </View>
@@ -192,7 +192,7 @@ function NotePreviewCard({
   onPress,
 }: {
   note: NoteRecord;
-  style: StyleProp<ViewStyle>;
+  style?: StyleProp<ViewStyle>;
   onPress: () => void;
 }) {
   const previewContent = getNotePreviewContent(getNotePlainText(note) || '图片笔记');
@@ -208,7 +208,7 @@ function NotePreviewCard({
       </ThemedText>
       {imageCount > 0 ? (
         <View style={styles.imageCountBadge}>
-          <MaterialIcons name="image" size={14} color="#6D28D9" />
+          <MaterialIcons name="image" size={14} color={AppPalette.brandLight} />
           <ThemedText style={styles.imageCountText}>{imageCount}</ThemedText>
         </View>
       ) : null}
@@ -274,9 +274,12 @@ function NotesTabAnimatedPanel({ children }: { children: React.ReactNode }) {
 }
 
 const styles = StyleSheet.create({
+  // [变更] 修改前: 笔记页使用浅紫渐变和纯白纸张卡片
+  // [变更] 修改后: 使用深色光晕背景与低透明描边的玻璃卡片
+  // [原因] 保留笔记卡片结构，同时匹配推广页的暗色视觉
   gradientBackground: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: AppPalette.background,
   },
   safeArea: {
     flex: 1,
@@ -301,7 +304,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   headerTitle: {
-    color: '#000000',
+    color: AppPalette.text,
     fontSize: 24,
     lineHeight: 50,
     fontWeight: 'bold',
@@ -316,12 +319,13 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   notesPanel: {
+    // [变更] 修改前: 使用 row + wrap 形成两列瀑布流
+    // [变更] 修改后: 改为 column 单列堆叠
+    // [原因] 当前笔记页要求主内容按纵向排列
     width: '100%',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    rowGap: 18,
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 18,
     paddingBottom: 32,
   },
   loadingCard: {
@@ -329,11 +333,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 24,
-    backgroundColor: 'rgba(255,255,255,0.72)',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
     gap: 10,
   },
   loadingText: {
-    color: '#7C3AED',
+    color: AppPalette.brandLight,
     fontSize: 14,
     lineHeight: 20,
   },
@@ -342,22 +348,24 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     paddingHorizontal: 24,
     paddingVertical: 36,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#3B0764',
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
+    shadowColor: AppPalette.shadow,
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
     shadowOffset: { width: 0, height: 8 },
     elevation: 2,
     gap: 12,
   },
   emptyTitle: {
-    color: '#111827',
+    color: AppPalette.text,
     fontSize: 24,
     lineHeight: 30,
     fontWeight: '700',
   },
   emptyDescription: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 14,
     lineHeight: 21,
     textAlign: 'center',
@@ -367,7 +375,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 20,
     paddingVertical: 10,
-    backgroundColor: '#7C3AED',
+    backgroundColor: AppPalette.brand,
   },
   emptyButtonText: {
     color: '#FFFFFF',
@@ -382,36 +390,32 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   noteCard: {
-    width: 155,
-    height: 221,
+    width: '100%',
+    minHeight: 180,
     borderRadius: 15,
     paddingTop: 21,
-    paddingRight: 34,
+    paddingRight: 18,
     paddingBottom: 30,
-    paddingLeft: 14,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#3B0764',
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
+    paddingLeft: 18,
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
+    shadowColor: AppPalette.shadow,
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
     elevation: 2,
   },
-  noteCardStaggered: {
-    marginTop: 37,
-  },
   noteCardTitle: {
-    minWidth: 98,
-    marginLeft: 2,
-    color: '#000000',
+    color: AppPalette.text,
     fontSize: 24,
     lineHeight: 29,
     fontWeight: '600',
   },
   noteCardContent: {
-    width: 107,
-    height: 112,
-    marginTop: 29,
-    color: '#000000',
+    width: '100%',
+    marginTop: 18,
+    color: AppPalette.textMuted,
     fontSize: 20,
     lineHeight: 24,
     fontWeight: '200',
@@ -426,10 +430,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 5,
-    backgroundColor: '#F3E8FF',
+    backgroundColor: 'rgba(99, 102, 241, 0.18)',
   },
   imageCountText: {
-    color: '#6D28D9',
+    color: AppPalette.brandLight,
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '700',
@@ -439,17 +443,19 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     paddingHorizontal: 22,
     paddingVertical: 34,
-    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
     gap: 10,
   },
   todoTitle: {
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 24,
     lineHeight: 30,
     fontWeight: '700',
   },
   todoDescription: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 14,
     lineHeight: 20,
     textAlign: 'center',

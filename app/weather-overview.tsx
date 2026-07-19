@@ -5,6 +5,7 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { WeatherOverviewSections } from '@/components/weather-overview-sections';
+import { AppPalette } from '@/constants/theme';
 import { DESKTOP_WEB_CONTENT_MAX_WIDTH, useWebLayout } from '@/hooks/use-web-layout';
 import { getCachedWeatherDashboard } from '@/services/weather-dashboard-store';
 import type { WeatherDashboard } from '@/services/type';
@@ -46,9 +47,12 @@ export default function WeatherOverviewScreen() {
 }
 
 const styles = StyleSheet.create({
+  // [变更] 修改前: 天气概览使用浅灰页面与白色信息卡
+  // [变更] 修改后: 使用深色玻璃卡片和靛青信息徽标
+  // [原因] 保持天气数据结构不变，同时统一应用品牌风格
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.background,
   },
   content: {
     padding: 20,
@@ -64,7 +68,9 @@ const styles = StyleSheet.create({
   headerCard: {
     borderRadius: 24,
     padding: 20,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
     gap: 18,
   },
   headerRow: {
@@ -82,7 +88,7 @@ const styles = StyleSheet.create({
     lineHeight: 32,
   },
   description: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 14,
     lineHeight: 20,
   },
@@ -92,7 +98,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#CCFBF1',
+    backgroundColor: 'rgba(99, 102, 241, 0.18)',
   },
   summaryStrip: {
     flexDirection: 'row',
@@ -104,11 +110,11 @@ const styles = StyleSheet.create({
     minWidth: 90,
     borderRadius: 16,
     padding: 12,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.surfaceSoft,
     gap: 4,
   },
   summaryLabel: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 12,
     lineHeight: 16,
   },
@@ -118,10 +124,12 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     paddingVertical: 40,
     paddingHorizontal: 20,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
   },
   emptyText: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 14,
     lineHeight: 20,
     textAlign: 'center',

@@ -20,7 +20,7 @@ import { AstesiaLogo } from '@/components/AstesiaLogo';
 import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { PersonalUserPanel } from '@/components/PersonalUserPanel';
 import { ThemedText } from '@/components/themed-text';
-import { Fonts } from '@/constants/theme';
+import { AppPalette, Fonts } from '@/constants/theme';
 import {
   loadPersonalBackgroundImageUri,
   persistPersonalBackgroundImage,
@@ -420,7 +420,7 @@ export default function PersonalScreen() {
   return (
     <>
       <ParallaxScrollView
-        headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
+        headerBackgroundColor={{ light: AppPalette.background, dark: AppPalette.background }}
         headerImage={
           <View style={styles.headerImage}>
             {/*
@@ -564,7 +564,7 @@ export default function PersonalScreen() {
                 {dialog?.title}
               </ThemedText>
               <Pressable accessibilityRole="button" hitSlop={8} onPress={() => setDialog(null)}>
-                <MaterialIcons name="close" size={24} color="#334155" />
+                <MaterialIcons name="close" size={24} color={AppPalette.textMuted} />
               </Pressable>
             </View>
             <ScrollView style={styles.modalScroll}>
@@ -610,7 +610,7 @@ export default function PersonalScreen() {
             <View style={styles.modalHeader}>
               <ThemedText type="subtitle" style={styles.modalTitle}>背景设置</ThemedText>
               <Pressable accessibilityRole="button" hitSlop={8} onPress={closeBackgroundModal}>
-                <MaterialIcons name="close" size={24} color="#334155" />
+                <MaterialIcons name="close" size={24} color={AppPalette.textMuted} />
               </Pressable>
             </View>
             <ThemedText style={styles.backgroundModalDescription}>
@@ -732,13 +732,16 @@ function getOptionLabel<T extends string>(options: ChoiceOption<T>[], value: T) 
 }
 
 const styles = StyleSheet.create({
+  // [变更] 修改前: 个人页设置区使用浅灰背景、白色卡片和蓝色按钮
+  // [变更] 修改后: 改为蓝黑背景、玻璃卡片与靛青紫交互态
+  // [原因] 让设置页延续推广页的品牌视觉而不改变任何设置行为
   headerImage: {
     flex: 1,
     justifyContent: 'flex-end',
   },
   headerOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(15, 23, 42, 0.26)',
+    backgroundColor: 'rgba(15, 15, 26, 0.46)',
   },
   headerContent: {
     flex: 1,
@@ -776,7 +779,9 @@ const styles = StyleSheet.create({
   summaryCard: {
     borderRadius: 28,
     padding: 22,
-    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
     gap: 8,
     shadowColor: '#0F172A',
     shadowOpacity: 0.05,
@@ -785,17 +790,17 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   pageTitle: {
-    color: '#0F172A',
+    color: AppPalette.text,
   },
   pageDescription: {
-    color: '#475569',
+    color: AppPalette.textMuted,
     lineHeight: 22,
   },
   section: {
     gap: 10,
   },
   sectionTitle: {
-    color: '#0F172A',
+    color: AppPalette.text,
     // [变更] 为分组标题补充垂直留白，避免标题与相邻内容视觉拥挤。
     lineHeight: 28,
     paddingTop: 20,
@@ -804,10 +809,12 @@ const styles = StyleSheet.create({
   sectionCard: {
     borderRadius: 24,
     overflow: 'hidden',
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.04,
-    shadowRadius: 12,
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
+    shadowColor: AppPalette.shadow,
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
     shadowOffset: { width: 0, height: 6 },
     elevation: 2,
   },
@@ -819,7 +826,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E2E8F0',
+    borderBottomColor: AppPalette.border,
   },
   iconBadge: {
     width: 42,
@@ -827,7 +834,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#268bf0ff',
+    backgroundColor: 'rgba(99, 102, 241, 0.18)',
   },
   dangerIconBadge: {
     backgroundColor: '#FEE2E2',
@@ -837,13 +844,13 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   settingTitle: {
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 16,
     lineHeight: 22,
     fontWeight: '700',
   },
   settingDescription: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 13,
     lineHeight: 18,
   },
@@ -859,7 +866,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E2E8F0',
+    borderBottomColor: AppPalette.border,
   },
   switchCopy: {
     flex: 1,
@@ -874,7 +881,7 @@ const styles = StyleSheet.create({
   modalBackdrop: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(15, 23, 42, 0.42)',
+    backgroundColor: 'rgba(2, 2, 8, 0.74)',
   },
   modalCard: {
     maxHeight: '82%',
@@ -882,7 +889,9 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     padding: 20,
     gap: 14,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceElevated,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -891,21 +900,21 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   modalTitle: {
-    color: '#0F172A',
+    color: AppPalette.text,
   },
   modalScroll: {
     maxHeight: 420,
   },
   modalCopy: {
-    color: '#475569',
+    color: AppPalette.textMuted,
     marginBottom: 12,
   },
   exportOutput: {
     minHeight: 220,
     borderRadius: 18,
     padding: 14,
-    color: '#334155',
-    backgroundColor: '#F8FAFC',
+    color: AppPalette.textMuted,
+    backgroundColor: AppPalette.surfaceSoft,
     fontFamily: Fonts.mono,
     fontSize: 12,
     lineHeight: 18,
@@ -913,11 +922,11 @@ const styles = StyleSheet.create({
   importInput: {
     minHeight: 220,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: AppPalette.borderStrong,
     borderRadius: 18,
     padding: 14,
-    color: '#0F172A',
-    backgroundColor: '#FFFFFF',
+    color: AppPalette.text,
+    backgroundColor: AppPalette.surface,
     fontFamily: Fonts.mono,
     fontSize: 12,
     lineHeight: 18,
@@ -927,7 +936,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#0F766E',
+    backgroundColor: AppPalette.brand,
   },
   primaryButtonText: {
     color: '#FFFFFF',
@@ -935,7 +944,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   backgroundModalDescription: {
-    color: '#475569',
+    color: AppPalette.textMuted,
     fontSize: 14,
     lineHeight: 21,
   },
@@ -946,24 +955,24 @@ const styles = StyleSheet.create({
   },
   backgroundOptionButton: {
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: AppPalette.border,
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 9,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.surfaceSoft,
   },
   backgroundOptionButtonActive: {
-    borderColor: '#2563EB',
-    backgroundColor: '#DBEAFE',
+    borderColor: AppPalette.brandLight,
+    backgroundColor: 'rgba(99, 102, 241, 0.20)',
   },
   backgroundOptionText: {
-    color: '#475569',
+    color: AppPalette.textMuted,
     fontSize: 14,
     lineHeight: 18,
     fontWeight: '700',
   },
   backgroundOptionTextActive: {
-    color: '#1D4ED8',
+    color: AppPalette.brandLight,
   },
   backgroundUploadActions: {
     flexDirection: 'row',
@@ -982,10 +991,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 18,
     paddingVertical: 10,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: AppPalette.surfaceSoft,
   },
   modalCancelText: {
-    color: '#525252',
+    color: AppPalette.textMuted,
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '700',
@@ -994,7 +1003,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 20,
     paddingVertical: 10,
-    backgroundColor: '#3B82F6',
+    backgroundColor: AppPalette.brand,
   },
   modalButtonDisabled: {
     opacity: 0.6,

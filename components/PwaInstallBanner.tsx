@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Platform, Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { AppPalette } from '@/constants/theme';
 import { storage } from '@/services/storage';
 
 const PWA_INSTALL_BANNER_DISMISSED_KEY = 'astesia-pwa-install-banner-dismissed';
@@ -127,7 +128,7 @@ export function PwaInstallBanner() {
       <View style={styles.banner}>
         <View style={styles.content}>
           <View style={styles.iconWrapper}>
-            <MaterialIcons name="install-mobile" size={18} color="#7C3AED" />
+            <MaterialIcons name="install-mobile" size={18} color={AppPalette.brandLight} />
           </View>
           <View style={styles.textGroup}>
             <ThemedText style={styles.title}>安装 Astesia</ThemedText>
@@ -148,6 +149,9 @@ export function PwaInstallBanner() {
 }
 
 const styles = StyleSheet.create({
+  // [变更] 修改前: PWA 安装提示使用白色浮层
+  // [变更] 修改后: 改为深色玻璃浮层与靛青操作按钮
+  // [原因] Web 安装入口也需保持推广页品牌风格
   wrapper: {
     position: 'absolute',
     left: 0,
@@ -160,10 +164,12 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    backgroundColor: 'rgba(255,255,255,0.96)',
-    shadowColor: '#7C3AED',
-    shadowOpacity: 0.12,
-    shadowRadius: 18,
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: 'rgba(30,30,46,0.97)',
+    shadowColor: AppPalette.shadow,
+    shadowOpacity: 0.18,
+    shadowRadius: 22,
     shadowOffset: { width: 0, height: 10 },
     elevation: 8,
     gap: 12,
@@ -179,20 +185,20 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F3E8FF',
+    backgroundColor: 'rgba(99, 102, 241, 0.18)',
   },
   textGroup: {
     flex: 1,
   },
   title: {
-    color: '#111827',
+    color: AppPalette.text,
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '700',
   },
   description: {
     marginTop: 3,
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 12,
     lineHeight: 17,
   },
@@ -208,10 +214,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.surfaceSoft,
   },
   ghostButtonText: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '600',
@@ -223,7 +229,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 14,
-    backgroundColor: '#7C3AED',
+    backgroundColor: AppPalette.brand,
   },
   primaryButtonText: {
     color: '#FFFFFF',

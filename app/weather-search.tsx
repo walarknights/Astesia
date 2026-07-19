@@ -12,6 +12,7 @@ import {
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { AppPalette } from '@/constants/theme';
 import { searchCities } from '@/services/qweather';
 import type { QWeatherLocation } from '@/services/type';
 import {
@@ -104,7 +105,7 @@ export default function WeatherSearchScreen() {
         <ThemedText type="defaultSemiBold">{cityName}</ThemedText>
         {description ? <ThemedText style={styles.cityMeta}>{description}</ThemedText> : null}
       </View>
-      <MaterialIcons name="arrow-forward-ios" size={16} color="#64748B" />
+      <MaterialIcons name="arrow-forward-ios" size={16} color={AppPalette.textMuted} />
     </Pressable>
   );
 
@@ -112,16 +113,16 @@ export default function WeatherSearchScreen() {
     <ThemedView style={styles.container}>
       <View style={styles.header}>
         <Pressable style={styles.backButton} onPress={() => router.back()}>
-          <MaterialIcons name="arrow-back" size={22} color="#0F172A" />
+          <MaterialIcons name="arrow-back" size={22} color={AppPalette.text} />
         </Pressable>
         <View style={styles.searchCard}>
           <View style={styles.searchInputRow}>
-            <MaterialIcons name="search" size={20} color="#64748B" />
+            <MaterialIcons name="search" size={20} color={AppPalette.textMuted} />
             <TextInput
               value={keyword}
               onChangeText={setKeyword}
               placeholder="搜索城市"
-              placeholderTextColor="#94A3B8"
+              placeholderTextColor={AppPalette.textSubtle}
               style={styles.searchInput}
               autoFocus
               returnKeyType="search"
@@ -129,7 +130,7 @@ export default function WeatherSearchScreen() {
             />
             {keyword.trim() ? (
               <Pressable onPress={() => setKeyword('')}>
-                <MaterialIcons name="close" size={18} color="#94A3B8" />
+                <MaterialIcons name="close" size={18} color={AppPalette.textMuted} />
               </Pressable>
             ) : null}
           </View>
@@ -161,7 +162,7 @@ export default function WeatherSearchScreen() {
 
         {isSearching ? (
           <View style={styles.loadingState}>
-            <ActivityIndicator size="small" color="#0F766E" />
+            <ActivityIndicator size="small" color={AppPalette.brandLight} />
             <ThemedText style={styles.stateText}>正在搜索城市...</ThemedText>
           </View>
         ) : null}
@@ -196,16 +197,21 @@ function getErrorMessage(error: unknown) {
 }
 
 const styles = StyleSheet.create({
+  // [变更] 修改前: 城市搜索页使用浅灰底和纯白列表项
+  // [变更] 修改后: 使用深色背景、玻璃搜索框与靛青查询按钮
+  // [原因] 补齐天气流程中的主题一致性
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.background,
   },
   header: {
     paddingHorizontal: 20,
     paddingTop: 20,
     paddingBottom: 12,
     gap: 12,
-    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: AppPalette.border,
+    backgroundColor: AppPalette.surface,
   },
   backButton: {
     width: 40,
@@ -213,7 +219,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: AppPalette.surfaceSoft,
   },
   searchCard: {
     gap: 12,
@@ -225,22 +231,22 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.surfaceSoft,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: AppPalette.border,
   },
   searchInput: {
     flex: 1,
     fontSize: 16,
     lineHeight: 22,
-    color: '#0F172A',
+    color: AppPalette.text,
   },
   searchButton: {
     alignSelf: 'flex-end',
     borderRadius: 14,
     paddingHorizontal: 18,
     paddingVertical: 10,
-    backgroundColor: '#0F766E',
+    backgroundColor: AppPalette.brand,
   },
   searchButtonDisabled: {
     opacity: 0.6,
@@ -263,7 +269,7 @@ const styles = StyleSheet.create({
     lineHeight: 32,
   },
   sectionDescription: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
   },
   cityList: {
     gap: 12,
@@ -276,14 +282,16 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     paddingHorizontal: 18,
     paddingVertical: 16,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
   },
   cityTextGroup: {
     flex: 1,
     gap: 4,
   },
   cityMeta: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 13,
     lineHeight: 18,
   },

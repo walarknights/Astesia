@@ -23,6 +23,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
+import { AppPalette } from '@/constants/theme';
 import {
   createEmptyTodo,
   loadTodos,
@@ -346,7 +347,7 @@ export function TodoPanel({ createRequestKey = 0, embedded = false }: TodoPanelP
 
         {isLoading ? (
           <View style={styles.loadingCard}>
-            <ActivityIndicator color="#3B82F6" />
+            <ActivityIndicator color={AppPalette.brandLight} />
             <ThemedText style={styles.loadingText}>正在读取待办...</ThemedText>
           </View>
         ) : (
@@ -528,7 +529,7 @@ function TodoItem({
             </View>
             {todo.reminderAt ? (
               <View style={styles.reminderRow}>
-                <MaterialIcons name="notifications-none" size={16} color="#64748B" />
+                <MaterialIcons name="notifications-none" size={16} color={AppPalette.textMuted} />
                 <ThemedText style={styles.reminderText}>{formatReminderLabel(todo)}</ThemedText>
               </View>
             ) : null}
@@ -539,7 +540,7 @@ function TodoItem({
             hitSlop={8}
             style={styles.moreButton}
             onPress={onOpenActions}>
-            <MaterialIcons name="more-horiz" size={20} color="#94A3B8" />
+            <MaterialIcons name="more-horiz" size={20} color={AppPalette.textMuted} />
           </Pressable>
         </Pressable>
       </Animated.View>
@@ -680,7 +681,7 @@ function TodoActionsSheet({
                 onEdit(todo);
               }
             }}>
-            <MaterialIcons name="edit" size={20} color="#2563EB" />
+            <MaterialIcons name="edit" size={20} color={AppPalette.brandLight} />
             <ThemedText style={styles.actionSheetButtonText}>编辑待办</ThemedText>
           </Pressable>
           <Pressable
@@ -752,7 +753,7 @@ function TodoEditorSheet({
           />
           <Pressable style={styles.reminderButton} onPress={onOpenReminder}>
             <View style={styles.reminderButtonIcon}>
-              <MaterialIcons name="schedule" size={20} color="#2563EB" />
+              <MaterialIcons name="schedule" size={20} color={AppPalette.brandLight} />
             </View>
             <View style={styles.reminderButtonTextGroup}>
               <ThemedText style={styles.reminderButtonTitle}>提醒时间</ThemedText>
@@ -760,7 +761,7 @@ function TodoEditorSheet({
                 {draftTodo?.reminderAt ? formatReminderLabel(draftTodo) : '未设置'}
               </ThemedText>
             </View>
-            <MaterialIcons name="keyboard-arrow-right" size={24} color="#94A3B8" />
+            <MaterialIcons name="keyboard-arrow-right" size={24} color={AppPalette.textMuted} />
           </Pressable>
         </View>
       </KeyboardAvoidingView>
@@ -847,11 +848,11 @@ function ReminderSheet({
               <View style={styles.datePickerContent}>
                 <View style={styles.datePickerHeader}>
                   <Pressable style={styles.datePickerMonthButton} onPress={() => handleChangeDatePickerMonth(-1)}>
-                    <MaterialIcons name="chevron-left" size={22} color="#2563EB" />
+                    <MaterialIcons name="chevron-left" size={22} color={AppPalette.brandLight} />
                   </Pressable>
                   <ThemedText style={styles.datePickerMonthText}>{datePickerMonthLabel}</ThemedText>
                   <Pressable style={styles.datePickerMonthButton} onPress={() => handleChangeDatePickerMonth(1)}>
-                    <MaterialIcons name="chevron-right" size={22} color="#2563EB" />
+                    <MaterialIcons name="chevron-right" size={22} color={AppPalette.brandLight} />
                   </Pressable>
                 </View>
                 <View style={styles.weekdayRow}>
@@ -1315,9 +1316,12 @@ function padNumber(value: number) {
 }
 
 const styles = StyleSheet.create({
+  // [变更] 修改前: 待办页使用浅灰底、白卡片和亮蓝交互态
+  // [变更] 修改后: 使用深色玻璃卡片、靛青交互态和低饱和辅助文字
+  // [原因] 对齐推广页视觉，同时保留完成、提醒和危险操作的状态区分
   safeArea: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.background,
   },
   panelRoot: {
     flex: 1,
@@ -1334,13 +1338,13 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
   },
   eyebrow: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '600',
   },
   title: {
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 32,
     lineHeight: 38,
   },
@@ -1350,8 +1354,8 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#3B82F6',
-    shadowColor: '#2563EB',
+    backgroundColor: AppPalette.brand,
+    shadowColor: AppPalette.brandLight,
     shadowOpacity: 0.25,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 8 },
@@ -1368,31 +1372,35 @@ const styles = StyleSheet.create({
     padding: 28,
     alignItems: 'center',
     gap: 12,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
   },
   loadingText: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
   },
   emptyCard: {
     borderRadius: 28,
     padding: 28,
     alignItems: 'center',
     gap: 12,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
+    shadowColor: AppPalette.shadow,
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
     shadowOffset: { width: 0, height: 8 },
     elevation: 2,
   },
   emptyTitle: {
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 22,
     lineHeight: 28,
     fontWeight: '700',
   },
   emptyDescription: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 15,
     lineHeight: 22,
     textAlign: 'center',
@@ -1402,7 +1410,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 22,
     paddingVertical: 12,
-    backgroundColor: '#3B82F6',
+    backgroundColor: AppPalette.brand,
   },
   primaryButtonText: {
     color: '#FFFFFF',
@@ -1414,7 +1422,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   sectionTitle: {
-    color: '#475569',
+    color: AppPalette.textMuted,
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '700',
@@ -1424,15 +1432,20 @@ const styles = StyleSheet.create({
     overflow: 'visible',
   },
   todoCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
+    // [变更] 修改前: 待办卡片内完成按钮、内容和更多按钮横向排列
+    // [变更] 修改后: 改为 column 纵向堆叠
+    // [原因] 当前待办页要求主内容按纵向排列
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 12,
     borderRadius: 22,
     padding: 16,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.04,
-    shadowRadius: 10,
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
+    shadowColor: AppPalette.shadow,
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
     shadowOffset: { width: 0, height: 6 },
     elevation: 2,
   },
@@ -1444,7 +1457,7 @@ const styles = StyleSheet.create({
     height: 26,
     borderRadius: 13,
     borderWidth: 2,
-    borderColor: '#CBD5E1',
+    borderColor: AppPalette.textSubtle,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1453,7 +1466,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#22C55E',
   },
   todoContent: {
-    flex: 1,
+    width: '100%',
     gap: 6,
   },
   todoTitleWrap: {
@@ -1461,13 +1474,13 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
   },
   todoTitle: {
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 17,
     lineHeight: 23,
     fontWeight: '700',
   },
   todoTitleDone: {
-    color: '#64748B',
+    color: AppPalette.textSubtle,
   },
   todoTitleStrikeLine: {
     position: 'absolute',
@@ -1475,7 +1488,7 @@ const styles = StyleSheet.create({
     top: 11,
     height: 2,
     borderRadius: 1,
-    backgroundColor: '#64748B',
+    backgroundColor: AppPalette.textSubtle,
   },
   crushShardLayer: {
     ...StyleSheet.absoluteFillObject,
@@ -1484,7 +1497,7 @@ const styles = StyleSheet.create({
   crushShard: {
     position: 'absolute',
     borderRadius: 9,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: AppPalette.surfaceElevated,
     shadowColor: '#0F172A',
     shadowOpacity: 0.12,
     shadowRadius: 8,
@@ -1492,6 +1505,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   moreButton: {
+    alignSelf: 'flex-end',
     width: 34,
     height: 34,
     borderRadius: 17,
@@ -1504,7 +1518,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   reminderText: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 13,
     lineHeight: 18,
   },
@@ -1514,7 +1528,7 @@ const styles = StyleSheet.create({
   },
   sheetBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(15, 23, 42, 0.42)',
+    backgroundColor: 'rgba(2, 2, 8, 0.74)',
   },
   actionSheet: {
     borderTopLeftRadius: 30,
@@ -1523,7 +1537,9 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 26,
     gap: 12,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceElevated,
   },
   editorSheet: {
     borderTopLeftRadius: 30,
@@ -1532,7 +1548,9 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 18,
     gap: 16,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceElevated,
   },
   reminderSheet: {
     borderTopLeftRadius: 30,
@@ -1542,7 +1560,9 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 26,
     gap: 18,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceElevated,
   },
   reminderSheetScrollContent: {
     gap: 18,
@@ -1553,7 +1573,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 5,
     borderRadius: 999,
-    backgroundColor: '#CBD5E1',
+    backgroundColor: AppPalette.textSubtle,
   },
   sheetHeader: {
     flexDirection: 'row',
@@ -1561,13 +1581,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   sheetTitle: {
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 20,
     lineHeight: 26,
     fontWeight: '800',
   },
   actionSheetTitle: {
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 18,
     lineHeight: 24,
     fontWeight: '800',
@@ -1579,10 +1599,10 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.surfaceSoft,
   },
   actionSheetButtonText: {
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 16,
     lineHeight: 20,
     fontWeight: '700',
@@ -1595,10 +1615,10 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingVertical: 15,
     alignItems: 'center',
-    backgroundColor: '#EFF6FF',
+    backgroundColor: 'rgba(99, 102, 241, 0.16)',
   },
   actionSheetCancelText: {
-    color: '#2563EB',
+    color: AppPalette.brandLight,
     fontSize: 16,
     lineHeight: 20,
     fontWeight: '800',
@@ -1607,10 +1627,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 16,
     paddingVertical: 8,
-    backgroundColor: '#DBEAFE',
+    backgroundColor: 'rgba(99, 102, 241, 0.18)',
   },
   saveButtonText: {
-    color: '#2563EB',
+    color: AppPalette.brandLight,
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '800',
@@ -1619,10 +1639,10 @@ const styles = StyleSheet.create({
     minHeight: 110,
     borderRadius: 22,
     padding: 18,
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 20,
     lineHeight: 28,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.surfaceSoft,
     textAlignVertical: 'top',
   },
   reminderButton: {
@@ -1631,7 +1651,7 @@ const styles = StyleSheet.create({
     gap: 12,
     borderRadius: 20,
     padding: 14,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.surfaceSoft,
   },
   reminderButtonIcon: {
     width: 38,
@@ -1639,20 +1659,20 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#DBEAFE',
+    backgroundColor: 'rgba(99, 102, 241, 0.18)',
   },
   reminderButtonTextGroup: {
     flex: 1,
     gap: 2,
   },
   reminderButtonTitle: {
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '700',
   },
   reminderButtonDescription: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 13,
     lineHeight: 18,
   },
@@ -1660,7 +1680,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   optionLabel: {
-    color: '#475569',
+    color: AppPalette.textMuted,
     fontSize: 14,
     lineHeight: 18,
     fontWeight: '700',
@@ -1668,7 +1688,7 @@ const styles = StyleSheet.create({
   datePickerContent: {
     borderRadius: 20,
     padding: 12,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.surfaceSoft,
     gap: 10,
   },
   datePickerHeader: {
@@ -1682,10 +1702,10 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#DBEAFE',
+    backgroundColor: 'rgba(99, 102, 241, 0.18)',
   },
   datePickerMonthText: {
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 16,
     lineHeight: 22,
     fontWeight: '800',
@@ -1717,10 +1737,10 @@ const styles = StyleSheet.create({
     opacity: 0.35,
   },
   dateGridItemActive: {
-    backgroundColor: '#3B82F6',
+    backgroundColor: AppPalette.brand,
   },
   dateGridItemText: {
-    color: '#334155',
+    color: AppPalette.text,
     fontSize: 14,
     lineHeight: 18,
     fontWeight: '700',
@@ -1734,7 +1754,7 @@ const styles = StyleSheet.create({
   timePickerCard: {
     borderRadius: 20,
     padding: 14,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.surfaceSoft,
     gap: 12,
   },
   timePreviewBadge: {
@@ -1742,16 +1762,16 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 8,
-    backgroundColor: '#DBEAFE',
+    backgroundColor: 'rgba(99, 102, 241, 0.18)',
   },
   timePreviewText: {
-    color: '#2563EB',
+    color: AppPalette.brandLight,
     fontSize: 18,
     lineHeight: 22,
     fontWeight: '800',
   },
   timePickerSubTitle: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '700',
@@ -1778,7 +1798,7 @@ const styles = StyleSheet.create({
     height: TIME_PICKER_ITEM_HEIGHT * TIME_PICKER_VISIBLE_ROWS,
     overflow: 'hidden',
     borderRadius: 18,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: AppPalette.surface,
   },
   timeWheelSelectionFrame: {
     position: 'absolute',
@@ -1787,7 +1807,7 @@ const styles = StyleSheet.create({
     right: 8,
     height: TIME_PICKER_ITEM_HEIGHT,
     borderRadius: 14,
-    backgroundColor: '#DBEAFE',
+    backgroundColor: 'rgba(99, 102, 241, 0.18)',
   },
   timeWheelContent: {
     paddingHorizontal: 8,
@@ -1798,13 +1818,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   timeWheelItemText: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 18,
     lineHeight: 22,
     fontWeight: '700',
   },
   timeWheelItemTextActive: {
-    color: '#2563EB',
+    color: AppPalette.brandLight,
   },
   chipRow: {
     flexDirection: 'row',
@@ -1815,13 +1835,13 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: AppPalette.surfaceSoft,
   },
   optionChipActive: {
-    backgroundColor: '#3B82F6',
+    backgroundColor: AppPalette.brand,
   },
   optionChipText: {
-    color: '#475569',
+    color: AppPalette.textMuted,
     fontSize: 14,
     lineHeight: 18,
     fontWeight: '700',
@@ -1833,11 +1853,11 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 18,
     lineHeight: 24,
     fontWeight: '700',
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.surfaceSoft,
   },
   sheetActionRow: {
     flexDirection: 'row',
@@ -1849,10 +1869,10 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingVertical: 15,
     alignItems: 'center',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: AppPalette.surfaceSoft,
   },
   clearButtonText: {
-    color: '#475569',
+    color: AppPalette.textMuted,
     fontSize: 16,
     lineHeight: 20,
     fontWeight: '800',
@@ -1862,7 +1882,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingVertical: 15,
     alignItems: 'center',
-    backgroundColor: '#3B82F6',
+    backgroundColor: AppPalette.brand,
   },
   confirmButtonText: {
     color: '#FFFFFF',

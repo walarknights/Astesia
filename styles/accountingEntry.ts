@@ -1,15 +1,17 @@
 import { StyleSheet } from 'react-native';
+import { AppPalette } from '@/constants/theme';
 
-
-
+// [变更] 修改前: 账单录入使用浅灰页面和白色表单卡片
+// [变更] 修改后: 使用深色玻璃表单与靛青选中态
+// [原因] 保持录入流程不变，并与记账首页统一视觉
 export const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: AppPalette.background,
   },
   screen: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: AppPalette.background,
   },
   header: {
     height: 52,
@@ -33,7 +35,7 @@ export const styles = StyleSheet.create({
     fontSize: 18,
     lineHeight: 24,
     fontWeight: '800',
-    color: '#262626',
+    color: AppPalette.text,
   },
   selectorBar: {
     flexDirection: 'row',
@@ -48,12 +50,14 @@ export const styles = StyleSheet.create({
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
   },
   topSelectorLabel: {
     fontSize: 13,
     lineHeight: 18,
-    color: '#737373',
+    color: AppPalette.textMuted,
   },
   topSelectorValueRow: {
     flexDirection: 'row',
@@ -65,7 +69,7 @@ export const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 22,
     fontWeight: '700',
-    color: '#262626',
+    color: AppPalette.text,
   },
   scrollContent: {
     paddingHorizontal: 18,
@@ -78,18 +82,20 @@ export const styles = StyleSheet.create({
     borderRadius: 18,
     paddingHorizontal: 16,
     paddingVertical: 18,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
   },
   summaryCard: {
     gap: 10,
     borderRadius: 16,
     padding: 14,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.surfaceSoft,
   },
   summaryLabel: {
     fontSize: 14,
     lineHeight: 20,
-    color: '#737373',
+    color: AppPalette.textMuted,
   },
   summaryTypeRow: {
     flexDirection: 'row',
@@ -102,7 +108,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 26,
-    backgroundColor: '#EFEFEF',
+    backgroundColor: 'rgba(99, 102, 241, 0.16)',
   },
   summaryTextGroup: {
     flex: 1,
@@ -112,12 +118,12 @@ export const styles = StyleSheet.create({
     fontSize: 18,
     lineHeight: 24,
     fontWeight: '800',
-    color: '#262626',
+    color: AppPalette.text,
   },
   summaryTypeMeta: {
     fontSize: 14,
     lineHeight: 20,
-    color: '#737373',
+    color: AppPalette.textMuted,
   },
   field: {
     gap: 8,
@@ -126,19 +132,19 @@ export const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '700',
-    color: '#262626',
+    color: AppPalette.text,
   },
   input: {
     minHeight: 48,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#D4D4D4',
+    borderColor: AppPalette.borderStrong,
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 16,
     lineHeight: 22,
-    color: '#262626',
-    backgroundColor: '#FAFAFA',
+    color: AppPalette.text,
+    backgroundColor: AppPalette.surface,
   },
   inputWithPicker: {
     minHeight: 48,
@@ -146,9 +152,9 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#D4D4D4',
+    borderColor: AppPalette.borderStrong,
     borderRadius: 12,
-    backgroundColor: '#FAFAFA',
+    backgroundColor: AppPalette.surface,
   },
   inputWithPickerError: {
     borderColor: '#FF4D4F',
@@ -159,7 +165,7 @@ export const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 16,
     lineHeight: 22,
-    color: '#262626',
+    color: AppPalette.text,
   },
   inputPickerButton: {
     width: 52,
@@ -168,7 +174,7 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     borderLeftWidth: StyleSheet.hairlineWidth,
     borderLeftColor: '#D4D4D4',
-    backgroundColor: '#EFF6FF',
+    backgroundColor: 'rgba(99, 102, 241, 0.18)',
   },
   remarkInput: {
     minHeight: 88,
@@ -179,7 +185,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 16,
-    backgroundColor: '#3B82F6',
+    backgroundColor: AppPalette.brand,
   },
   submitButtonDisabled: {
     opacity: 0.7,
@@ -192,7 +198,7 @@ export const styles = StyleSheet.create({
   },
   modalRoot: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.12)',
+    backgroundColor: 'rgba(2, 2, 8, 0.74)',
   },
   modalBackdrop: {
     flex: 1,
@@ -211,7 +217,9 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingTop: 16,
     paddingBottom: 20,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceElevated,
   },
   topSheetHeader: {
     flexDirection: 'row',
@@ -223,7 +231,7 @@ export const styles = StyleSheet.create({
     fontSize: 18,
     lineHeight: 24,
     fontWeight: '800',
-    color: '#262626',
+    color: AppPalette.text,
   },
   closeButton: {
     width: 32,
@@ -231,7 +239,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 16,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: AppPalette.surfaceSoft,
   },
   datePickerContent: {
     gap: 12,
@@ -248,13 +256,13 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 19,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: 'rgba(99, 102, 241, 0.18)',
   },
   datePickerMonthText: {
     fontSize: 17,
     lineHeight: 24,
     fontWeight: '800',
-    color: '#262626',
+    color: AppPalette.text,
   },
   weekdayRow: {
     flexDirection: 'row',
@@ -265,7 +273,7 @@ export const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '700',
-    color: '#737373',
+    color: AppPalette.textMuted,
   },
   dateGrid: {
     flexDirection: 'row',
@@ -283,19 +291,19 @@ export const styles = StyleSheet.create({
   },
   dateGridItemActive: {
     borderRadius: 12,
-    backgroundColor: '#DBEAFE',
+    backgroundColor: 'rgba(99, 102, 241, 0.22)',
   },
   dateGridItemText: {
     fontSize: 15,
     lineHeight: 28,
     fontWeight: '700',
-    color: '#262626',
+    color: AppPalette.text,
   },
   dateGridItemTextMuted: {
-    color: '#737373',
+    color: AppPalette.textMuted,
   },
   dateGridItemTextActive: {
-    color: '#2563EB',
+    color: AppPalette.brandLight,
   },
   clockPickerContent: {
     gap: 12,
@@ -309,19 +317,19 @@ export const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: 'rgba(99, 102, 241, 0.18)',
   },
   clockNowButtonText: {
     fontSize: 14,
     lineHeight: 20,
     fontWeight: '700',
-    color: '#2563EB',
+    color: AppPalette.brandLight,
   },
   clockPickerSectionTitle: {
     fontSize: 14,
     lineHeight: 20,
     fontWeight: '800',
-    color: '#525252',
+    color: AppPalette.textMuted,
   },
   clockOptionGrid: {
     flexDirection: 'row',
@@ -334,26 +342,26 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 12,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: AppPalette.surfaceSoft,
   },
   clockOptionActive: {
-    backgroundColor: '#DBEAFE',
+    backgroundColor: 'rgba(99, 102, 241, 0.22)',
   },
   clockOptionText: {
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '700',
-    color: '#525252',
+    color: AppPalette.textMuted,
   },
   clockOptionTextActive: {
-    color: '#2563EB',
+    color: AppPalette.brandLight,
   },
   clockPickerDoneButton: {
     height: 46,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 14,
-    backgroundColor: '#3B82F6',
+    backgroundColor: AppPalette.brand,
   },
   clockPickerDoneText: {
     fontSize: 16,
@@ -372,19 +380,19 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 16,
     paddingVertical: 14,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: AppPalette.surfaceSoft,
   },
   incomeExpenseOptionActive: {
-    backgroundColor: '#DBEAFE',
+    backgroundColor: 'rgba(99, 102, 241, 0.22)',
   },
   incomeExpenseOptionText: {
     fontSize: 16,
     lineHeight: 22,
     fontWeight: '700',
-    color: '#525252',
+    color: AppPalette.textMuted,
   },
   incomeExpenseOptionTextActive: {
-    color: '#2563EB',
+    color: AppPalette.brandLight,
   },
   billTypeGrid: {
     flexDirection: 'row',
@@ -407,18 +415,18 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 36,
-    backgroundColor: '#F0F0F0',
+    backgroundColor: AppPalette.surfaceSoft,
   },
   billTypeIconCircleActive: {
-    backgroundColor: '#DBEAFE',
+    backgroundColor: 'rgba(99, 102, 241, 0.22)',
   },
   billTypeOptionLabel: {
     fontSize: 14,
     lineHeight: 20,
-    color: '#525252',
+    color: AppPalette.textMuted,
   },
   billTypeOptionLabelActive: {
     fontWeight: '700',
-    color: '#2563EB',
+    color: AppPalette.brandLight,
   },
 });

@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { styles } from '@/styles/accountingEntry';
+import { AppPalette } from '@/constants/theme';
 
 import { ThemedText } from '@/components/themed-text';
 import {
@@ -397,7 +398,7 @@ export default function AccountingEntryScreen() {
         <View style={styles.screen}>
           <View style={styles.header}>
             <Pressable style={styles.iconButton} onPress={() => router.back()}>
-              <MaterialIcons name="arrow-back" size={24} color="#262626" />
+              <MaterialIcons name="arrow-back" size={24} color={AppPalette.text} />
             </Pressable>
             <ThemedText style={styles.headerTitle}>{isEditing ? '更改账单' : '账单录入'}</ThemedText>
             <View style={styles.iconButton} />
@@ -429,7 +430,7 @@ export default function AccountingEntryScreen() {
                     <MaterialIcons
                       name={selectedBillTypeOption?.icon ?? 'edit-note'}
                       size={24}
-                      color="#525252"
+                      color={AppPalette.textMuted}
                     />
                   </View>
                   <View style={styles.summaryTextGroup}>
@@ -447,7 +448,7 @@ export default function AccountingEntryScreen() {
                     value={customBillType}
                     onChangeText={setCustomBillType}
                     placeholder="请输入自定义类型"
-                    placeholderTextColor="#A3A3A3"
+                    placeholderTextColor={AppPalette.textSubtle}
                     style={styles.input}
                   />
                 </FormField>
@@ -458,7 +459,7 @@ export default function AccountingEntryScreen() {
                   value={amount}
                   onChangeText={handleAmountChange}
                   placeholder="请输入金额"
-                  placeholderTextColor="#A3A3A3"
+                  placeholderTextColor={AppPalette.textSubtle}
                   inputMode="decimal"
                   keyboardType="default"
                   autoCorrect={false}
@@ -480,7 +481,7 @@ export default function AccountingEntryScreen() {
                     value={dateInput}
                     onChangeText={handleDateInputChange}
                     placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#A3A3A3"
+                    placeholderTextColor={AppPalette.textSubtle}
                     inputMode="numeric"
                     keyboardType="numbers-and-punctuation"
                     autoCorrect={false}
@@ -490,7 +491,7 @@ export default function AccountingEntryScreen() {
                     accessibilityLabel="选择账单日期"
                     style={styles.inputPickerButton}
                     onPress={openDatePicker}>
-                    <MaterialIcons name="calendar-today" size={20} color="#2563EB" />
+                    <MaterialIcons name="calendar-today" size={20} color={AppPalette.brandLight} />
                   </Pressable>
                 </View>
                 {dateInputError ? <ThemedText style={styles.errorText}>{dateInputError}</ThemedText> : null}
@@ -507,7 +508,7 @@ export default function AccountingEntryScreen() {
                     value={clockInput}
                     onChangeText={handleClockInputChange}
                     placeholder="HH:mm"
-                    placeholderTextColor="#A3A3A3"
+                    placeholderTextColor={AppPalette.textSubtle}
                     inputMode="numeric"
                     keyboardType="numbers-and-punctuation"
                     autoCorrect={false}
@@ -517,7 +518,7 @@ export default function AccountingEntryScreen() {
                     accessibilityLabel="选择账单时间"
                     style={styles.inputPickerButton}
                     onPress={() => setIsClockPickerVisible(true)}>
-                    <MaterialIcons name="schedule" size={22} color="#2563EB" />
+                    <MaterialIcons name="schedule" size={22} color={AppPalette.brandLight} />
                   </Pressable>
                 </View>
                 {clockInputError ? <ThemedText style={styles.errorText}>{clockInputError}</ThemedText> : null}
@@ -528,7 +529,7 @@ export default function AccountingEntryScreen() {
                   value={remark}
                   onChangeText={setRemark}
                   placeholder="请输入备注"
-                  placeholderTextColor="#A3A3A3"
+                  placeholderTextColor={AppPalette.textSubtle}
                   multiline
                   style={[styles.input, styles.remarkInput]}
                 />
@@ -615,11 +616,11 @@ export default function AccountingEntryScreen() {
             <View style={styles.datePickerContent}>
               <View style={styles.datePickerHeader}>
                 <Pressable style={styles.datePickerMonthButton} onPress={() => handleChangeDatePickerMonth(-1)}>
-                  <MaterialIcons name="chevron-left" size={22} color="#2563EB" />
+                  <MaterialIcons name="chevron-left" size={22} color={AppPalette.brandLight} />
                 </Pressable>
                 <ThemedText style={styles.datePickerMonthText}>{datePickerMonthLabel}</ThemedText>
                 <Pressable style={styles.datePickerMonthButton} onPress={() => handleChangeDatePickerMonth(1)}>
-                  <MaterialIcons name="chevron-right" size={22} color="#2563EB" />
+                  <MaterialIcons name="chevron-right" size={22} color={AppPalette.brandLight} />
                 </Pressable>
               </View>
               <View style={styles.weekdayRow}>
@@ -664,7 +665,7 @@ export default function AccountingEntryScreen() {
              */}
             <View style={styles.clockPickerContent}>
               <Pressable style={styles.clockNowButton} onPress={handleUseCurrentClock}>
-                <MaterialIcons name="access-time" size={18} color="#2563EB" />
+                <MaterialIcons name="access-time" size={18} color={AppPalette.brandLight} />
                 <ThemedText style={styles.clockNowButtonText}>使用当前时间</ThemedText>
               </Pressable>
               <ThemedText style={styles.clockPickerSectionTitle}>小时</ThemedText>

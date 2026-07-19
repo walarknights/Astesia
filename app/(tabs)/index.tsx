@@ -4,11 +4,18 @@ import { Image } from 'expo-image';
 import * as Location from 'expo-location';
 import { Link } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 
 import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { AppPalette } from '@/constants/theme';
 import { setCachedWeatherDashboard } from '@/services/weather-dashboard-store';
 import {
   type WeatherDashboard,
@@ -57,31 +64,82 @@ const WEATHER_BACKGROUNDS: Record<WeatherType, string> = {
 };
 
 
+const HOME_DARK_THEME = {
+  background: AppPalette.background,
+  panel: AppPalette.surfaceSoft,
+  border: AppPalette.border,
+  borderStrong: AppPalette.borderStrong,
+  shadow: AppPalette.shadow,
+  text: AppPalette.text,
+  textMuted: AppPalette.textMuted,
+  weatherOverlay: 'rgba(15, 15, 26, 0.48)',
+  weatherPanel: 'rgba(15,15,26,0.42)',
+  actionBackground: 'rgba(99, 102, 241, 0.14)',
+  actionText: AppPalette.brandLight,
+  featureCard: '#171723',
+  featureIconBackground: '#273053',
+  featureIconBorder: 'rgba(129, 140, 248, 0.28)',
+  featureTagBackground: 'rgba(99, 102, 241, 0.14)',
+  featureTagText: '#B8C1FF',
+} as const;
+
+const HOME_LIGHT_THEME = {
+  background: '#F8FAFC',
+  panel: '#FFFFFF',
+  border: '#E5E7EB',
+  borderStrong: '#CBD5E1',
+  shadow: '#0F172A',
+  text: '#0F172A',
+  textMuted: '#64748B',
+  weatherOverlay: 'rgba(15, 23, 42, 0.22)',
+  weatherPanel: 'rgba(255,255,255,0.22)',
+  actionBackground: '#EFF6FF',
+  actionText: '#2563EB',
+  featureCard: '#FFFFFF',
+  featureIconBackground: '#EEF2FF',
+  featureIconBorder: '#C7D2FE',
+  featureTagBackground: '#EEF2FF',
+  featureTagText: '#4338CA',
+} as const;
+
 // 功能卡片
 const FEATURE_CARDS = [
   {
     href: '/notes' as const,
     title: '笔记',
-    description: '记录灵感，也可切换待办',
+    description: '基于 TipTap 的富文本编辑器，支持图文混排、实时草稿保存，灵感来了随时记录。',
     icon: 'edit-note' as const,
-    backgroundColor: '#FFF7ED',
-    iconColor: '#EA580C',
+    iconColor: '#8B92FF',
+    tags: ['富文本', '图片笔记', '草稿同步'],
+  },
+  {
+    href: '/todo' as const,
+    title: '待办',
+    description: '把目标拆成清单，支持提醒时间、完成状态和待办管理，让每天的安排更清晰。',
+    icon: 'checklist' as const,
+    iconColor: '#8B92FF',
+    tags: ['任务清单', '提醒时间', '完成追踪'],
   },
   {
     href: '/accounting' as const,
     title: '记账',
-    description: '整理收支，查看消费节奏',
+    description: '记录收入支出，查看预算、账单和资产趋势，快速掌握自己的消费节奏。',
     icon: 'account-balance-wallet' as const,
-    backgroundColor: '#ECFDF5',
-    iconColor: '#059669',
+    iconColor: '#34D399',
+    tags: ['收支记录', '预算统计', '资产趋势'],
   },
 ];
 // 首页
 export default function HomeScreen() {
-  const { settings } = useAppSettings();
+  const { settings, resolvedColorScheme, updateSettings } = useAppSettings();
+  const { width: viewportWidth } = useWindowDimensions();
   const [dashboard, setDashboard] = useState<WeatherDashboard | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const isLightHomeTheme = resolvedColorScheme === 'light';
+  const homeTheme = isLightHomeTheme ? HOME_LIGHT_THEME : HOME_DARK_THEME;
+  const featureCardWidth = Math.min(Math.max(viewportWidth - 84, 308), 820);
+  const nextThemeLabel = isLightHomeTheme ? '深色模式' : '浅色模式';
   const displayDashboard = dashboard ?? PLACEHOLDER_DASHBOARD;
   const displayWeather = displayDashboard.current;
   const displayFeatureCards = useMemo(
@@ -145,6 +203,10 @@ export default function HomeScreen() {
     }
   }, []);
 
+  const handleToggleHomeTheme = useCallback(() => {
+    updateSettings({ themeMode: isLightHomeTheme ? 'dark' : 'light' });
+  }, [isLightHomeTheme, updateSettings]);
+
   const handleSelectCity = useCallback(async (cityName: string) => {
     setIsLoading(true);
     setErrorMessage(null);
@@ -184,7 +246,7 @@ export default function HomeScreen() {
   return (
     <>
       <ParallaxScrollView
-        headerBackgroundColor={{ light: '#0c82eaff', dark: '#0F172A' }}
+        headerBackgroundColor={{ light: homeTheme.background, dark: homeTheme.background }}
         headerImage={
           <View style={styles.weatherHero}>
             <Image
@@ -192,7 +254,7 @@ export default function HomeScreen() {
               contentFit="cover"
               style={[StyleSheet.absoluteFillObject, styles.weatherBackgroundImage]}
             />
-            <View style={styles.weatherOverlay} />
+            <View style={[styles.weatherOverlay, { backgroundColor: homeTheme.weatherOverlay }]} />
 
             <View style={styles.weatherContent}>
               <View style={styles.headerTopRow}>
@@ -212,7 +274,14 @@ export default function HomeScreen() {
                   <ThemedText style={styles.weatherLabel}>{displayWeather.weatherLabel}</ThemedText>
                 </View>
 
-                <View style={styles.weatherSecondary}>
+                <View
+                  style={[
+                    styles.weatherSecondary,
+                    {
+                      borderColor: isLightHomeTheme ? 'rgba(255,255,255,0.42)' : 'rgba(255,255,255,0.14)',
+                      backgroundColor: homeTheme.weatherPanel,
+                    },
+                  ]}>
                   <ThemedText style={styles.summaryTitle}>实时天气</ThemedText>
                   <ThemedText style={styles.summaryText}>{displayWeather.highLow}</ThemedText>
                   <ThemedText style={styles.summaryText}>{displayWeather.humidity}</ThemedText>
@@ -223,30 +292,79 @@ export default function HomeScreen() {
             </View>
           </View>
         }>
-        <ThemedView style={styles.contentSection}>
+        <ThemedView
+          lightColor={homeTheme.background}
+          darkColor={homeTheme.background}
+          style={[styles.contentSection, { backgroundColor: homeTheme.background }]}>
           <View style={styles.sectionHeaderRow}>
             <Link href="/weather-overview" asChild>
-              <Pressable accessibilityRole="button" style={styles.overviewEntryCard}>
+              <Pressable
+                accessibilityRole="button"
+                style={StyleSheet.flatten([
+                  styles.overviewEntryCard,
+                  {
+                    borderColor: homeTheme.border,
+                    backgroundColor: homeTheme.panel,
+                    shadowColor: homeTheme.shadow,
+                  },
+                ])}>
                 <View style={styles.overviewEntryHeader}>
                   <View style={styles.sectionHeaderText}>
-                    <ThemedText type="title" style={styles.sectionTitle}>
+                    <ThemedText type="title" style={[styles.sectionTitle, { color: homeTheme.text }]}>
                       今日天气概览
                     </ThemedText>
-                    <ThemedText style={styles.sectionDescription}>
+                    <ThemedText style={[styles.sectionDescription, { color: homeTheme.textMuted }]}>
                       点击进入统一查看空气质量、天气预警、生活指数和分钟降水。
                     </ThemedText>
                   </View>
-                  <View style={styles.overviewArrowBadge}>
-                    <MaterialIcons name="arrow-forward-ios" size={16} color="#0F766E" />
+                  <View style={[styles.overviewArrowBadge, { backgroundColor: homeTheme.actionBackground }]}>
+                    <MaterialIcons name="arrow-forward-ios" size={16} color={homeTheme.actionText} />
                   </View>
                 </View>
 
               </Pressable>
             </Link>
-            <Pressable onPress={() => void handleRefreshLocation()} style={styles.refreshButton}>
-              <MaterialIcons name="my-location" size={18} color="#0F766E" />
-              <ThemedText style={styles.refreshButtonText}>定位刷新</ThemedText>
-            </Pressable>
+            {/*
+             * 渲染位置: 首页天气概览卡片下方
+             * 展示内容: 定位刷新按钮与深浅主题切换按钮
+             * 数据来源: settings.themeMode 与 handleRefreshLocation 回调
+             */}
+            <View style={styles.homeActionRow}>
+              <Pressable
+                onPress={() => void handleRefreshLocation()}
+                style={[
+                  styles.refreshButton,
+                  {
+                    borderColor: homeTheme.borderStrong,
+                    backgroundColor: homeTheme.actionBackground,
+                  },
+                ]}>
+                <MaterialIcons name="my-location" size={18} color={homeTheme.actionText} />
+                <ThemedText style={[styles.refreshButtonText, { color: homeTheme.actionText }]}>
+                  定位刷新
+                </ThemedText>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={handleToggleHomeTheme}
+                style={[
+                  styles.refreshButton,
+                  styles.themeToggleButton,
+                  {
+                    borderColor: homeTheme.borderStrong,
+                    backgroundColor: homeTheme.actionBackground,
+                  },
+                ]}>
+                <MaterialIcons
+                  name={isLightHomeTheme ? 'dark-mode' : 'light-mode'}
+                  size={18}
+                  color={homeTheme.actionText}
+                />
+                <ThemedText style={[styles.refreshButtonText, { color: homeTheme.actionText }]}>
+                  切换{nextThemeLabel}
+                </ThemedText>
+              </Pressable>
+            </View>
           </View>
 
           {errorMessage ? (
@@ -266,22 +384,63 @@ export default function HomeScreen() {
         </ThemedView>
 
         
+        {/*
+         * 渲染位置: 首页底部功能入口区域
+         * 展示内容: 纵向排列的笔记、待办和记账大卡片入口及能力标签
+         * 数据来源: FEATURE_CARDS 常量与首页布局偏好 settings.homeLayout
+         */}
         <View style={styles.featureList}>
-          {displayFeatureCards.map((feature) => (
-            <View key={feature.href} style={styles.featureCardShadow}>
-              <Link href={feature.href} asChild>
-                <Pressable style={[styles.featureCard, { backgroundColor: feature.backgroundColor }]}>
-                  <View style={[styles.featureIconWrapper, { backgroundColor: '#FFFFFFCC' }]}>
-                    <MaterialIcons name={feature.icon} size={34} color={feature.iconColor} />
-                  </View>
-                  <ThemedText type="subtitle" style={styles.featureTitle}>
-                    {feature.title}
-                  </ThemedText>
-                  <ThemedText style={styles.featureDescription}>{feature.description}</ThemedText>
-                </Pressable>
-              </Link>
-            </View>
-          ))}
+          <View style={styles.featureColumnContent}>
+            {displayFeatureCards.map((feature) => (
+              <View key={feature.href} style={[styles.featureCardShell, { width: featureCardWidth }]}>
+                <Link href={feature.href} asChild>
+                  <Pressable
+                    style={StyleSheet.flatten([
+                      styles.featureCard,
+                      {
+                        borderColor: homeTheme.border,
+                        backgroundColor: homeTheme.featureCard,
+                        shadowColor: homeTheme.shadow,
+                      },
+                    ])}>
+                    <View
+                      style={[
+                        styles.featureIconWrapper,
+                        {
+                          borderColor: homeTheme.featureIconBorder,
+                          backgroundColor: homeTheme.featureIconBackground,
+                        },
+                      ]}>
+                      <MaterialIcons name={feature.icon} size={34} color={feature.iconColor} />
+                    </View>
+                    <ThemedText type="subtitle" style={[styles.featureTitle, { color: homeTheme.text }]}>
+                      {feature.title}
+                    </ThemedText>
+                    <ThemedText style={[styles.featureDescription, { color: homeTheme.textMuted }]}>
+                      {feature.description}
+                    </ThemedText>
+                    <View style={styles.featureTagRow}>
+                      {feature.tags.map((tag) => (
+                        <View
+                          key={tag}
+                          style={[
+                            styles.featureTag,
+                            {
+                              borderColor: homeTheme.borderStrong,
+                              backgroundColor: homeTheme.featureTagBackground,
+                            },
+                          ]}>
+                          <ThemedText style={[styles.featureTagText, { color: homeTheme.featureTagText }]}>
+                            {tag}
+                          </ThemedText>
+                        </View>
+                      ))}
+                    </View>
+                  </Pressable>
+                </Link>
+              </View>
+            ))}
+          </View>
         </View>
       </ParallaxScrollView>
     </>
@@ -323,6 +482,9 @@ function getDisplayFeatureCards(homeLayout: string) {
 
 
 const styles = StyleSheet.create({
+  // [变更] 修改前: 首页正文使用浅灰底和纯白卡片
+  // [变更] 修改后: 使用蓝黑底、半透明玻璃卡片和靛青强调色
+  // [原因] 对齐推广页的深色沉浸感，同时保留天气图片的业务辨识度
   weatherHero: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -333,7 +495,7 @@ const styles = StyleSheet.create({
   },
   weatherOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(15, 23, 42, 0.28)',
+    backgroundColor: 'rgba(15, 15, 26, 0.48)',
   },
   weatherContent: {
     flex: 1,
@@ -373,7 +535,9 @@ const styles = StyleSheet.create({
   weatherSecondary: {
     flex: 1,
     borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    backgroundColor: 'rgba(15,15,26,0.42)',
     paddingHorizontal: 16,
     paddingVertical: 14,
     justifyContent: 'flex-end',
@@ -429,7 +593,7 @@ const styles = StyleSheet.create({
     gap: 12,
     borderRadius: 24,
     padding: 20,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.background,
   },
   sectionHeaderRow: {
     gap: 16,
@@ -442,16 +606,18 @@ const styles = StyleSheet.create({
     lineHeight: 32,
   },
   sectionDescription: {
-    color: '#475569',
+    color: AppPalette.textMuted,
   },
   overviewEntryCard: {
     gap: 16,
     borderRadius: 24,
     padding: 20,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
+    shadowColor: AppPalette.shadow,
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
     shadowOffset: { width: 0, height: 6 },
     elevation: 2,
   },
@@ -467,7 +633,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#CCFBF1',
+    backgroundColor: 'rgba(99, 102, 241, 0.16)',
   },
   overviewMetricGrid: {
     flexDirection: 'row',
@@ -505,10 +671,21 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: '#CCFBF1',
+    borderWidth: 1,
+    borderColor: AppPalette.borderStrong,
+    backgroundColor: 'rgba(99, 102, 241, 0.14)',
+  },
+  homeActionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 10,
+  },
+  themeToggleButton: {
+    paddingHorizontal: 14,
   },
   refreshButtonText: {
-    color: '#0F766E',
+    color: AppPalette.brandLight,
     fontSize: 14,
     lineHeight: 18,
     fontWeight: '600',
@@ -536,7 +713,9 @@ const styles = StyleSheet.create({
   dataCard: {
     borderRadius: 24,
     padding: 20,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
     gap: 10,
     shadowColor: '#0F172A',
     shadowOpacity: 0.05,
@@ -661,49 +840,72 @@ const styles = StyleSheet.create({
     lineHeight: 14,
   },
   featureList: {
-    gap: 16,
-    paddingHorizontal: 24,
-
-    alignItems: 'stretch',
-    borderRadius: 24,
+    marginTop: 2,
+    marginHorizontal: -32,
   },
-  featureCardShadow: {
-    width: '100%',
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 2,
-    borderRadius: 28,
-    padding: 20,
-    backgroundColor: '#FFFFFF',
+  featureColumnContent: {
+    // [变更] 修改前: 使用横向 ScrollView 让三张功能卡片按 row 排列
+    // [变更] 修改后: 使用 column 让三张功能卡片纵向堆叠
+    // [原因] 首页功能入口需要按从上到下的阅读顺序展示
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 20,
+    paddingHorizontal: 24,
+    paddingBottom: 112,
+  },
+  featureCardShell: {
+    paddingVertical: 6,
   },
   featureCard: {
     width: '100%',
-    aspectRatio: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
+    minHeight: 330,
+    borderWidth: 1,
+    borderRadius: 30,
+    paddingHorizontal: 28,
+    paddingVertical: 30,
+    alignItems: 'flex-start',
     justifyContent: 'flex-start',
-    padding: 32,
-    borderRadius: 28,
-  
+    shadowOpacity: 0.16,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 3,
   },
   featureIconWrapper: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
-    alignItems: 'flex-start',
+    width: 88,
+    height: 88,
+    borderWidth: 1,
+    borderRadius: 26,
+    alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
   featureTitle: {
-    marginBottom: 12,
-    fontSize: 28,
-    lineHeight: 30,
+    marginTop: 34,
+    fontSize: 32,
+    lineHeight: 38,
+    fontWeight: '800',
   },
   featureDescription: {
-    color: '#334155',
+    color: AppPalette.textMuted,
+    marginTop: 14,
+    fontSize: 18,
+    lineHeight: 29,
+  },
+  featureTagRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 26,
+  },
+  featureTag: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  featureTagText: {
     fontSize: 15,
-    lineHeight: 22,
+    lineHeight: 20,
+    fontWeight: '700',
   },
 });

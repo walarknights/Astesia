@@ -59,7 +59,7 @@ export default function ParallaxScrollView({
         ]}>
         {headerImage}
       </Animated.View>
-      <ThemedView style={styles.content}>
+      <ThemedView style={[styles.content, { backgroundColor }]}>
         {/*
          * 渲染位置: 视差滚动页面的正文内容区
          * 展示内容: 桌面 Web 下居中且限宽的内容列，移动端保持原始满宽滚动

@@ -35,7 +35,7 @@ type AppSettingsContextValue = {
 };
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
-  themeMode: 'system',
+  themeMode: 'dark',
   fontSize: 'medium',
   homeLayout: 'weather',
   personalBackground: 'person',
@@ -45,7 +45,6 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 const AppSettingsContext = createContext<AppSettingsContextValue | null>(null);
 
 export function AppSettingsProvider({ children }: PropsWithChildren) {
-  const systemColorScheme = useSystemColorScheme();
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
 
   useEffect(() => {
@@ -87,9 +86,10 @@ export function AppSettingsProvider({ children }: PropsWithChildren) {
     void storage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify(DEFAULT_APP_SETTINGS));
   }, []);
 
-  const resolvedColorScheme = settings.themeMode === 'system'
-    ? systemColorScheme ?? 'light'
-    : settings.themeMode;
+  // [变更] 修改前: 默认跟随系统外观，系统浅色时会把新版深色界面拆成浅色外壳
+  // [变更] 修改后: system 作为历史设置值按深色解析，首页按钮再显式切换 light/dark
+  // [原因] 满足“当前深色模式”和“原来的浅色模式”的稳定二选一
+  const resolvedColorScheme: 'light' | 'dark' = settings.themeMode === 'light' ? 'light' : 'dark';
 
   const contextValue = useMemo(
     () => ({

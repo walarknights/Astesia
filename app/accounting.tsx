@@ -11,6 +11,7 @@ import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, V
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Line, Rect } from 'react-native-svg';
 import { styles } from '@/styles/accountStyle';
+import { AppPalette } from '@/constants/theme';
 
 import { BottomSwitchBar } from '@/components/BottomSwitchBar';
 import { ThemedText } from '@/components/themed-text';
@@ -1137,7 +1138,7 @@ export default function AccountingScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <StatusBar style={activeTab === 'asset' ? 'light' : 'dark'} />
+      <StatusBar style="light" />
       <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
         {/*
          * 渲染位置: 记账页与资产页安全区和内容区最底层
@@ -1145,7 +1146,7 @@ export default function AccountingScreen() {
          * 数据来源: LinearGradient 固定渐变色配置
          */}
         <LinearGradient
-          colors={['#59A8FF', '#8FC7FF', '#CFEDFA']}
+          colors={['#29285B', '#17172E', AppPalette.background]}
           start={{ x: 0.5, y: 0 }}
           end={{ x: 0.5, y: 1 }}
           pointerEvents="none"
@@ -1176,11 +1177,11 @@ export default function AccountingScreen() {
                     </View>
                     <View style={styles.assetOverviewActionGroup}>
                       <Pressable style={styles.assetOverviewActionButton} onPress={openHeroImageModal}>
-                        <MaterialIcons name="image" size={16} color="#2563EB" />
+                        <MaterialIcons name="image" size={16} color={AppPalette.brandLight} />
                         <ThemedText style={styles.assetOverviewActionText}>背景</ThemedText>
                       </Pressable>
                       <Pressable style={styles.assetOverviewActionButton} onPress={openAssetModal}>
-                        <MaterialIcons name="edit" size={16} color="#2563EB" />
+                        <MaterialIcons name="edit" size={16} color={AppPalette.brandLight} />
                         <ThemedText style={styles.assetOverviewActionText}>设置</ThemedText>
                       </Pressable>
                     </View>
@@ -1189,11 +1190,11 @@ export default function AccountingScreen() {
                   <View style={styles.assetBillLinkRow}>
                     <Pressable style={styles.assetBillLinkButton} onPress={() => openBillPeriodModal('year')}>
                       <ThemedText style={styles.assetBillLinkText}>年账单</ThemedText>
-                      <MaterialIcons name="chevron-right" size={18} color="#111827" />
+                      <MaterialIcons name="chevron-right" size={18} color={AppPalette.textMuted} />
                     </Pressable>
                     <Pressable style={styles.assetBillLinkButton} onPress={() => openBillPeriodModal('month')}>
                       <ThemedText style={styles.assetBillLinkText}>月账单</ThemedText>
-                      <MaterialIcons name="chevron-right" size={18} color="#111827" />
+                      <MaterialIcons name="chevron-right" size={18} color={AppPalette.textMuted} />
                     </Pressable>
                   </View>
 
@@ -1239,7 +1240,7 @@ export default function AccountingScreen() {
                 <View style={styles.assetSearchCard}>
                   <ThemedText style={styles.assetSearchTitle}>{securityName}</ThemedText>
                   <Pressable style={styles.assetSearchBox} onPress={openAssetSearchModal}>
-                    <MaterialIcons name="search" size={20} color="#6B7280" />
+                    <MaterialIcons name="search" size={20} color={AppPalette.textMuted} />
                     <ThemedText style={styles.assetSearchPlaceholder}>
                       {selectedSecurity ? `${selectedSecurity.code} · ${selectedSecurity.type}` : '搜索股票/基金'}
                     </ThemedText>
@@ -1402,20 +1403,20 @@ export default function AccountingScreen() {
               <>
                 <View style={styles.header}>
                   <Pressable style={styles.iconButton} onPress={() => router.back()}>
-                    <MaterialIcons name="arrow-back" size={24} color="#262626" />
+                    <MaterialIcons name="arrow-back" size={24} color={AppPalette.text} />
                   </Pressable>
 
                   <Pressable style={styles.monthBadge} onPress={() => openBillPeriodModal(billQueryScope)}>
                     <ThemedText style={styles.monthText}>{currentBillPeriodLabel}</ThemedText>
-                    <MaterialIcons name="keyboard-arrow-down" size={18} color="#262626" />
+                    <MaterialIcons name="keyboard-arrow-down" size={18} color={AppPalette.text} />
                   </Pressable>
 
                   <View style={styles.headerActions}>
                     <View style={styles.iconButton}>
-                      <MaterialIcons name="calendar-today" size={21} color="#262626" />
+                      <MaterialIcons name="calendar-today" size={21} color={AppPalette.text} />
                     </View>
                     <View style={styles.iconButton}>
-                      <MaterialIcons name="insert-chart-outlined" size={22} color="#262626" />
+                      <MaterialIcons name="insert-chart-outlined" size={22} color={AppPalette.text} />
                     </View>
                   </View>
                 </View>

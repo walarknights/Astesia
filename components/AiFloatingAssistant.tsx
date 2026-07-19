@@ -27,6 +27,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
+import { AppPalette } from '@/constants/theme';
 import {
   AI_ASSISTANT_WELCOME_MESSAGE,
   DEFAULT_AI_CONVERSATION_TITLE,
@@ -1128,7 +1129,7 @@ export function AiFloatingAssistant() {
                     accessibilityRole="button"
                     onPress={() => setIsConversationDrawerVisible(true)}
                     style={styles.menuButton}>
-                    <MaterialIcons name="menu-open" size={24} color="#111827" />
+                    <MaterialIcons name="menu-open" size={24} color={AppPalette.text} />
                   </Pressable>
                   <Pressable
                     accessibilityLabel="修改当前对话标题"
@@ -1139,7 +1140,7 @@ export function AiFloatingAssistant() {
                       {conversationTitle}
                     </ThemedText>
                     {isTitleSummarizing ? (
-                      <ActivityIndicator color="#64748B" size="small" />
+                      <ActivityIndicator color={AppPalette.textMuted} size="small" />
                     ) : null}
                   </Pressable>
                   <Pressable
@@ -1148,7 +1149,7 @@ export function AiFloatingAssistant() {
                     disabled={isSending}
                     onPress={startNewConversation}
                     style={[styles.newConversationButton, isSending && styles.newConversationButtonDisabled]}>
-                    <MaterialIcons name="add" size={30} color="#111827" />
+                    <MaterialIcons name="add" size={30} color={AppPalette.text} />
                   </Pressable>
                 </View>
 
@@ -1163,7 +1164,7 @@ export function AiFloatingAssistant() {
                     accessibilityLabel="选择 AI 模型"
                     onPress={() => setIsModelSheetVisible(true)}
                     style={styles.modelSelector}>
-                    <MaterialIcons name="psychology" size={27} color="#4B5563" />
+                    <MaterialIcons name="psychology" size={27} color={AppPalette.brandLight} />
                     <View style={styles.modelPill}>
                       <ThemedText numberOfLines={1} style={styles.modelText}>
                         {isModelsLoading ? '正在加载模型...' : selectedModelLabel}
@@ -1190,7 +1191,7 @@ export function AiFloatingAssistant() {
                     accessibilityRole="button"
                     onPress={() => setIsKnowledgeExpanded((visible) => !visible)}
                     style={styles.knowledgeExpandButton}>
-                    <MaterialIcons name="summarize" size={24} color="#1664FF" />
+                    <MaterialIcons name="summarize" size={24} color={AppPalette.brandLight} />
                     <ThemedText numberOfLines={1} style={styles.knowledgeTitle}>
                       当前屏幕知识库
                     </ThemedText>
@@ -1221,7 +1222,7 @@ export function AiFloatingAssistant() {
                       <Animated.View
                         pointerEvents="none"
                         style={[styles.knowledgeIncludeIconLayer, knowledgeIncludeActiveIconAnimatedStyle]}>
-                        <MaterialIcons name="check-circle" size={22} color="#1664FF" />
+                        <MaterialIcons name="check-circle" size={22} color={AppPalette.brandLight} />
                       </Animated.View>
                     </Animated.View>
                   </Pressable>
@@ -1231,7 +1232,7 @@ export function AiFloatingAssistant() {
                     onPress={() => setIsKnowledgeExpanded((visible) => !visible)}
                     style={styles.knowledgeCaretButton}>
                     <Animated.View style={[styles.knowledgeCaret, knowledgeCaretAnimatedStyle]}>
-                      <MaterialIcons name="arrow-drop-down" size={36} color="#111827" />
+                      <MaterialIcons name="arrow-drop-down" size={36} color={AppPalette.text} />
                     </Animated.View>
                   </Pressable>
                 </View>
@@ -1398,7 +1399,7 @@ export function AiFloatingAssistant() {
                 showsVerticalScrollIndicator={false}>
                 {isHistoryLoading ? (
                   <View style={styles.loadingBubble}>
-                    <ActivityIndicator color="#1664FF" />
+                    <ActivityIndicator color={AppPalette.brandLight} />
                     <ThemedText style={styles.loadingText}>正在读取历史对话...</ThemedText>
                   </View>
                 ) : (
@@ -1431,7 +1432,7 @@ export function AiFloatingAssistant() {
                       )}
                       {message.role === 'assistant' && !message.content.trim() && isSending && index === messages.length - 1 ? (
                         <View style={styles.streamingState}>
-                          <ActivityIndicator color="#1664FF" size="small" />
+                          <ActivityIndicator color={AppPalette.brandLight} size="small" />
                           <ThemedText style={styles.loadingText}>AI 正在思考...</ThemedText>
                         </View>
                       ) : null}
@@ -1449,16 +1450,16 @@ export function AiFloatingAssistant() {
                 <View style={styles.composerHeader}>
                   <View style={styles.toolBar}>
                     <Pressable accessibilityLabel="上传图片" onPress={pickImage} style={styles.toolButton}>
-                      <MaterialIcons name="image" size={22} color="#4B5563" />
+                      <MaterialIcons name="image" size={22} color={AppPalette.textMuted} />
                     </Pressable>
                     <Pressable accessibilityLabel="上传文件" onPress={pickDocument} style={styles.toolButton}>
-                      <MaterialIcons name="folder-open" size={22} color="#4B5563" />
+                      <MaterialIcons name="folder-open" size={22} color={AppPalette.textMuted} />
                     </Pressable>
                     <Pressable accessibilityLabel="插件功能" onPress={() => showPendingFeature('插件功能')} style={styles.toolButton}>
-                      <MaterialIcons name="star-border" size={22} color="#4B5563" />
+                      <MaterialIcons name="star-border" size={22} color={AppPalette.textMuted} />
                     </Pressable>
                     <Pressable accessibilityLabel="AI 配置" onPress={() => showPendingFeature('AI 配置')} style={styles.toolButton}>
-                      <MaterialIcons name="add" size={22} color="#4B5563" />
+                      <MaterialIcons name="add" size={22} color={AppPalette.textMuted} />
                     </Pressable>
                   </View>
                   <Pressable
@@ -1518,10 +1519,10 @@ export function AiFloatingAssistant() {
                   <TextInput
                     multiline
                     placeholder="输入对话内容..."
-                    cursorColor="#111827"
-                    keyboardAppearance="light"
-                    placeholderTextColor="#000000"
-                    selectionColor="#111827"
+                    cursorColor={AppPalette.brandLight}
+                    keyboardAppearance="dark"
+                    placeholderTextColor={AppPalette.textSubtle}
+                    selectionColor={AppPalette.brandLight}
                     value={draftMessage}
                     onChangeText={setDraftMessage}
                     style={styles.input}
@@ -1882,7 +1883,7 @@ function waitForScreenSettled() {
 
 const markdownStyles = {
   body: {
-    color: '#334155',
+    color: AppPalette.text,
     fontSize: 14,
     lineHeight: 22,
   },
@@ -1891,21 +1892,21 @@ const markdownStyles = {
     marginBottom: 8,
   },
   heading1: {
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 20,
     fontWeight: '700',
     marginTop: 4,
     marginBottom: 8,
   },
   heading2: {
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 18,
     fontWeight: '700',
     marginTop: 4,
     marginBottom: 8,
   },
   heading3: {
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 16,
     fontWeight: '700',
     marginTop: 4,
@@ -1920,19 +1921,19 @@ const markdownStyles = {
     marginBottom: 8,
   },
   list_item: {
-    color: '#334155',
+    color: AppPalette.text,
     marginBottom: 4,
   },
   strong: {
-    color: '#0F172A',
+    color: AppPalette.text,
     fontWeight: '700',
   },
   em: {
     fontStyle: 'italic',
   },
   code_inline: {
-    color: '#1664FF',
-    backgroundColor: '#EAF2FF',
+    color: AppPalette.brandLight,
+    backgroundColor: 'rgba(99, 102, 241, 0.18)',
     borderRadius: 6,
     paddingHorizontal: 4,
     paddingVertical: 2,
@@ -1955,19 +1956,22 @@ const markdownStyles = {
   },
   blockquote: {
     borderLeftWidth: 4,
-    borderLeftColor: '#BFDBFE',
-    backgroundColor: '#EFF6FF',
+    borderLeftColor: AppPalette.brandLight,
+    backgroundColor: 'rgba(99, 102, 241, 0.12)',
     paddingHorizontal: 12,
     paddingVertical: 8,
     marginTop: 4,
     marginBottom: 8,
   },
   link: {
-    color: '#1664FF',
+    color: AppPalette.brandLight,
   },
 } as const;
 
 const styles = StyleSheet.create({
+  // [变更] 修改前: AI 抽屉采用纯白背景、亮蓝控件与浅灰气泡
+  // [变更] 修改后: 使用深色玻璃抽屉、靛青紫控件与渐变感消息层级
+  // [原因] AI 是推广页核心卖点，需要与品牌视觉保持最高一致性
   floatingButton: {
     position: 'absolute',
     left: 0,
@@ -1976,8 +1980,8 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#4F46E5',
-    shadowColor: '#312E81',
+    backgroundColor: AppPalette.brand,
+    shadowColor: AppPalette.brandLight,
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.22,
     shadowRadius: 16,
@@ -2000,7 +2004,7 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(15, 23, 42, 0.24)',
+    backgroundColor: 'rgba(2, 2, 8, 0.66)',
   },
   keyboardAvoider: {
     flex: 1,
@@ -2008,7 +2012,9 @@ const styles = StyleSheet.create({
   },
   drawer: {
     height: '100%',
-    backgroundColor: '#FFFFFF',
+    borderRightWidth: 1,
+    borderRightColor: AppPalette.border,
+    backgroundColor: AppPalette.surface,
     paddingHorizontal: 18,
     shadowColor: '#0F172A',
     shadowOffset: { width: 12, height: 0 },
@@ -2033,7 +2039,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 4,
-    backgroundColor: '#F5F6F8',
+    backgroundColor: AppPalette.surfaceSoft,
   },
   conversationTitleBox: {
     flex: 1,
@@ -2045,7 +2051,7 @@ const styles = StyleSheet.create({
   },
   conversationTitle: {
     flexShrink: 1,
-    color: '#111827',
+    color: AppPalette.text,
     fontSize: 18,
     fontWeight: '400',
     lineHeight: 24,
@@ -2065,7 +2071,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   brandTitle: {
-    color: '#000000',
+    color: AppPalette.text,
     fontSize: 32,
     fontWeight: '100',
     lineHeight: 38,
@@ -2085,11 +2091,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginLeft: 10,
     borderRadius: 10,
-    backgroundColor: '#F2F3F5',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
     paddingHorizontal: 10,
   },
   modelText: {
-    color: '#111827',
+    color: AppPalette.text,
     fontSize: 16,
     fontWeight: '100',
     lineHeight: 20,
@@ -2106,11 +2114,13 @@ const styles = StyleSheet.create({
   },
   conversationDrawerBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(15, 23, 42, 0.18)',
+    backgroundColor: 'rgba(2, 2, 8, 0.62)',
   },
   conversationDrawer: {
     height: '100%',
-    backgroundColor: '#FFFFFF',
+    borderRightWidth: 1,
+    borderRightColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceElevated,
     paddingLeft: 8,
     paddingRight: 6,
     shadowColor: '#0F172A',
@@ -2129,7 +2139,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   conversationDrawerTitle: {
-    color: '#111827',
+    color: AppPalette.text,
     fontSize: 15,
     fontWeight: '800',
   },
@@ -2146,22 +2156,22 @@ const styles = StyleSheet.create({
   conversationListItem: {
     minHeight: 54,
     borderRadius: 10,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.surfaceSoft,
     paddingLeft: 8,
     paddingRight: 6,
     paddingVertical: 6,
   },
   conversationListItemActive: {
-    backgroundColor: '#EAF2FF',
+    backgroundColor: 'rgba(99, 102, 241, 0.18)',
   },
   conversationListTitle: {
-    color: '#334155',
+    color: AppPalette.textMuted,
     fontSize: 14,
     fontWeight: '700',
     lineHeight: 18,
   },
   conversationListTitleActive: {
-    color: '#1664FF',
+    color: AppPalette.brandLight,
   },
   conversationListTime: {
     marginTop: 2,
@@ -2178,14 +2188,16 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: 28,
-    backgroundColor: 'rgba(15, 23, 42, 0.28)',
+    backgroundColor: 'rgba(2, 2, 8, 0.74)',
   },
   conversationActionKeyboardAvoider: {
     width: '100%',
   },
   conversationActionSheet: {
     borderRadius: 18,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceElevated,
     paddingHorizontal: 18,
     paddingTop: 18,
     paddingBottom: 14,
@@ -2194,7 +2206,7 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   conversationActionTitle: {
-    color: '#111827',
+    color: AppPalette.text,
     fontSize: 16,
     fontWeight: '700',
     lineHeight: 24,
@@ -2206,14 +2218,14 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   conversationActionSubtitle: {
-    color: '#334155',
+    color: AppPalette.textMuted,
     fontSize: 14,
     lineHeight: 20,
     marginBottom: 20,
   },
   conversationActionLabel: {
     marginBottom: 10,
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 16,
     fontWeight: '700',
   },
@@ -2221,18 +2233,18 @@ const styles = StyleSheet.create({
     minHeight: 46,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#D6E4FF',
-    backgroundColor: '#F8FAFF',
+    borderColor: AppPalette.borderStrong,
+    backgroundColor: AppPalette.surface,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    color: '#111827',
+    color: AppPalette.text,
     fontSize: 16,
     lineHeight: 22,
   },
   conversationActionHint: {
     marginTop: 8,
     marginBottom: 20,
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 12,
     lineHeight: 16,
   },
@@ -2273,7 +2285,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderRadius: 10,
-    backgroundColor: 'rgba(41, 98, 255, 0.1)',
+    backgroundColor: 'rgba(99, 102, 241, 0.16)',
   },
   knowledgeExpandButton: {
     flex: 1,
@@ -2285,7 +2297,7 @@ const styles = StyleSheet.create({
   },
   knowledgeTitle: {
     marginLeft: 13,
-    color: '#1664FF',
+    color: AppPalette.brandLight,
     fontSize: 20,
     fontWeight: '800',
     lineHeight: 37,
@@ -2336,8 +2348,8 @@ const styles = StyleSheet.create({
     height: KNOWLEDGE_PANEL_HEIGHT,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(41, 98, 255, 0.16)',
-    backgroundColor: '#F8FAFF',
+    borderColor: AppPalette.borderStrong,
+    backgroundColor: AppPalette.surfaceElevated,
     padding: 10,
   },
   // [变更] 修改前: 知识库面板里的 ScrollView 没有占满固定高度容器，内容过长时无法稳定下滑
@@ -2350,13 +2362,13 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
   },
   knowledgeText: {
-    color: '#475569',
+    color: AppPalette.textMuted,
     fontSize: 13,
     lineHeight: 19,
   },
   knowledgeMeta: {
     marginBottom: 6,
-    color: '#64748B',
+    color: AppPalette.textSubtle,
     fontSize: 11,
     lineHeight: 16,
   },
@@ -2364,11 +2376,11 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#D6E4FF',
-    backgroundColor: '#FFFFFF',
+    borderColor: AppPalette.borderStrong,
+    backgroundColor: AppPalette.surface,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    color: '#334155',
+    color: AppPalette.text,
     fontSize: 13,
     lineHeight: 19,
   },
@@ -2383,10 +2395,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 7,
-    backgroundColor: '#1664FF',
+    backgroundColor: AppPalette.brand,
   },
   knowledgeActionButtonSecondary: {
-    backgroundColor: '#EAF2FF',
+    backgroundColor: 'rgba(99, 102, 241, 0.18)',
   },
   knowledgeActionButtonDisabled: {
     opacity: 0.56,
@@ -2397,7 +2409,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   knowledgeActionButtonTextSecondary: {
-    color: '#1664FF',
+    color: AppPalette.brandLight,
   },
   captureButton: {
     alignSelf: 'flex-start',
@@ -2405,7 +2417,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 7,
-    backgroundColor: '#1664FF',
+    backgroundColor: AppPalette.brand,
   },
   captureButtonDisabled: {
     opacity: 0.56,
@@ -2426,8 +2438,8 @@ const styles = StyleSheet.create({
     width: 92,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#D6E4FF',
-    backgroundColor: '#FFFFFF',
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
     padding: 5,
   },
   attachmentImage: {
@@ -2472,17 +2484,20 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
   },
   userBubble: {
     alignSelf: 'flex-end',
-    backgroundColor: '#1664FF',
+    borderColor: AppPalette.borderStrong,
+    backgroundColor: AppPalette.brand,
   },
   systemBubble: {
     maxWidth: '100%',
     borderWidth: 1,
-    borderColor: '#D6E4FF',
-    backgroundColor: '#F1F6FF',
+    borderColor: AppPalette.borderStrong,
+    backgroundColor: 'rgba(99, 102, 241, 0.14)',
   },
   loadingBubble: {
     flexDirection: 'row',
@@ -2490,7 +2505,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   loadingText: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 13,
   },
   streamingState: {
@@ -2499,7 +2514,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   messageText: {
-    color: '#334155',
+    color: AppPalette.text,
     fontSize: 14,
     lineHeight: 20,
   },
@@ -2507,7 +2522,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   systemMessageText: {
-    color: '#1664FF',
+    color: AppPalette.brandLight,
     fontSize: 13,
   },
   bottomArea: {
@@ -2536,7 +2551,9 @@ const styles = StyleSheet.create({
   composer: {
     minHeight: 44,
     borderRadius: 10,
-    backgroundColor: '#EFEFEF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
     paddingHorizontal: 12,
     paddingTop: 8,
     paddingBottom: 8,
@@ -2544,7 +2561,7 @@ const styles = StyleSheet.create({
   input: {
     minHeight: 28,
     maxHeight: 96,
-    color: '#000000',
+    color: AppPalette.text,
     fontSize: 14,
     fontWeight: '400',
     lineHeight: 20,
@@ -2558,7 +2575,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     borderRadius: 8,
-    backgroundColor: '#8EA46F',
+    backgroundColor: AppPalette.brand,
     paddingHorizontal: 12,
   },
   sendActionText: {
@@ -2573,16 +2590,18 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: 24,
-    backgroundColor: 'rgba(15, 23, 42, 0.28)',
+    backgroundColor: 'rgba(2, 2, 8, 0.74)',
   },
   modelSheet: {
     maxHeight: '62%',
     borderRadius: 20,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceElevated,
     padding: 16,
   },
   modelSheetTitle: {
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 18,
     fontWeight: '800',
     marginBottom: 8,
@@ -2602,7 +2621,7 @@ const styles = StyleSheet.create({
   modelRetryButton: {
     alignSelf: 'flex-start',
     borderRadius: 999,
-    backgroundColor: '#1664FF',
+    backgroundColor: AppPalette.brand,
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
@@ -2618,7 +2637,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   modelLoadingText: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 13,
   },
   modelList: {
@@ -2630,12 +2649,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E2E8F0',
+    borderBottomColor: AppPalette.border,
     gap: 10,
   },
   modelOptionText: {
     flex: 1,
-    color: '#334155',
+    color: AppPalette.text,
     fontSize: 14,
   },
 });

@@ -13,7 +13,7 @@ import {
 
 import { AstesiaLogo } from '@/components/AstesiaLogo';
 import { ThemedText } from '@/components/themed-text';
-import { Fonts } from '@/constants/theme';
+import { AppPalette, Fonts } from '@/constants/theme';
 import {
   clearAuthSession,
   getAiQuotaSummary,
@@ -705,6 +705,9 @@ function isNetworkRequestMessage(value: string) {
 }
 
 const styles = StyleSheet.create({
+  // [变更] 修改前: 用户信息与登录弹层采用高对比纯白卡片
+  // [变更] 修改后: 统一为深色玻璃表面、浅色文本与靛青主按钮
+  // [原因] 登录模块需要与个人页及推广页保持同一套视觉层级
   card: {
     height: 164,
     borderRadius: 25,
@@ -713,10 +716,12 @@ const styles = StyleSheet.create({
     paddingRight: 16,
     paddingBottom: 12,
     paddingLeft: 16,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
+    shadowColor: AppPalette.shadow,
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
     shadowOffset: { width: 0, height: 6 },
     elevation: 2,
   },
@@ -740,14 +745,14 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   loggedOutTitle: {
-    color: '#000000',
+    color: AppPalette.text,
     fontSize: 24,
     lineHeight: 30,
     fontWeight: '400',
     flexShrink: 1,
   },
   loggedOutSubtitle: {
-    color: '#9CA3AF',
+    color: AppPalette.textMuted,
     fontSize: 14,
     lineHeight: 18,
     fontStyle: 'italic',
@@ -762,7 +767,7 @@ const styles = StyleSheet.create({
     width: 47,
     height: 47,
     borderRadius: 999,
-    backgroundColor: '#D9D9D9',
+    backgroundColor: AppPalette.surfaceElevated,
   },
   avatarFallback: {
     width: 47,
@@ -770,10 +775,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#D9D9D9',
+    backgroundColor: AppPalette.surfaceElevated,
   },
   avatarFallbackText: {
-    color: '#334155',
+    color: AppPalette.brandLight,
     fontSize: 18,
     lineHeight: 22,
     fontWeight: '700',
@@ -783,13 +788,13 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   userNameText: {
-    color: '#000000',
+    color: AppPalette.text,
     fontSize: 16,
     lineHeight: 20,
     fontWeight: '400',
   },
   userSubtitleText: {
-    color: '#000000',
+    color: AppPalette.textMuted,
     fontSize: 12,
     lineHeight: 16,
   },
@@ -808,14 +813,14 @@ const styles = StyleSheet.create({
   },
   metricText: {
     flexShrink: 1,
-    color: '#000000',
+    color: AppPalette.textMuted,
     fontSize: 12,
     lineHeight: 16,
   },
   divider: {
     height: 1,
     marginTop: 12,
-    backgroundColor: '#000000',
+    backgroundColor: AppPalette.border,
   },
   footerRow: {
     flexDirection: 'row',
@@ -838,21 +843,23 @@ const styles = StyleSheet.create({
     height: 27.22,
   },
   footerText: {
-    color: '#000000',
+    color: AppPalette.textMuted,
     fontSize: 12,
     lineHeight: 16,
   },
   modalBackdrop: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(15, 23, 42, 0.42)',
+    backgroundColor: 'rgba(2, 2, 8, 0.74)',
   },
   modalCard: {
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     padding: 20,
     gap: 16,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceElevated,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -861,7 +868,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   modalTitle: {
-    color: '#0F172A',
+    color: AppPalette.text,
   },
   modeSwitchRow: {
     flexDirection: 'row',
@@ -873,13 +880,13 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F1F5F9',
+    backgroundColor: AppPalette.surfaceSoft,
   },
   modeSwitchButtonActive: {
-    backgroundColor: '#111111',
+    backgroundColor: AppPalette.brand,
   },
   modeSwitchButtonText: {
-    color: '#475569',
+    color: AppPalette.textMuted,
     fontSize: 14,
     lineHeight: 18,
     fontWeight: '700',
@@ -893,29 +900,29 @@ const styles = StyleSheet.create({
   input: {
     minHeight: 50,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: AppPalette.borderStrong,
     borderRadius: 16,
     paddingHorizontal: 14,
-    color: '#0F172A',
-    backgroundColor: '#FFFFFF',
+    color: AppPalette.text,
+    backgroundColor: AppPalette.surface,
     fontSize: 14,
     lineHeight: 20,
   },
   passwordInputRow: {
     minHeight: 50,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: AppPalette.borderStrong,
     borderRadius: 16,
     paddingLeft: 14,
     paddingRight: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: AppPalette.surface,
   },
   passwordTextInput: {
     flex: 1,
     paddingVertical: 14,
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 14,
     lineHeight: 20,
   },
@@ -937,7 +944,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#111111',
+    backgroundColor: AppPalette.purple,
   },
   verificationButtonText: {
     color: '#FFFFFF',
@@ -946,7 +953,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   formHelpText: {
-    color: '#475569',
+    color: AppPalette.textMuted,
     fontSize: 13,
     lineHeight: 20,
   },
@@ -955,7 +962,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#0F766E',
+    backgroundColor: AppPalette.brand,
   },
   submitButtonText: {
     color: '#FFFFFF',

@@ -146,14 +146,14 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
       margin: 0;
       min-height: 100%;
       overflow: hidden;
-      background: #ffffff;
-      color: #0f172a;
+      color: #f8fafc;
+      background: #171726;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     }
 
     .editor-shell {
       min-height: ${MIN_EDITOR_HEIGHT}px;
-      background: #ffffff;
+      background: #171726;
     }
 
     .toolbar {
@@ -164,18 +164,18 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
       flex-wrap: wrap;
       gap: 8px;
       padding: 12px;
-      border-bottom: 1px solid #e2e8f0;
-      background: rgba(255, 255, 255, 0.96);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+      background: rgba(30, 30, 46, 0.96);
       backdrop-filter: blur(14px);
     }
 
     .toolbar-button {
       min-height: 34px;
-      border: 1px solid #e9d5ff;
+      border: 1px solid rgba(129, 140, 248, 0.34);
       border-radius: 999px;
       padding: 7px 12px;
-      color: #6d28d9;
-      background: #f3e8ff;
+      color: #818cf8;
+      background: rgba(99, 102, 241, 0.18);
       font-size: 13px;
       font-weight: 700;
     }
@@ -183,14 +183,14 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
     .toolbar-divider {
       width: 1px;
       min-height: 30px;
-      background: #e2e8f0;
+      background: rgba(255, 255, 255, 0.09);
     }
 
     #editor {
       min-height: 420px;
       padding: 18px;
       outline: none;
-      color: #0f172a;
+      color: #f8fafc;
       font-size: 18px;
       line-height: 1.72;
       word-break: break-word;
@@ -200,7 +200,7 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
 
     #editor:empty::before {
       content: attr(data-placeholder);
-      color: #94a3b8;
+      color: #64748b;
       pointer-events: none;
     }
 
@@ -212,7 +212,7 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
     #editor h2,
     #editor h3 {
       margin: 20px 0 12px;
-      color: #111827;
+      color: #f8fafc;
       line-height: 1.25;
     }
 
@@ -239,8 +239,8 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
       border-left: 4px solid #c4b5fd;
       padding: 8px 14px;
       border-radius: 10px;
-      color: #475569;
-      background: #f8fafc;
+      color: #94a3b8;
+      background: rgba(255, 255, 255, 0.05);
     }
 
     #editor img {
@@ -435,12 +435,15 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
 }
 
 const styles = StyleSheet.create({
+  // [变更] 修改前: 原生富文本 WebView 使用白色底
+  // [变更] 修改后: 使用与编辑器卡片一致的深色表面
+  // [原因] 避免正文区域在深色主题中产生突兀的白色块
   container: {
     overflow: 'hidden',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#171726',
   },
   webView: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#171726',
   },
 });

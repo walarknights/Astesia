@@ -9,6 +9,7 @@ import 'react-native-reanimated';
 
 import { AiFloatingAssistant } from '@/components/AiFloatingAssistant';
 import { PwaInstallBanner } from '@/components/PwaInstallBanner';
+import { AppPalette } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { DESKTOP_WEB_MAX_WIDTH, useWebLayout } from '@/hooks/use-web-layout';
 import { AppSettingsProvider } from '@/services/app-settings';
@@ -58,6 +59,32 @@ export default function RootLayout() {
 function RootNavigator() {
   const colorScheme = useColorScheme();
   const { isDesktopWeb } = useWebLayout();
+  const isDarkMode = colorScheme === 'dark';
+  const navigationTheme = isDarkMode
+    ? {
+        ...DarkTheme,
+        colors: {
+          ...DarkTheme.colors,
+          primary: AppPalette.brandLight,
+          background: AppPalette.background,
+          card: AppPalette.surface,
+          text: AppPalette.text,
+          border: AppPalette.border,
+          notification: AppPalette.accent,
+        },
+      }
+    : {
+        ...DefaultTheme,
+        colors: {
+          ...DefaultTheme.colors,
+          primary: '#0A7EA4',
+          background: '#FFFFFF',
+          card: '#FFFFFF',
+          text: '#11181C',
+          border: '#E5E7EB',
+          notification: AppPalette.accent,
+        },
+      };
 
   const stackContent = (
     <ScreenCaptureRoot>
@@ -76,7 +103,7 @@ function RootNavigator() {
   );
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+    <ThemeProvider value={navigationTheme}>
       <ScreenCaptureProvider>
         {/*
          * 渲染位置: 应用根布局中部的主内容区域
@@ -84,8 +111,10 @@ function RootNavigator() {
          * 数据来源: useWebLayout 的桌面端判定结果与 expo-router Stack 路由页面
          */}
         {isDesktopWeb ? (
-          <View style={styles.desktopCanvas}>
-            <View style={styles.desktopShell}>{stackContent}</View>
+          <View style={[styles.desktopCanvas, !isDarkMode ? styles.desktopCanvasLight : null]}>
+            <View style={[styles.desktopShell, !isDarkMode ? styles.desktopShellLight : null]}>
+              {stackContent}
+            </View>
           </View>
         ) : (
           stackContent
@@ -109,11 +138,14 @@ function RootNavigator() {
 }
 
 const styles = StyleSheet.create({
+  // [变更] 修改前: 桌面端始终使用深色推广页外壳
+  // [变更] 修改后: 根据主题模式在深色外壳与原浅色外壳之间切换
+  // [原因] 首页新增主题切换后，Web 外层容器也需要同步视觉模式
   desktopCanvas: {
     flex: 1,
     paddingHorizontal: 24,
     paddingVertical: 20,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: AppPalette.background,
   },
   desktopShell: {
     flex: 1,
@@ -122,11 +154,23 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     overflow: 'hidden',
     borderRadius: 32,
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surface,
+    shadowColor: AppPalette.shadow,
+    shadowOpacity: 0.18,
+    shadowRadius: 36,
+    shadowOffset: { width: 0, height: 16 },
+    elevation: 12,
+  },
+  desktopCanvasLight: {
+    backgroundColor: '#E2E8F0',
+  },
+  desktopShellLight: {
+    borderColor: '#E5E7EB',
     backgroundColor: '#FFFFFF',
     shadowColor: '#0F172A',
     shadowOpacity: 0.12,
     shadowRadius: 28,
-    shadowOffset: { width: 0, height: 16 },
-    elevation: 12,
   },
 });

@@ -255,8 +255,8 @@ const editorStyles = `
   .editor-shell {
     min-height: 100vh;
     padding: 0;
-    color: #0f172a;
-    background: #ffffff;
+    color: #f8fafc;
+    background: #171726;
   }
 
   .toolbar {
@@ -267,18 +267,18 @@ const editorStyles = `
     flex-wrap: wrap;
     gap: 8px;
     padding: 12px;
-    border-bottom: 1px solid #e2e8f0;
-    background: rgba(255, 255, 255, 0.96);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+    background: rgba(30, 30, 46, 0.96);
     backdrop-filter: blur(14px);
   }
 
   .toolbar-button {
     min-height: 34px;
-    border: 1px solid #e9d5ff;
+    border: 1px solid rgba(129, 140, 248, 0.34);
     border-radius: 999px;
     padding: 7px 12px;
-    color: #6d28d9;
-    background: #f3e8ff;
+    color: #818cf8;
+    background: rgba(99, 102, 241, 0.18);
     font-size: 13px;
     font-weight: 700;
   }
@@ -288,22 +288,22 @@ const editorStyles = `
   }
 
   .toolbar-button-active {
-    border-color: #7c3aed;
+    border-color: #818cf8;
     color: #ffffff;
-    background: #7c3aed;
+    background: #6366f1;
   }
 
   .toolbar-divider {
     width: 1px;
     min-height: 30px;
-    background: #e2e8f0;
+    background: rgba(255, 255, 255, 0.09);
   }
 
   .note-editor-content {
     min-height: 420px;
     padding: 18px;
     outline: none;
-    color: #0f172a;
+    color: #f8fafc;
     font-size: 18px;
     line-height: 1.72;
   }
@@ -316,7 +316,7 @@ const editorStyles = `
   .note-editor-content h2,
   .note-editor-content h3 {
     margin: 20px 0 12px;
-    color: #111827;
+    color: #f8fafc;
     line-height: 1.25;
   }
 
@@ -343,8 +343,8 @@ const editorStyles = `
     border-left: 4px solid #c4b5fd;
     padding: 8px 14px;
     border-radius: 10px;
-    color: #475569;
-    background: #f8fafc;
+    color: #94a3b8;
+    background: rgba(255, 255, 255, 0.05);
   }
 
   .note-editor-content img {
@@ -359,7 +359,7 @@ const editorStyles = `
     content: attr(data-placeholder);
     float: left;
     height: 0;
-    color: #94a3b8;
+    color: #64748b;
     pointer-events: none;
   }
 `;

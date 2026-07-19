@@ -2,6 +2,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { ScrollView, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { AppPalette } from '@/constants/theme';
 import type { WeatherDashboard } from '@/services/type';
 
 type Props = {
@@ -207,17 +208,22 @@ export function WeatherOverviewSections({ dashboard }: Props) {
 }
 
 const styles = StyleSheet.create({
+  // [变更] 修改前: 天气数据分区采用纯白卡片与浅灰信息块
+  // [变更] 修改后: 改为深色玻璃层级，并保留空气质量和预警状态色
+  // [原因] 统一主题的同时不削弱关键天气状态的可识别性
   dataSection: {
     gap: 16,
   },
   dataCard: {
     borderRadius: 24,
     padding: 20,
-    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
     gap: 10,
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
+    shadowColor: AppPalette.shadow,
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
     shadowOffset: { width: 0, height: 6 },
     elevation: 2,
   },
@@ -230,10 +236,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: '#DCFCE7',
+    backgroundColor: 'rgba(52, 211, 153, 0.16)',
   },
   airBadgeText: {
-    color: '#166534',
+    color: AppPalette.success,
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '600',
@@ -242,10 +248,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: '#FEE2E2',
+    backgroundColor: 'rgba(248, 113, 113, 0.16)',
   },
   warningBadgeText: {
-    color: '#B91C1C',
+    color: AppPalette.danger,
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '600',
@@ -254,15 +260,15 @@ const styles = StyleSheet.create({
     fontSize: 22,
     lineHeight: 28,
     fontWeight: '700',
-    color: '#0F172A',
+    color: AppPalette.text,
   },
   cardDescription: {
-    color: '#475569',
+    color: AppPalette.textMuted,
     fontSize: 14,
     lineHeight: 21,
   },
   cardFootnote: {
-    color: '#64748B',
+    color: AppPalette.textSubtle,
     fontSize: 12,
     lineHeight: 18,
   },
@@ -275,16 +281,16 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.surfaceSoft,
     minWidth: 88,
   },
   metricLabel: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 12,
     lineHeight: 16,
   },
   metricValue: {
-    color: '#0F172A',
+    color: AppPalette.text,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '600',
@@ -295,7 +301,7 @@ const styles = StyleSheet.create({
   indexItem: {
     borderRadius: 16,
     padding: 12,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.surfaceSoft,
     gap: 6,
   },
   indexTitleRow: {
@@ -305,7 +311,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   indexCategory: {
-    color: '#7C3AED',
+    color: AppPalette.brandLight,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '600',
@@ -328,12 +334,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#60A5FA',
   },
   precipValue: {
-    color: '#334155',
+    color: AppPalette.text,
     fontSize: 11,
     lineHeight: 14,
   },
   precipTime: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 11,
     lineHeight: 14,
   },
@@ -345,7 +351,7 @@ const styles = StyleSheet.create({
     width: 148,
     borderRadius: 18,
     padding: 14,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: AppPalette.surfaceSoft,
     gap: 10,
   },
   forecastHeader: {
@@ -355,12 +361,12 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   forecastDate: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 12,
     lineHeight: 16,
   },
   forecastWeather: {
-    color: '#334155',
+    color: AppPalette.text,
     fontSize: 14,
     lineHeight: 20,
     fontWeight: '600',
@@ -369,7 +375,7 @@ const styles = StyleSheet.create({
     width: FORECAST_TRACK_WIDTH,
     height: 10,
     borderRadius: 999,
-    backgroundColor: '#E2E8F0',
+    backgroundColor: 'rgba(255,255,255,0.10)',
     position: 'relative',
     overflow: 'hidden',
   },
@@ -390,12 +396,12 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   forecastTempLabel: {
-    color: '#64748B',
+    color: AppPalette.textMuted,
     fontSize: 11,
     lineHeight: 14,
   },
   forecastMinTemp: {
-    color: '#2563EB',
+    color: '#60A5FA',
     fontSize: 18,
     lineHeight: 22,
     fontWeight: '700',

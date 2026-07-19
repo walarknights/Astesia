@@ -3,6 +3,7 @@ import { type ComponentProps } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { AppPalette } from '@/constants/theme';
 
 type MaterialIconName = ComponentProps<typeof MaterialIcons>['name'];
 
@@ -45,7 +46,11 @@ export function BottomSwitchBar({
 function BottomSwitchTab({ icon, label, active, onPress }: SwitchBarTab) {
   return (
     <Pressable style={styles.bottomTab} onPress={onPress}>
-      <MaterialIcons name={icon} size={24} color={active ? '#3B82F6' : '#9CA3AF'} />
+      <MaterialIcons
+        name={icon}
+        size={24}
+        color={active ? AppPalette.brandLight : AppPalette.textSubtle}
+      />
       <ThemedText style={[styles.bottomTabLabel, active && styles.bottomTabLabelActive]}>
         {label}
       </ThemedText>
@@ -54,6 +59,9 @@ function BottomSwitchTab({ icon, label, active, onPress }: SwitchBarTab) {
 }
 
 const styles = StyleSheet.create({
+  // [变更] 修改前: 功能切换栏使用不透明白底和蓝色按钮
+  // [变更] 修改后: 改为深色玻璃容器、暗色投影与靛青紫品牌按钮
+  // [原因] 保持笔记、待办和记账入口与推广页视觉一致
   bottomBar: {
     position: 'absolute',
     left: 12,
@@ -62,13 +70,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
     borderRadius: 28,
     paddingHorizontal: 28,
     paddingVertical: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.97)',
-    shadowColor: '#000000',
-    shadowOpacity: 0.06,
-    shadowRadius: 16,
+    backgroundColor: 'rgba(23, 23, 38, 0.97)',
+    shadowColor: AppPalette.shadow,
+    shadowOpacity: 0.16,
+    shadowRadius: 22,
     shadowOffset: { width: 0, height: -4 },
     elevation: 10,
   },
@@ -78,12 +88,12 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   bottomTabLabel: {
-    color: '#9CA3AF',
+    color: AppPalette.textSubtle,
     fontSize: 12,
     lineHeight: 16,
   },
   bottomTabLabelActive: {
-    color: '#3B82F6',
+    color: AppPalette.brandLight,
   },
   addButton: {
     width: 56,
@@ -92,10 +102,10 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#3B82F6',
-    shadowColor: '#3B82F6',
-    shadowOpacity: 0.28,
-    shadowRadius: 12,
+    backgroundColor: AppPalette.brand,
+    shadowColor: AppPalette.brandLight,
+    shadowOpacity: 0.48,
+    shadowRadius: 16,
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
   },
