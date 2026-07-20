@@ -75,6 +75,9 @@ const AUTH_DEFAULT_SIGNATURE = '欢迎来到 Astesia';
 const AUTH_TOKEN_ISSUER = 'astesia-auth';
 const AUTH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 const AUTH_TOKEN_SECRET = getEnvValue('AUTH_TOKEN_SECRET') || 'astesia-local-auth-secret';
+const ADMIN_DEFAULT_PAGE_SIZE = 20;
+const ADMIN_MAX_PAGE_SIZE = 100;
+const ADMIN_MAX_QUOTA_LIMIT_USD = 1_000_000;
 const BREVO_SMTP_HOST = getEnvValue('BREVO_SMTP_HOST') || 'smtp-relay.brevo.com';
 const BREVO_SMTP_PORT = normalizePositiveInteger(getEnvValue('BREVO_SMTP_PORT'), 587);
 const BREVO_SMTP_USER = getEnvValue('BREVO_SMTP_USER');
@@ -106,6 +109,12 @@ class InsufficientAiBalanceError extends Error {
     super(`AI 余额不足，当前余额 $${formatUsdAmount(balanceUsd)}，至少需要预留 $${formatUsdAmount(requiredUsd)} 才能发起本次对话。`);
     this.balanceUsd = balanceUsd;
     this.requiredUsd = requiredUsd;
+  }
+}
+
+class ResourceConflictError extends RequestValidationError {
+  constructor(message) {
+    super(message, 409);
   }
 }
 
@@ -200,31 +209,45 @@ app.post('/api/auth/login', async (c) => {
   }
 });
 
-app.get('/api/ai/models', async (c) => {
-  const [deepseekModels, nitroModels] = await Promise.all([
-    fetchCompatibleModels({
-      apiKey: getEnvValue('DEEPSEEK_API_KEY'),
-      apiKeyName: 'DEEPSEEK_API_KEY',
-      modelsUrl: DEEPSEEK_MODELS_URL,
-      providerName: 'DeepSeek',
-    }),
-    fetchCompatibleModels({
-      apiKey: getEnvValue('NITRO_ROUTER_API_KEY'),
-      apiKeyName: 'NITRO_ROUTER_API_KEY',
-      modelsUrl: NITRO_ROUTER_MODELS_URL,
-      providerName: 'Nitro Router',
-    }),
-  ]);
-  const models = mergeModelItems(
-    appendDocumentedDeepSeekModels(deepseekModels),
-    nitroModels
-  );
-
-  if (models.length === 0) {
-    return c.json({ error: '缺少可用模型配置，请至少配置 DEEPSEEK_API_KEY 或 NITRO_ROUTER_API_KEY。' }, 500);
+app.get('/api/admin/session', async (c) => {
+  try {
+    const user = await resolveRequiredAdminUser(c);
+    return c.json({ user: serializeAdminUser(user) });
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
   }
+});
 
-  return c.json({ data: models });
+app.get('/api/ai/models', async (c) => {
+  try {
+    const [deepseekModels, nitroModels] = await Promise.all([
+      fetchCompatibleModels({
+        apiKey: getEnvValue('DEEPSEEK_API_KEY'),
+        apiKeyName: 'DEEPSEEK_API_KEY',
+        modelsUrl: DEEPSEEK_MODELS_URL,
+        providerName: 'DeepSeek',
+      }),
+      fetchCompatibleModels({
+        apiKey: getEnvValue('NITRO_ROUTER_API_KEY'),
+        apiKeyName: 'NITRO_ROUTER_API_KEY',
+        modelsUrl: NITRO_ROUTER_MODELS_URL,
+        providerName: 'Nitro Router',
+      }),
+    ]);
+    const discoveredModels = mergeModelItems(
+      appendDocumentedDeepSeekModels(deepseekModels),
+      nitroModels
+    ).filter((model) => Boolean(resolveModelPricing(model.id)));
+    const models = await filterEnabledAiModels(discoveredModels);
+
+    if (models.length === 0) {
+      return c.json({ error: '当前没有已启用且已配置价格的 AI 模型。' }, 503);
+    }
+
+    return c.json({ data: models });
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
+  }
 });
 
 app.get('/api/ai/billing/summary', async (c) => {
@@ -243,6 +266,90 @@ app.get('/api/admin/ai/statistics', async (c) => {
     const topLimit = normalizeBoundedPositiveInteger(c.req.query('topLimit'), 10, 50);
 
     return c.json(await getAiUsageStatistics({ userLimit, topLimit }));
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
+  }
+});
+
+app.get('/api/admin/users', async (c) => {
+  try {
+    await resolveRequiredAdminUser(c);
+    const page = normalizeBoundedPositiveInteger(c.req.query('page'), 1, 1_000_000);
+    const pageSize = normalizeBoundedPositiveInteger(
+      c.req.query('pageSize'),
+      ADMIN_DEFAULT_PAGE_SIZE,
+      ADMIN_MAX_PAGE_SIZE
+    );
+    const query = normalizeAdminSearchQuery(c.req.query('query'));
+
+    return c.json(await getAdminUsers({ page, pageSize, query }));
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
+  }
+});
+
+app.patch('/api/admin/users/:id/quota', async (c) => {
+  try {
+    await resolveRequiredAdminUser(c);
+    const userId = normalizeAiUserId(c.req.param('id'));
+    const body = await c.req.json().catch(() => null);
+    const quotaLimitUsd = normalizeAdminQuotaLimit(body?.quotaLimitUsd);
+    const expectedUpdatedAt = normalizeRequiredIsoString(body?.updatedAt);
+
+    if (!userId) {
+      throw new RequestValidationError('缺少有效的用户 ID。');
+    }
+
+    if (quotaLimitUsd === null) {
+      throw new RequestValidationError(`额度必须是 0 到 ${ADMIN_MAX_QUOTA_LIMIT_USD} 之间的数字。`);
+    }
+
+    if (!expectedUpdatedAt) {
+      throw new RequestValidationError('缺少用户数据更新时间，请刷新列表后重试。');
+    }
+
+    return c.json({
+      user: await updateAdminUserQuota({
+        userId,
+        quotaLimitUsd,
+        expectedUpdatedAt,
+      }),
+    });
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
+  }
+});
+
+app.get('/api/admin/ai/models', async (c) => {
+  try {
+    await resolveRequiredAdminUser(c);
+    return c.json({ models: await getAdminModelControls() });
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
+  }
+});
+
+app.patch('/api/admin/ai/models/:id', async (c) => {
+  try {
+    const adminUser = await resolveRequiredAdminUser(c);
+    const model = normalizeConfiguredModel(c.req.param('id'));
+    const body = await c.req.json().catch(() => null);
+
+    if (!model || !resolveModelPricing(model)) {
+      throw new RequestValidationError('该模型尚未配置计费价格，不能加入白名单。');
+    }
+
+    if (typeof body?.enabled !== 'boolean') {
+      throw new RequestValidationError('模型启用状态必须是布尔值。');
+    }
+
+    return c.json({
+      model: await updateAdminModelControl({
+        adminUserId: adminUser.userId,
+        model,
+        enabled: body.enabled,
+      }),
+    });
   } catch (error) {
     return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
   }
@@ -381,6 +488,14 @@ app.post('/api/ai/chat', async (c) => {
     return c.json({
       error: `模型 ${model} 尚未配置计费单价，请先在服务端补齐价格表后再启用收费。`,
     }, 400);
+  }
+
+  try {
+    if (!await isAiModelEnabled(model)) {
+      return c.json({ error: `模型 ${model} 已被管理员停用，请切换其他模型。` }, 403);
+    }
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, 500);
   }
 
   if (!chatUpstream.apiKey) {
@@ -701,7 +816,7 @@ async function resolveRequiredAdminUser(c) {
   }
 
   if (user.role !== 'admin') {
-    throw new RequestValidationError('仅管理员可以查看 AI 用量统计。', 403);
+    throw new RequestValidationError('仅管理员可以访问该管理接口。', 403);
   }
 
   return user;
@@ -809,6 +924,33 @@ function normalizeFiniteNumber(value, fallbackValue = 0) {
 function normalizeNonNegativeNumber(value, fallbackValue = 0) {
   const numericValue = normalizeFiniteNumber(value, fallbackValue);
   return numericValue >= 0 ? numericValue : fallbackValue;
+}
+
+function normalizeAdminQuotaLimit(value) {
+  const numericValue = Number(value);
+
+  if (
+    !Number.isFinite(numericValue)
+    || numericValue < 0
+    || numericValue > ADMIN_MAX_QUOTA_LIMIT_USD
+  ) {
+    return null;
+  }
+
+  return roundUsdAmount(numericValue);
+}
+
+function normalizeAdminSearchQuery(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase().slice(0, 120) : '';
+}
+
+function normalizeRequiredIsoString(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return '';
+  }
+
+  const parsedDate = new Date(value);
+  return Number.isNaN(parsedDate.getTime()) ? '' : parsedDate.toISOString();
 }
 
 function normalizeBooleanEnv(value, fallbackValue = false) {
@@ -1048,9 +1190,11 @@ function serializeUsageMetrics(usage) {
 async function ensureAiWalletExists(queryable, userId) {
   await queryable.query(`
     INSERT INTO ai_user_wallets (user_id, balance_usd, total_charged_usd)
-    VALUES ($1, $2, 0)
+    SELECT id::text, quota_limit_usd, 0
+    FROM auth_users
+    WHERE id::text = $1
     ON CONFLICT (user_id) DO NOTHING
-  `, [userId, AI_INITIAL_BALANCE_USD]);
+  `, [userId]);
 }
 
 async function getWalletSnapshot(queryable, userId) {
@@ -1064,38 +1208,10 @@ async function getWalletSnapshot(queryable, userId) {
   const wallet = normalizeAiWalletRow(rows[0]);
 
   if (wallet) {
-    return ensureAiWalletQuotaLimit(queryable, wallet);
-  }
-
-  return {
-    userId,
-    balanceUsd: roundUsdAmount(AI_INITIAL_BALANCE_USD),
-    totalChargedUsd: 0,
-  };
-}
-
-async function ensureAiWalletQuotaLimit(queryable, wallet) {
-  const activeReservedUsd = await readActiveReservedUsd(queryable, wallet.userId);
-  const targetBalanceUsd = roundUsdAmount(
-    Math.max(AI_INITIAL_BALANCE_USD - wallet.totalChargedUsd - activeReservedUsd, 0)
-  );
-
-  if (targetBalanceUsd === wallet.balanceUsd) {
     return wallet;
   }
 
-  const { rows } = await queryable.query(`
-    UPDATE ai_user_wallets
-    SET balance_usd = $2,
-        updated_at = now()
-    WHERE user_id = $1
-    RETURNING user_id, balance_usd, total_charged_usd
-  `, [wallet.userId, targetBalanceUsd]);
-
-  return normalizeAiWalletRow(rows[0]) ?? {
-    ...wallet,
-    balanceUsd: targetBalanceUsd,
-  };
+  throw new AiAuthenticationError('登录用户不存在，请重新登录后再试。');
 }
 
 async function readActiveReservedUsd(queryable, userId) {
@@ -1659,6 +1775,316 @@ async function getAiUsageStatistics({ userLimit, topLimit }) {
   };
 }
 
+async function getAdminUsers({ page, pageSize, query }) {
+  const pool = getDatabasePool();
+  const offset = (page - 1) * pageSize;
+  const [countResult, usersResult] = await Promise.all([
+    pool.query(`
+      SELECT COUNT(*) AS total
+      FROM auth_users AS users
+      WHERE $1 = ''
+        OR POSITION($1 IN LOWER(users.email)) > 0
+        OR POSITION($1 IN LOWER(users.display_name)) > 0
+        OR POSITION($1 IN users.id::text) > 0
+    `, [query]),
+    pool.query(`
+      WITH usage_summary AS (
+        SELECT
+          user_id,
+          COUNT(*) AS request_count,
+          COALESCE(SUM(total_tokens), 0) AS total_tokens,
+          COALESCE(SUM(total_cost_usd), 0) AS total_cost_usd,
+          MAX(created_at) AS last_used_at
+        FROM ai_usage_records
+        GROUP BY user_id
+      ),
+      reservation_summary AS (
+        SELECT
+          user_id,
+          COALESCE(SUM(reserved_usd), 0) AS active_reserved_usd
+        FROM ai_wallet_reservations
+        WHERE status = 'reserved'
+        GROUP BY user_id
+      )
+      SELECT
+        users.id::text AS user_id,
+        users.email,
+        users.display_name,
+        users.role,
+        users.plan_name,
+        users.quota_limit_usd,
+        users.created_at,
+        users.updated_at,
+        COALESCE(
+          wallets.balance_usd,
+          GREATEST(
+            users.quota_limit_usd
+              - COALESCE(usage.total_cost_usd, 0)
+              - COALESCE(reservations.active_reserved_usd, 0),
+            0
+          )
+        ) AS balance_usd,
+        COALESCE(wallets.total_charged_usd, usage.total_cost_usd, 0) AS total_charged_usd,
+        COALESCE(reservations.active_reserved_usd, 0) AS active_reserved_usd,
+        COALESCE(usage.request_count, 0) AS request_count,
+        COALESCE(usage.total_tokens, 0) AS total_tokens,
+        COALESCE(usage.total_cost_usd, 0) AS total_cost_usd,
+        usage.last_used_at
+      FROM auth_users AS users
+      LEFT JOIN ai_user_wallets AS wallets ON wallets.user_id = users.id::text
+      LEFT JOIN usage_summary AS usage ON usage.user_id = users.id::text
+      LEFT JOIN reservation_summary AS reservations ON reservations.user_id = users.id::text
+      WHERE $1 = ''
+        OR POSITION($1 IN LOWER(users.email)) > 0
+        OR POSITION($1 IN LOWER(users.display_name)) > 0
+        OR POSITION($1 IN users.id::text) > 0
+      ORDER BY users.created_at DESC, users.id DESC
+      LIMIT $2 OFFSET $3
+    `, [query, pageSize, offset]),
+  ]);
+  const total = normalizeNonNegativeInteger(countResult.rows[0]?.total, 0);
+
+  return {
+    users: usersResult.rows.map(normalizeAdminUserRow).filter(Boolean),
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(Math.ceil(total / pageSize), 1),
+    },
+  };
+}
+
+async function getAdminUserById(queryable, userId) {
+  const { rows } = await queryable.query(`
+    WITH usage_summary AS (
+      SELECT
+        user_id,
+        COUNT(*) AS request_count,
+        COALESCE(SUM(total_tokens), 0) AS total_tokens,
+        COALESCE(SUM(total_cost_usd), 0) AS total_cost_usd,
+        MAX(created_at) AS last_used_at
+      FROM ai_usage_records
+      WHERE user_id = $1
+      GROUP BY user_id
+    ),
+    reservation_summary AS (
+      SELECT
+        user_id,
+        COALESCE(SUM(reserved_usd), 0) AS active_reserved_usd
+      FROM ai_wallet_reservations
+      WHERE user_id = $1 AND status = 'reserved'
+      GROUP BY user_id
+    )
+    SELECT
+      users.id::text AS user_id,
+      users.email,
+      users.display_name,
+      users.role,
+      users.plan_name,
+      users.quota_limit_usd,
+      users.created_at,
+      users.updated_at,
+      COALESCE(wallets.balance_usd, users.quota_limit_usd) AS balance_usd,
+      COALESCE(wallets.total_charged_usd, usage.total_cost_usd, 0) AS total_charged_usd,
+      COALESCE(reservations.active_reserved_usd, 0) AS active_reserved_usd,
+      COALESCE(usage.request_count, 0) AS request_count,
+      COALESCE(usage.total_tokens, 0) AS total_tokens,
+      COALESCE(usage.total_cost_usd, 0) AS total_cost_usd,
+      usage.last_used_at
+    FROM auth_users AS users
+    LEFT JOIN ai_user_wallets AS wallets ON wallets.user_id = users.id::text
+    LEFT JOIN usage_summary AS usage ON usage.user_id = users.id::text
+    LEFT JOIN reservation_summary AS reservations ON reservations.user_id = users.id::text
+    WHERE users.id::text = $1
+    LIMIT 1
+  `, [userId]);
+
+  return normalizeAdminUserRow(rows[0]);
+}
+
+async function updateAdminUserQuota({
+  userId,
+  quotaLimitUsd,
+  expectedUpdatedAt,
+}) {
+  const pool = getDatabasePool();
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    const userResult = await client.query(`
+      SELECT id::text AS user_id, updated_at
+      FROM auth_users
+      WHERE id::text = $1
+      FOR UPDATE
+    `, [userId]);
+    const userRow = userResult.rows[0];
+
+    if (!userRow) {
+      throw new RequestValidationError('目标用户不存在。', 404);
+    }
+
+    const currentUpdatedAt = normalizeIsoString(userRow.updated_at, '');
+
+    if (
+      !currentUpdatedAt
+      || new Date(currentUpdatedAt).getTime() !== new Date(expectedUpdatedAt).getTime()
+    ) {
+      throw new ResourceConflictError('用户数据已被其他操作更新，请刷新列表后重试。');
+    }
+
+    await ensureAiWalletExists(client, userId);
+    const walletResult = await client.query(`
+      SELECT user_id, balance_usd, total_charged_usd
+      FROM ai_user_wallets
+      WHERE user_id = $1
+      FOR UPDATE
+    `, [userId]);
+    const wallet = normalizeAiWalletRow(walletResult.rows[0]);
+
+    if (!wallet) {
+      throw new Error('用户 AI 钱包初始化失败。');
+    }
+
+    const activeReservedUsd = await readActiveReservedUsd(client, userId);
+    const targetBalanceUsd = roundUsdAmount(
+      Math.max(quotaLimitUsd - wallet.totalChargedUsd - activeReservedUsd, 0)
+    );
+
+    await client.query(`
+      UPDATE auth_users
+      SET quota_limit_usd = $2,
+          updated_at = now()
+      WHERE id::text = $1
+    `, [userId, quotaLimitUsd]);
+
+    await client.query(`
+      UPDATE ai_user_wallets
+      SET balance_usd = $2,
+          updated_at = now()
+      WHERE user_id = $1
+    `, [userId, targetBalanceUsd]);
+
+    await client.query('COMMIT');
+    const updatedUser = await getAdminUserById(pool, userId);
+
+    if (!updatedUser) {
+      throw new Error('额度已更新，但用户数据读取失败。');
+    }
+
+    return updatedUser;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => null);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function normalizeAdminUserRow(row) {
+  if (!row || typeof row !== 'object' || typeof row.user_id !== 'string') {
+    return null;
+  }
+
+  return {
+    userId: row.user_id,
+    email: normalizeAuthEmail(row.email),
+    displayName: typeof row.display_name === 'string' ? row.display_name : '',
+    role: typeof row.role === 'string' ? row.role : 'user',
+    planName: normalizeAuthPlanName(row.plan_name),
+    quotaLimitUsd: formatUsdAmount(row.quota_limit_usd),
+    balanceUsd: formatUsdAmount(row.balance_usd),
+    totalChargedUsd: formatUsdAmount(row.total_charged_usd),
+    activeReservedUsd: formatUsdAmount(row.active_reserved_usd),
+    requestCount: normalizeNonNegativeInteger(row.request_count, 0),
+    totalTokens: normalizeNonNegativeInteger(row.total_tokens, 0),
+    totalCostUsd: formatUsdAmount(row.total_cost_usd),
+    lastUsedAt: row.last_used_at
+      ? normalizeIsoString(row.last_used_at, new Date().toISOString())
+      : null,
+    createdAt: normalizeIsoString(row.created_at, new Date().toISOString()),
+    updatedAt: normalizeIsoString(row.updated_at, new Date().toISOString()),
+  };
+}
+
+async function getAdminModelControls() {
+  const pool = getDatabasePool();
+  const { rows } = await pool.query(`
+    SELECT model, enabled, updated_by, updated_at
+    FROM ai_model_controls
+  `);
+  const controls = new Map(rows.map((row) => [row.model, row]));
+
+  return [...modelPricingMap.entries()]
+    .map(([model, pricing]) => serializeAdminModelControl(model, pricing, controls.get(model)))
+    .sort((left, right) => left.model.localeCompare(right.model));
+}
+
+async function updateAdminModelControl({
+  adminUserId,
+  model,
+  enabled,
+}) {
+  const pool = getDatabasePool();
+  const { rows } = await pool.query(`
+    INSERT INTO ai_model_controls (model, enabled, updated_by)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (model) DO UPDATE SET
+      enabled = EXCLUDED.enabled,
+      updated_by = EXCLUDED.updated_by,
+      updated_at = now()
+    RETURNING model, enabled, updated_by, updated_at
+  `, [model, enabled, adminUserId]);
+
+  return serializeAdminModelControl(model, resolveModelPricing(model), rows[0]);
+}
+
+function serializeAdminModelControl(model, pricing, row) {
+  return {
+    model,
+    enabled: typeof row?.enabled === 'boolean' ? row.enabled : true,
+    pricing: {
+      inputPerMillionUsd: formatUsdAmount(pricing?.inputPerMillionUsd),
+      cachedInputPerMillionUsd: formatUsdAmount(pricing?.cachedInputPerMillionUsd),
+      outputPerMillionUsd: formatUsdAmount(pricing?.outputPerMillionUsd),
+    },
+    updatedBy: typeof row?.updated_by === 'string' ? row.updated_by : null,
+    updatedAt: row?.updated_at
+      ? normalizeIsoString(row.updated_at, new Date().toISOString())
+      : null,
+  };
+}
+
+async function filterEnabledAiModels(models) {
+  if (models.length === 0) {
+    return [];
+  }
+
+  const pool = getDatabasePool();
+  const modelIds = models.map((model) => model.id);
+  const { rows } = await pool.query(`
+    SELECT model, enabled
+    FROM ai_model_controls
+    WHERE model = ANY($1::text[])
+  `, [modelIds]);
+  const controls = new Map(rows.map((row) => [row.model, row.enabled]));
+
+  return models.filter((model) => controls.get(model.id) !== false);
+}
+
+async function isAiModelEnabled(model) {
+  const pool = getDatabasePool();
+  const { rows } = await pool.query(`
+    SELECT enabled
+    FROM ai_model_controls
+    WHERE model = $1
+    LIMIT 1
+  `, [model]);
+
+  return rows[0]?.enabled !== false;
+}
+
 function readAiUsageTrend(pool, granularity, periodCount) {
   const trendConfig = {
     day: { step: '1 day', lookback: periodCount - 1 },
@@ -2016,11 +2442,29 @@ async function registerAuthUser({
       display_name,
       role,
       plan_name,
-      signature
+      signature,
+      quota_limit_usd
     )
-    VALUES ($1, $2, $3, 'user', $4, $5)
-    RETURNING id, email, display_name, role, plan_name, signature, avatar_url, created_at
-  `, [email, passwordHash, normalizedDisplayName, AUTH_DEFAULT_PLAN_NAME, AUTH_DEFAULT_SIGNATURE]);
+    VALUES ($1, $2, $3, 'user', $4, $5, $6)
+    RETURNING
+      id,
+      email,
+      display_name,
+      role,
+      plan_name,
+      signature,
+      avatar_url,
+      quota_limit_usd,
+      created_at,
+      updated_at
+  `, [
+    email,
+    passwordHash,
+    normalizedDisplayName,
+    AUTH_DEFAULT_PLAN_NAME,
+    AUTH_DEFAULT_SIGNATURE,
+    AI_INITIAL_BALANCE_USD,
+  ]);
 
   await pool.query(`
     UPDATE auth_email_verification_codes
@@ -2053,7 +2497,9 @@ async function readAuthUserByEmail(email) {
       plan_name,
       signature,
       avatar_url,
-      created_at
+      quota_limit_usd,
+      created_at,
+      updated_at
     FROM auth_users
     WHERE email = $1
     LIMIT 1
@@ -2074,7 +2520,9 @@ async function readAuthUserById(userId) {
       plan_name,
       signature,
       avatar_url,
-      created_at
+      quota_limit_usd,
+      created_at,
+      updated_at
     FROM auth_users
     WHERE id::text = $1
     LIMIT 1
@@ -2124,7 +2572,19 @@ function normalizeAuthUserRow(row) {
     planName: normalizeAuthPlanName(row.plan_name),
     signature: typeof row.signature === 'string' && row.signature.trim() ? row.signature.trim() : AUTH_DEFAULT_SIGNATURE,
     avatarUrl: typeof row.avatar_url === 'string' && row.avatar_url.trim() ? row.avatar_url.trim() : null,
+    quotaLimitUsd: roundUsdAmount(row.quota_limit_usd),
     createdAt: normalizeIsoString(row.created_at, new Date().toISOString()),
+    updatedAt: normalizeIsoString(row.updated_at, new Date().toISOString()),
+  };
+}
+
+function serializeAdminUser(user) {
+  return {
+    userId: user.userId,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    planName: user.planName,
   };
 }
 
