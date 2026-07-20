@@ -250,6 +250,18 @@ app.get('/api/ai/models', async (c) => {
   }
 });
 
+app.get('/api/ai/model-pricing', async (c) => {
+  try {
+    return c.json({
+      currency: 'USD',
+      unit: 'million_tokens',
+      models: await getPublicModelPricing(),
+    });
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
+  }
+});
+
 app.get('/api/ai/billing/summary', async (c) => {
   try {
     const aiUser = resolveRequiredAiUser(c);
@@ -2021,6 +2033,18 @@ async function getAdminModelControls() {
     .sort((left, right) => left.model.localeCompare(right.model));
 }
 
+async function getPublicModelPricing() {
+  const enabledModels = await filterEnabledAiModels(
+    [...modelPricingMap.keys()].map((model) => ({ id: model }))
+  );
+  const enabledModelIds = new Set(enabledModels.map((model) => model.id));
+
+  return [...modelPricingMap.entries()]
+    .filter(([model]) => enabledModelIds.has(model))
+    .map(([model, pricing]) => serializePublicModelPricing(model, pricing))
+    .sort((left, right) => left.model.localeCompare(right.model));
+}
+
 async function updateAdminModelControl({
   adminUserId,
   model,
@@ -2053,6 +2077,17 @@ function serializeAdminModelControl(model, pricing, row) {
     updatedAt: row?.updated_at
       ? normalizeIsoString(row.updated_at, new Date().toISOString())
       : null,
+  };
+}
+
+function serializePublicModelPricing(model, pricing) {
+  return {
+    model,
+    pricing: {
+      inputPerMillionUsd: formatUsdAmount(pricing?.inputPerMillionUsd),
+      cachedInputPerMillionUsd: formatUsdAmount(pricing?.cachedInputPerMillionUsd),
+      outputPerMillionUsd: formatUsdAmount(pricing?.outputPerMillionUsd),
+    },
   };
 }
 

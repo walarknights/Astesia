@@ -3,6 +3,7 @@ import Constants from 'expo-constants';
 import * as DocumentPicker from 'expo-document-picker';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   Alert,
@@ -112,6 +113,7 @@ const PRIVACY_CONTENT = [
 ].join('\n\n');
 
 export default function PersonalScreen() {
+  const router = useRouter();
   const { settings, updateSettings, resetSettings } = useAppSettings();
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [importText, setImportText] = useState('');
@@ -513,6 +515,17 @@ export default function PersonalScreen() {
             title="隐私说明"
             description="说明登录态、AI 数据与本地数据边界"
             onPress={() => setDialog({ title: '隐私说明', content: PRIVACY_CONTENT })}
+          />
+          {/*
+           * 渲染位置: 个人页“关于”分组内
+           * 展示内容: 模型价格页面入口，说明可查看 AI 模型输入和输出单价
+           * 数据来源: 静态入口文案与 expo-router 路由
+           */}
+          <SettingButton
+            icon="attach-money"
+            title="模型价格"
+            description="查看当前可用 AI 模型的输入、缓存和输出单价"
+            onPress={() => router.push('/model-pricing')}
           />
           <SettingButton icon="feedback" title="意见反馈" description="通过邮件发送建议" onPress={() => void handleFeedback()} />
           <SettingButton

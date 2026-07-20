@@ -33,8 +33,24 @@ export type AiModel = {
   label: string;
 };
 
+export type AiModelPricing = {
+  model: string;
+  pricing: {
+    inputPerMillionUsd: string;
+    cachedInputPerMillionUsd: string;
+    outputPerMillionUsd: string;
+  };
+};
+
 export type AiModelsResult = {
   models: AiModel[];
+  errorMessage: string | null;
+};
+
+export type AiModelPricingResult = {
+  currency: 'USD';
+  unit: 'million_tokens';
+  models: AiModelPricing[];
   errorMessage: string | null;
 };
 
@@ -45,6 +61,13 @@ type ChatCompletionResponse = {
 
 type ModelsResponse = {
   data?: unknown;
+  error?: unknown;
+};
+
+type ModelPricingResponse = {
+  currency?: unknown;
+  unit?: unknown;
+  models?: unknown;
   error?: unknown;
 };
 
@@ -594,6 +617,34 @@ function isModelItem(value: unknown): value is { id: string } {
   return Boolean(value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string');
 }
 
+/**
+ * 校验模型价格接口中的单条记录是否具备完整展示字段。
+ *
+ * @param value - 价格接口返回数组中的未知项
+ * @returns 可安全渲染到模型价格页面的价格记录
+ * @example
+ *   isModelPricingItem({ model: 'gpt-5.4', pricing: { inputPerMillionUsd: '1', cachedInputPerMillionUsd: '0.1', outputPerMillionUsd: '5' } })
+ */
+function isModelPricingItem(value: unknown): value is AiModelPricing {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const item = value as {
+    model?: unknown;
+    pricing?: {
+      inputPerMillionUsd?: unknown;
+      cachedInputPerMillionUsd?: unknown;
+      outputPerMillionUsd?: unknown;
+    };
+  };
+
+  return typeof item.model === 'string'
+    && typeof item.pricing?.inputPerMillionUsd === 'string'
+    && typeof item.pricing.cachedInputPerMillionUsd === 'string'
+    && typeof item.pricing.outputPerMillionUsd === 'string';
+}
+
 export async function requestAiModels() {
   try {
     const response = await fetch(`${AI_API_HOST}/api/ai/models`);
@@ -626,6 +677,40 @@ export async function requestAiModels() {
       models: [{ id: DEFAULT_AI_MODEL_ID, label: DEFAULT_AI_MODEL_ID }],
       errorMessage,
     } satisfies AiModelsResult;
+  }
+}
+
+export async function requestAiModelPricing() {
+  try {
+    const response = await fetch(`${AI_API_HOST}/api/ai/model-pricing`);
+    const data = await response.json().catch(() => ({})) as ModelPricingResponse;
+
+    if (!response.ok) {
+      throw new Error(typeof data.error === 'string' ? data.error : '模型价格获取失败。');
+    }
+
+    // 格式化: 价格接口原始数组 → 过滤有效模型价格项 → App 价格页面可直接渲染的数据
+    // 说明: 避免后端异常字段进入价格列表，保证价格表只展示完整的输入/缓存/输出单价
+    const models = Array.isArray(data.models)
+      ? data.models.filter(isModelPricingItem)
+      : [];
+
+    return {
+      currency: 'USD',
+      unit: 'million_tokens',
+      models,
+      errorMessage: null,
+    } satisfies AiModelPricingResult;
+  } catch (error) {
+    const errorMessage = getErrorMessage(error);
+    console.warn(`[AI] 模型价格加载失败: ${errorMessage}; host=${AI_API_HOST}`);
+
+    return {
+      currency: 'USD',
+      unit: 'million_tokens',
+      models: [],
+      errorMessage,
+    } satisfies AiModelPricingResult;
   }
 }
 

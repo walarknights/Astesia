@@ -9,6 +9,7 @@
     "ios": "CI=false expo start --ios",
     "web": "CI=false expo start --web",
     "lint": "expo lint",
+    "deploy:production": "bash scripts/deploy-production.sh",
     "akshare": "python3.11 scripts/akshare_server.py",
     "ai-server": "node server/ai-server.mjs",
     "db:migrate": "node server/migrate-postgres.mjs"
