@@ -27,6 +27,15 @@ type BillingSummaryResponse = {
   error?: unknown;
 };
 
+export type UpdateAuthProfileInput = {
+  displayName: string;
+  email: string;
+  currentPassword?: string;
+  newPassword?: string;
+  avatarDataUrl?: string;
+  removeAvatar?: boolean;
+};
+
 export type AuthUserProfile = User & {
   planName: string;
   signature: string;
@@ -164,6 +173,46 @@ export async function loginWithEmailPassword(email: string, password: string) {
     email,
     password,
   }));
+}
+
+/**
+ * 更新当前登录账号的用户名、邮箱和密码，并刷新本地登录态。
+ *
+ * @param input - 账号资料表单，修改邮箱或密码时需包含当前密码
+ * @returns 更新后的登录会话
+ * @example
+ *   await updateAuthProfile({ displayName: 'Astesia', email: 'demo@example.com' })
+ */
+export async function updateAuthProfile(input: UpdateAuthProfileInput) {
+  const session = await loadAuthSession();
+
+  if (!session) {
+    throw new Error('请先登录后再管理账号。');
+  }
+
+  const requestHeaders = new Headers({
+    Authorization: `Bearer ${session.token}`,
+    [AI_USER_ID_HEADER]: String(session.user.userId),
+    'Content-Type': 'application/json',
+  });
+  const { response, data } = await requestAuthJson<AuthResponse>('/api/auth/profile', {
+    method: 'PATCH',
+    headers: requestHeaders,
+    body: JSON.stringify({
+      displayName: input.displayName.trim(),
+      email: input.email.trim(),
+      currentPassword: input.currentPassword?.trim() || undefined,
+      newPassword: input.newPassword?.trim() || undefined,
+      avatarDataUrl: input.avatarDataUrl || undefined,
+      removeAvatar: input.removeAvatar || undefined,
+    }),
+  }, '账号信息更新失败。');
+
+  if (!response.ok) {
+    throw new Error(typeof data.error === 'string' ? data.error : '账号信息更新失败。');
+  }
+
+  return createSessionFromResponse(data);
 }
 
 /**
@@ -368,7 +417,23 @@ function normalizeStoredString(value: unknown) {
 
 function normalizeOptionalAvatarUrl(value: unknown) {
   const avatarUrl = normalizeStoredString(value);
-  return avatarUrl || null;
+
+  if (!avatarUrl) {
+    return null;
+  }
+
+  if (avatarUrl.startsWith('/api/auth/avatars/')) {
+    return `${AUTH_API_HOSTS[0]}${avatarUrl}`;
+  }
+
+  try {
+    const parsedUrl = new URL(avatarUrl);
+    return ['http:', 'https:'].includes(parsedUrl.protocol) && parsedUrl.pathname.startsWith('/api/auth/avatars/')
+      ? parsedUrl.toString()
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeCurrencyText(value: unknown) {

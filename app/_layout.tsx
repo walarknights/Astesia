@@ -98,6 +98,7 @@ function RootNavigator() {
         <Stack.Screen name="todo" options={{ title: '待办' }} />
         <Stack.Screen name="weather-search" options={{ headerShown: false }} />
         <Stack.Screen name="weather-overview" options={{ title: '今日概览' }} />
+        <Stack.Screen name="account-management" options={{ title: '账号管理' }} />
       </Stack>
     </ScreenCaptureRoot>
   );

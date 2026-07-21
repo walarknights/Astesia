@@ -1372,26 +1372,20 @@ const styles = StyleSheet.create({
     padding: 28,
     alignItems: 'center',
     gap: 12,
-    borderWidth: 1,
-    borderColor: AppPalette.border,
-    backgroundColor: AppPalette.surfaceSoft,
+    backgroundColor: 'transparent',
   },
   loadingText: {
     color: AppPalette.textMuted,
   },
   emptyCard: {
+    // [变更] 修改前: 待办空状态卡片保留玻璃底色、描边和暗色投影
+    // [变更] 修改后: 去掉外框和投影，只保留空状态内容
+    // [原因] 避免待办页出现黑色边框，与笔记页空状态观感一致
     borderRadius: 28,
     padding: 28,
     alignItems: 'center',
     gap: 12,
-    borderWidth: 1,
-    borderColor: AppPalette.border,
-    backgroundColor: AppPalette.surfaceSoft,
-    shadowColor: AppPalette.shadow,
-    shadowOpacity: 0.12,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 2,
+    backgroundColor: 'transparent',
   },
   emptyTitle: {
     color: AppPalette.text,
@@ -1435,19 +1429,15 @@ const styles = StyleSheet.create({
     // [变更] 修改前: 待办卡片内完成按钮、内容和更多按钮横向排列
     // [变更] 修改后: 改为 column 纵向堆叠
     // [原因] 当前待办页要求主内容按纵向排列
+    // [变更] 修改前: 单条待办卡片带描边、暗色投影和 elevation
+    // [变更] 修改后: 保留卡片底色，去掉外框和投影
+    // [原因] 避免列表项边缘形成黑色边框感
     flexDirection: 'column',
     alignItems: 'stretch',
     gap: 12,
     borderRadius: 22,
     padding: 16,
-    borderWidth: 1,
-    borderColor: AppPalette.border,
     backgroundColor: AppPalette.surfaceSoft,
-    shadowColor: AppPalette.shadow,
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 2,
   },
   todoCardCompleted: {
     opacity: 0.72,

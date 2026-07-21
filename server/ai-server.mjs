@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
 
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
@@ -75,6 +76,14 @@ const AUTH_DEFAULT_SIGNATURE = '欢迎来到 Astesia';
 const AUTH_TOKEN_ISSUER = 'astesia-auth';
 const AUTH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 const AUTH_TOKEN_SECRET = getEnvValue('AUTH_TOKEN_SECRET') || 'astesia-local-auth-secret';
+const AUTH_AVATAR_STORAGE_DIR = new URL('./uploads/avatars/', import.meta.url);
+const AUTH_AVATAR_ROUTE_PREFIX = '/api/auth/avatars';
+const AUTH_AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+const AUTH_AVATAR_ALLOWED_TYPES = Object.freeze({
+  'image/jpeg': { extension: '.jpg', signatures: [[0xff, 0xd8, 0xff]] },
+  'image/png': { extension: '.png', signatures: [[0x89, 0x50, 0x4e, 0x47]] },
+  'image/webp': { extension: '.webp', signatures: [[0x52, 0x49, 0x46, 0x46]] },
+});
 const ADMIN_DEFAULT_PAGE_SIZE = 20;
 const ADMIN_MAX_PAGE_SIZE = 100;
 const ADMIN_MAX_QUOTA_LIMIT_USD = 1_000_000;
@@ -123,6 +132,25 @@ app.use('*', cors({
 }));
 
 app.get('/health', (c) => c.json({ ok: true }));
+
+app.get('/api/auth/avatars/:fileName', (c) => {
+  const fileName = normalizeAvatarFileName(c.req.param('fileName'));
+
+  if (!fileName) {
+    return c.json({ error: '头像文件不存在。' }, 404);
+  }
+
+  const avatarFileUrl = new URL(fileName, AUTH_AVATAR_STORAGE_DIR);
+
+  if (!existsSync(avatarFileUrl)) {
+    return c.json({ error: '头像文件不存在。' }, 404);
+  }
+
+  return c.body(readFileSync(avatarFileUrl), 200, {
+    'Cache-Control': 'public, max-age=31536000, immutable',
+    'Content-Type': getAvatarContentType(fileName),
+  });
+});
 
 app.post('/api/auth/register/code', async (c) => {
   const body = await c.req.json().catch(() => null);
@@ -203,6 +231,27 @@ app.post('/api/auth/login', async (c) => {
 
   try {
     const user = await loginAuthUser({ email, password });
+    return c.json(buildAuthSuccessResponse(user));
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
+  }
+});
+
+app.patch('/api/auth/profile', async (c) => {
+  const body = await c.req.json().catch(() => null);
+
+  try {
+    const aiUser = resolveRequiredAiUser(c);
+    const user = await updateAuthUserProfile({
+      userId: aiUser.userId,
+      displayName: body?.displayName,
+      email: body?.email,
+      currentPassword: body?.currentPassword,
+      newPassword: body?.newPassword,
+      avatarDataUrl: body?.avatarDataUrl,
+      removeAvatar: body?.removeAvatar,
+    });
+
     return c.json(buildAuthSuccessResponse(user));
   } catch (error) {
     return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
@@ -2520,6 +2569,154 @@ async function loginAuthUser({ email, password }) {
   return user;
 }
 
+async function updateAuthUserProfile({
+  userId,
+  displayName,
+  email,
+  currentPassword,
+  newPassword,
+  avatarDataUrl,
+  removeAvatar,
+}) {
+  const normalizedUserId = normalizeAiUserId(userId);
+  const normalizedDisplayName = typeof displayName === 'string' ? displayName.trim().slice(0, 24) : '';
+  const normalizedEmail = normalizeAuthEmail(email);
+  const normalizedCurrentPassword = typeof currentPassword === 'string' ? currentPassword.trim() : '';
+  const rawNewPassword = typeof newPassword === 'string' ? newPassword.trim() : '';
+  const normalizedNewPassword = rawNewPassword ? normalizeAuthPassword(rawNewPassword) : '';
+  const normalizedAvatar = normalizeAvatarDataUrl(avatarDataUrl);
+  const shouldRemoveAvatar = removeAvatar === true;
+
+  if (!normalizedUserId) {
+    throw new AiAuthenticationError('登录用户不存在，请重新登录后再试。');
+  }
+
+  if (!normalizedDisplayName) {
+    throw new RequestValidationError('用户名不能为空。');
+  }
+
+  if (!normalizedEmail) {
+    throw new RequestValidationError('请输入有效的邮箱地址。');
+  }
+
+  if (rawNewPassword && !normalizedNewPassword) {
+    throw new RequestValidationError('新密码至少需要 6 位。');
+  }
+
+  const pool = getDatabasePool();
+  const client = await pool.connect();
+  let persistedAvatarUrl = null;
+
+  try {
+    await client.query('BEGIN');
+
+    const currentUserResult = await client.query(`
+      SELECT
+        id,
+        email,
+        password_hash,
+        display_name,
+        role,
+        plan_name,
+        signature,
+        avatar_url,
+        quota_limit_usd,
+        created_at,
+        updated_at
+      FROM auth_users
+      WHERE id::text = $1
+      FOR UPDATE
+    `, [normalizedUserId]);
+    const currentUser = normalizeAuthUserRow(currentUserResult.rows[0]);
+
+    if (!currentUser) {
+      throw new AiAuthenticationError('登录用户不存在，请重新登录后再试。');
+    }
+
+    const isEmailChanging = normalizedEmail !== currentUser.email;
+    const isPasswordChanging = Boolean(normalizedNewPassword);
+
+    if ((isEmailChanging || isPasswordChanging)
+      && (!normalizedCurrentPassword || !verifyPasswordHash(normalizedCurrentPassword, currentUser.passwordHash))) {
+      throw new RequestValidationError('当前密码不正确。', 401);
+    }
+
+    if (isEmailChanging) {
+      const existingEmailResult = await client.query(`
+        SELECT id::text AS user_id
+        FROM auth_users
+        WHERE email = $1 AND id::text <> $2
+        LIMIT 1
+      `, [normalizedEmail, normalizedUserId]);
+
+      if (existingEmailResult.rows.length > 0) {
+        throw new RequestValidationError('该邮箱已被其他账号使用。', 409);
+      }
+    }
+
+    const nextAvatarUrl = normalizedAvatar
+      ? await persistAuthUserAvatar(normalizedUserId, normalizedAvatar)
+      : shouldRemoveAvatar
+        ? null
+        : currentUser.avatarUrl;
+
+    if (normalizedAvatar) {
+      persistedAvatarUrl = nextAvatarUrl;
+    }
+
+    const { rows } = await client.query(`
+      UPDATE auth_users
+      SET email = $2,
+          password_hash = $3,
+          display_name = $4,
+          avatar_url = $5,
+          updated_at = now()
+      WHERE id::text = $1
+      RETURNING
+        id,
+        email,
+        password_hash,
+        display_name,
+        role,
+        plan_name,
+        signature,
+        avatar_url,
+        quota_limit_usd,
+        created_at,
+        updated_at
+    `, [
+      normalizedUserId,
+      normalizedEmail,
+      isPasswordChanging ? createPasswordHash(normalizedNewPassword) : currentUser.passwordHash,
+      normalizedDisplayName,
+      nextAvatarUrl,
+    ]);
+
+    await client.query('COMMIT');
+    const updatedUser = normalizeAuthUserRow(rows[0]);
+
+    if (nextAvatarUrl !== currentUser.avatarUrl) {
+      await deleteStoredAuthUserAvatar(currentUser.avatarUrl).catch(() => null);
+    }
+
+    return updatedUser;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => null);
+
+    if (persistedAvatarUrl) {
+      await deleteStoredAuthUserAvatar(persistedAvatarUrl).catch(() => null);
+    }
+
+    if (error?.code === '23505') {
+      throw new RequestValidationError('该邮箱已被其他账号使用。', 409);
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function readAuthUserByEmail(email) {
   const pool = getDatabasePool();
   const { rows } = await pool.query(`
@@ -2774,6 +2971,133 @@ function sanitizeDisplayName(value, fallbackEmail = '') {
 
   const normalizedValue = value.trim().slice(0, 24);
   return normalizedValue || (fallbackEmail.split('@')[0] || 'Astesia 用户');
+}
+
+function normalizeAvatarDataUrl(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  if (typeof value !== 'string') {
+    throw new RequestValidationError('头像图片格式不正确。');
+  }
+
+  const matchedAvatar = /^data:(image\/(?:jpe?g|png|webp));base64,([a-z0-9+/=\s]+)$/i.exec(value.trim());
+
+  if (!matchedAvatar) {
+    throw new RequestValidationError('头像仅支持 JPG、PNG 或 WebP 图片。');
+  }
+
+  const mimeType = matchedAvatar[1].toLowerCase() === 'image/jpg'
+    ? 'image/jpeg'
+    : matchedAvatar[1].toLowerCase();
+  const avatarType = AUTH_AVATAR_ALLOWED_TYPES[mimeType];
+
+  if (!avatarType) {
+    throw new RequestValidationError('头像仅支持 JPG、PNG 或 WebP 图片。');
+  }
+
+  const base64Text = matchedAvatar[2].replace(/\s/g, '');
+  const estimatedBytes = getBase64ByteLength(base64Text);
+
+  if (estimatedBytes <= 0 || estimatedBytes > AUTH_AVATAR_MAX_BYTES) {
+    throw new RequestValidationError('头像图片不能超过 2MB。');
+  }
+
+  const buffer = Buffer.from(base64Text, 'base64');
+
+  if (buffer.length <= 0 || buffer.length > AUTH_AVATAR_MAX_BYTES) {
+    throw new RequestValidationError('头像图片不能超过 2MB。');
+  }
+
+  if (!hasExpectedAvatarSignature(buffer, avatarType.signatures)) {
+    throw new RequestValidationError('头像图片内容与文件类型不匹配。');
+  }
+
+  if (mimeType === 'image/webp' && !isWebpAvatarBuffer(buffer)) {
+    throw new RequestValidationError('头像图片内容与文件类型不匹配。');
+  }
+
+  return {
+    buffer,
+    extension: avatarType.extension,
+    mimeType,
+  };
+}
+
+async function persistAuthUserAvatar(userId, avatar) {
+  await mkdir(AUTH_AVATAR_STORAGE_DIR, { recursive: true });
+
+  const fileName = `${userId}-${Date.now()}-${randomBytes(8).toString('hex')}${avatar.extension}`;
+  await writeFile(new URL(fileName, AUTH_AVATAR_STORAGE_DIR), avatar.buffer, { flag: 'wx' });
+
+  return `${AUTH_AVATAR_ROUTE_PREFIX}/${fileName}`;
+}
+
+async function deleteStoredAuthUserAvatar(avatarUrl) {
+  const fileName = extractStoredAvatarFileName(avatarUrl);
+
+  if (!fileName) {
+    return;
+  }
+
+  await unlink(new URL(fileName, AUTH_AVATAR_STORAGE_DIR));
+}
+
+function extractStoredAvatarFileName(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return '';
+  }
+
+  const normalizedValue = value.trim();
+  const prefixIndex = normalizedValue.indexOf(`${AUTH_AVATAR_ROUTE_PREFIX}/`);
+  const fileName = prefixIndex >= 0
+    ? normalizedValue.slice(prefixIndex + AUTH_AVATAR_ROUTE_PREFIX.length + 1)
+    : normalizedValue;
+
+  return normalizeAvatarFileName(fileName);
+}
+
+function normalizeAvatarFileName(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const normalizedValue = value.trim();
+  return /^\d+-\d+-[a-f0-9]{16}\.(?:jpg|png|webp)$/i.test(normalizedValue)
+    ? normalizedValue
+    : '';
+}
+
+function getAvatarContentType(fileName) {
+  const normalizedFileName = typeof fileName === 'string' ? fileName.toLowerCase() : '';
+
+  if (normalizedFileName.endsWith('.png')) {
+    return 'image/png';
+  }
+
+  if (normalizedFileName.endsWith('.webp')) {
+    return 'image/webp';
+  }
+
+  return 'image/jpeg';
+}
+
+function getBase64ByteLength(value) {
+  const paddingLength = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  return Math.floor((value.length * 3) / 4) - paddingLength;
+}
+
+function hasExpectedAvatarSignature(buffer, signatures) {
+  return signatures.some((signature) => signature.every((byte, index) => buffer[index] === byte));
+}
+
+function isWebpAvatarBuffer(buffer) {
+  return buffer.length >= 12
+    && buffer[8] === 0x57
+    && buffer[9] === 0x45
+    && buffer[10] === 0x42
+    && buffer[11] === 0x50;
 }
 
 function escapeHtml(value) {

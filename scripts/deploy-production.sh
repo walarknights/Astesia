@@ -153,6 +153,7 @@ sync_backend_and_app_source() {
     --exclude '.expo' \
     --exclude 'dist' \
     --exclude '.deploy' \
+    --exclude 'uploads' \
     -e "$RSYNC_RSH" \
     "$ROOT_DIR/server/" \
     "$DEPLOY_TARGET:$REMOTE_APP_DIR/server/"

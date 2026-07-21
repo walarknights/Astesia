@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1
+
+FROM node:22-alpine AS runtime
+
+ENV NODE_ENV=production \
+  AI_SERVER_HOST=0.0.0.0 \
+  AI_SERVER_PORT=8787
+
+WORKDIR /app
+
+RUN addgroup -S astesia \
+  && adduser -S astesia -G astesia
+
+RUN npm init -y >/dev/null \
+  && npm install --omit=dev --no-audit --no-fund --package-lock=false \
+    @hono/node-server@1.19.6 \
+    hono@4.10.7 \
+    nodemailer@9.0.3 \
+    pg@8.22.0
+
+COPY server ./server
+
+RUN mkdir -p /app/server/uploads \
+  && chown -R astesia:astesia /app/server/uploads
+
+USER astesia
+
+EXPOSE 8787
+
+CMD ["node", "server/ai-server.mjs"]

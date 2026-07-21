@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+  PYTHONUNBUFFERED=1 \
+  AKSHARE_HOST=0.0.0.0 \
+  AKSHARE_PORT=8765
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir akshare \
+  && useradd --create-home --shell /usr/sbin/nologin astesia
+
+COPY scripts/akshare_server.py ./scripts/akshare_server.py
+
+RUN chown -R astesia:astesia /app
+
+USER astesia
+
+EXPOSE 8765
+
+CMD ["python", "scripts/akshare_server.py"]

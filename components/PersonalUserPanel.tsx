@@ -1,6 +1,7 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Image } from 'expo-image';
-import { useEffect, useMemo, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -15,7 +16,6 @@ import { AstesiaLogo } from '@/components/AstesiaLogo';
 import { ThemedText } from '@/components/themed-text';
 import { AppPalette, Fonts } from '@/constants/theme';
 import {
-  clearAuthSession,
   getAiQuotaSummary,
   loadAuthSession,
   loginWithEmailPassword,
@@ -35,6 +35,7 @@ const SETTINGS_ICON = require('@/assets/figma-icons/personal-user-panel/settings
 const ARROW_ICON = require('@/assets/figma-icons/personal-user-panel/arrow-rise.png');
 
 export function PersonalUserPanel() {
+  const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
   const [quotaSummary, setQuotaSummary] = useState<AiQuotaSummary | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
@@ -202,7 +203,7 @@ export function PersonalUserPanel() {
     setIsAuthModalVisible(false);
   };
 
-  const refreshSessionState = async () => {
+  const refreshSessionState = useCallback(async () => {
     const currentSession = await loadAuthSession();
     setSession(currentSession);
 
@@ -220,7 +221,13 @@ export function PersonalUserPanel() {
     } finally {
       setIsQuotaLoading(false);
     }
-  };
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshSessionState();
+    }, [refreshSessionState])
+  );
 
   const handleSendVerificationCode = async () => {
     if (!normalizedAuthEmail) {
@@ -331,22 +338,7 @@ export function PersonalUserPanel() {
       return;
     }
 
-    Alert.alert(
-      '个人账号管理',
-      `邮箱：${sessionUser.email}\n所属计划：${sessionUser.planName}\n累计消耗：$${quotaSummary?.totalChargedUsd ?? '0'}`,
-      [
-        { text: '关闭', style: 'cancel' },
-        {
-          text: '退出登录',
-          style: 'destructive',
-          onPress: async () => {
-            await clearAuthSession();
-            setSession(null);
-            setQuotaSummary(null);
-          },
-        },
-      ]
-    );
+    router.push('/account-management');
   };
 
   // [变更] 修改前: 用户面板文件被撤销，个人页顶部缺少登录入口和用户信息展示
@@ -401,8 +393,8 @@ export function PersonalUserPanel() {
 
             {/*
              * 渲染位置: 用户信息卡底部操作区
-             * 展示内容: 个人账号管理入口，点击后可查看当前账号信息或退出登录
-             * 数据来源: sessionUser 与 quotaSummary
+             * 展示内容: 个人账号管理入口，点击后进入资料编辑与退出登录页面
+             * 数据来源: sessionUser 登录状态与 expo-router 路由
              */}
             <Pressable accessibilityRole="button" style={styles.footerRow} onPress={handleManageAccount}>
               <View style={styles.footerLeft}>

@@ -411,7 +411,7 @@ export default function HomeScreen() {
                           backgroundColor: homeTheme.featureIconBackground,
                         },
                       ]}>
-                      <MaterialIcons name={feature.icon} size={34} color={feature.iconColor} />
+                      <MaterialIcons name={feature.icon} size={28} color={feature.iconColor} />
                     </View>
                     <ThemedText type="subtitle" style={[styles.featureTitle, { color: homeTheme.text }]}>
                       {feature.title}
@@ -849,20 +849,20 @@ const styles = StyleSheet.create({
     // [原因] 首页功能入口需要按从上到下的阅读顺序展示
     flexDirection: 'column',
     alignItems: 'center',
-    gap: 20,
+    gap: 12,
     paddingHorizontal: 24,
-    paddingBottom: 112,
+    paddingBottom: 88,
   },
   featureCardShell: {
-    paddingVertical: 6,
+    paddingVertical: 3,
   },
   featureCard: {
     width: '100%',
-    minHeight: 330,
+    minHeight: 232,
     borderWidth: 1,
-    borderRadius: 30,
-    paddingHorizontal: 28,
-    paddingVertical: 30,
+    borderRadius: 24,
+    paddingHorizontal: 22,
+    paddingVertical: 22,
     alignItems: 'flex-start',
     justifyContent: 'flex-start',
     shadowOpacity: 0.16,
@@ -871,41 +871,41 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   featureIconWrapper: {
-    width: 88,
-    height: 88,
+    width: 64,
+    height: 64,
     borderWidth: 1,
-    borderRadius: 26,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.06)',
   },
   featureTitle: {
-    marginTop: 34,
-    fontSize: 32,
-    lineHeight: 38,
+    marginTop: 18,
+    fontSize: 24,
+    lineHeight: 30,
     fontWeight: '800',
   },
   featureDescription: {
     color: AppPalette.textMuted,
-    marginTop: 14,
-    fontSize: 18,
-    lineHeight: 29,
+    marginTop: 8,
+    fontSize: 14,
+    lineHeight: 21,
   },
   featureTagRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
-    marginTop: 26,
+    gap: 8,
+    marginTop: 16,
   },
   featureTag: {
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
   },
   featureTagText: {
-    fontSize: 15,
-    lineHeight: 20,
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: '700',
   },
 });

@@ -1,19 +1,14 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect } from '@react-navigation/native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Easing, Pressable, ScrollView, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { BottomSwitchBar } from '@/components/BottomSwitchBar';
 import { ThemedText } from '@/components/themed-text';
 import { AppPalette } from '@/constants/theme';
-import { TodoPanel as TodoListPanel } from '@/app/todo';
 import { getNoteImageCount, getNotePlainText, loadNotes, type NoteRecord } from '@/services/notes-storage';
-
-type NotesTab = 'notes' | 'todo';
 
 const NOTE_PREVIEW_CONTENT_LIMIT = 15;
 const NOTE_TAB_POP_ANIMATION_MS = 680;
@@ -32,10 +27,8 @@ function getNotePreviewContent(content: string) {
 
 export default function NotesScreen() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<NotesTab>('notes');
   const [notes, setNotes] = useState<NoteRecord[]>([]);
   const [isLoadingNotes, setIsLoadingNotes] = useState(true);
-  const [todoCreateRequestKey, setTodoCreateRequestKey] = useState(0);
 
   useFocusEffect(
     useCallback(() => {
@@ -65,94 +58,60 @@ export default function NotesScreen() {
     }, [])
   );
 
-  const handlePressAdd = () => {
-    if (activeTab === 'notes') {
-      router.push('/note-editor');
-      return;
-    }
-
-    setTodoCreateRequestKey((value) => value + 1);
-  };
-
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
       <StatusBar style="light" backgroundColor={AppPalette.background} />
-      <LinearGradient
-        colors={['#1E1E3A', '#151526', AppPalette.background]}
-        locations={[0, 0.5048, 1]}
-        start={{ x: 0.5, y: 0 }}
-        end={{ x: 0.5, y: 1 }}
-        style={styles.gradientBackground}>
-        <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+        <View style={styles.panelRoot}>
+          {/*
+           * 渲染位置: 笔记页顶部标题区
+           * 展示内容: Astesia 小标题、笔记标题和右侧新建按钮
+           * 数据来源: router.push('/note-editor') 导航回调
+           */}
           <View style={styles.header}>
-            <Pressable style={styles.iconButton} onPress={() => router.back()}>
-              <MaterialIcons name="arrow-back" size={24} color={AppPalette.text} />
+            <View>
+              <ThemedText style={styles.eyebrow}>Astesia</ThemedText>
+              <ThemedText type="title" style={styles.title}>笔记</ThemedText>
+            </View>
+            <Pressable accessibilityRole="button" style={styles.addButton} onPress={() => router.push('/note-editor')}>
+              <MaterialIcons name="add" size={28} color="#FFFFFF" />
             </Pressable>
-            <ThemedText style={styles.headerTitle}>笔记</ThemedText>
-            <View style={styles.headerSpacer} />
           </View>
 
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.scrollContent}>
-            {activeTab === 'notes' ? (
+          {isLoadingNotes ? (
+            <View style={styles.loadingCard}>
+              <ActivityIndicator color={AppPalette.brandLight} />
+              <ThemedText style={styles.loadingText}>正在读取笔记...</ThemedText>
+            </View>
+          ) : (
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.scrollContent}>
               <NotesTabAnimatedPanel>
                 <NotesPanel
-                  isLoading={isLoadingNotes}
                   notes={notes}
                   onPressNote={(noteId) => router.push({ pathname: '/note-editor', params: { noteId } })}
                   onPressCreate={() => router.push('/note-editor')}
                 />
               </NotesTabAnimatedPanel>
-            ) : (
-              <TodoPanel createRequestKey={todoCreateRequestKey} />
-            )}
-          </ScrollView>
-          <View style={{marginBottom: 12}} >
-          <BottomSwitchBar
-            leftTab={{
-              icon: 'edit-note',
-              label: '笔记',
-              active: activeTab === 'notes',
-              onPress: () => setActiveTab('notes'),
-            }}
-            rightTab={{
-              icon: 'checklist',
-              label: '待办',
-              active: activeTab === 'todo',
-              onPress: () => setActiveTab('todo'),
-            }}
-            onPressAdd={handlePressAdd}
-            
-          />
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
+            </ScrollView>
+          )}
+        </View>
+      </SafeAreaView>
     </>
   );
 }
 
 function NotesPanel({
-  isLoading,
   notes,
   onPressNote,
   onPressCreate,
 }: {
-  isLoading: boolean;
   notes: NoteRecord[];
   onPressNote: (noteId: string) => void;
   onPressCreate: () => void;
 }) {
-  if (isLoading) {
-    return (
-      <View style={styles.loadingCard}>
-        <ActivityIndicator color={AppPalette.brandLight} />
-        <ThemedText style={styles.loadingText}>正在读取笔记...</ThemedText>
-      </View>
-    );
-  }
-
   if (notes.length === 0) {
     return (
       <View style={styles.emptyCard}>
@@ -171,7 +130,7 @@ function NotesPanel({
   return (
     <View style={styles.notesPanel}>
       {/*
-       * 渲染位置: 合并入口的笔记主视图
+       * 渲染位置: 笔记页主内容区
        * 展示内容: 单列具体笔记预览卡片，点击进入编辑页
        * 数据来源: loadNotes() 读取的本地笔记记录
        */}
@@ -216,19 +175,6 @@ function NotePreviewCard({
   );
 }
 
-function TodoPanel({ createRequestKey }: { createRequestKey: number }) {
-  return (
-    <View style={styles.todoPanel}>
-      {/*
-       * 渲染位置: 合并入口的待办切换页
-       * 展示内容: 可编辑待办列表、空状态、已完成列表和底部弹层
-       * 数据来源: TodoListPanel 内部读取的本地待办记录
-       */}
-      <TodoListPanel embedded createRequestKey={createRequestKey} />
-    </View>
-  );
-}
-
 function NotesTabAnimatedPanel({ children }: { children: React.ReactNode }) {
   const enterProgress = useRef(new Animated.Value(0)).current;
 
@@ -243,9 +189,9 @@ function NotesTabAnimatedPanel({ children }: { children: React.ReactNode }) {
 
   return (
     /*
-     * 渲染位置: 合并入口的笔记 tab 内容容器
+     * 渲染位置: 笔记页内容容器
      * 展示内容: 笔记空状态或笔记卡片列表的整体弹出动画
-     * 数据来源: activeTab === 'notes' 时传入的笔记内容节点
+     * 数据来源: NotesScreen 传入的笔记内容节点
      */
     <Animated.View
       style={[
@@ -274,46 +220,52 @@ function NotesTabAnimatedPanel({ children }: { children: React.ReactNode }) {
 }
 
 const styles = StyleSheet.create({
-  // [变更] 修改前: 笔记页使用浅紫渐变和纯白纸张卡片
-  // [变更] 修改后: 使用深色光晕背景与低透明描边的玻璃卡片
-  // [原因] 保留笔记卡片结构，同时匹配推广页的暗色视觉
-  gradientBackground: {
+  // [变更] 修改前: 笔记页使用返回按钮、居中标题和独立滚动间距
+  // [变更] 修改后: 改为待办页同款顶部标题区、右侧加号和内容滚动区
+  // [原因] 让笔记页与待办页保持一致的页面排布
+  safeArea: {
     flex: 1,
     backgroundColor: AppPalette.background,
   },
-  safeArea: {
+  panelRoot: {
     flex: 1,
   },
   header: {
-    height: 64,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 26,
-    gap: 1,
-    marginBottom: 4,
-    marginLeft: -8,
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingTop: 10,
+    paddingBottom: 18,
   },
-  iconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  eyebrow: {
+    color: AppPalette.textMuted,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  title: {
+    color: AppPalette.text,
+    fontSize: 32,
+    lineHeight: 38,
+  },
+  addButton: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  headerSpacer: {
-    flex: 1,
-  },
-  headerTitle: {
-    color: AppPalette.text,
-    fontSize: 24,
-    lineHeight: 50,
-    fontWeight: 'bold',
+    backgroundColor: AppPalette.brand,
+    shadowColor: AppPalette.brandLight,
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
   scrollContent: {
-    flexGrow: 1,
-    paddingHorizontal: 31,
-    paddingTop: 24,
-    paddingBottom: 116,
+    gap: 22,
+    paddingHorizontal: 24,
+    paddingBottom: 40,
   },
   notesAnimatedPanel: {
     width: '100%',
@@ -329,52 +281,44 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
   loadingCard: {
-    minHeight: 220,
+    marginHorizontal: 24,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 24,
-    borderWidth: 1,
-    borderColor: AppPalette.border,
-    backgroundColor: AppPalette.surfaceSoft,
-    gap: 10,
+    padding: 28,
+    backgroundColor: 'transparent',
+    gap: 12,
   },
   loadingText: {
-    color: AppPalette.brandLight,
-    fontSize: 14,
-    lineHeight: 20,
+    color: AppPalette.textMuted,
   },
   emptyCard: {
+    // [变更] 修改前: 空笔记卡片保留玻璃底色、描边和暗色投影
+    // [变更] 修改后: 去掉外框和投影，只保留空状态内容
+    // [原因] 避免笔记页出现黑色边框，与待办入口的轻量空状态观感一致
     alignItems: 'center',
     borderRadius: 28,
-    paddingHorizontal: 24,
-    paddingVertical: 36,
-    borderWidth: 1,
-    borderColor: AppPalette.border,
-    backgroundColor: AppPalette.surfaceSoft,
-    shadowColor: AppPalette.shadow,
-    shadowOpacity: 0.12,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 2,
+    padding: 28,
+    backgroundColor: 'transparent',
     gap: 12,
   },
   emptyTitle: {
     color: AppPalette.text,
-    fontSize: 24,
-    lineHeight: 30,
+    fontSize: 22,
+    lineHeight: 28,
     fontWeight: '700',
   },
   emptyDescription: {
     color: AppPalette.textMuted,
-    fontSize: 14,
-    lineHeight: 21,
+    fontSize: 15,
+    lineHeight: 22,
     textAlign: 'center',
   },
   emptyButton: {
-    marginTop: 6,
+    marginTop: 8,
     borderRadius: 999,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
     backgroundColor: AppPalette.brand,
   },
   emptyButtonText: {
@@ -382,12 +326,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '700',
-  },
-  todoPanel: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingTop: 120,
-    width: '100%',
   },
   noteCard: {
     width: '100%',
@@ -397,14 +335,7 @@ const styles = StyleSheet.create({
     paddingRight: 18,
     paddingBottom: 30,
     paddingLeft: 18,
-    borderWidth: 1,
-    borderColor: AppPalette.border,
     backgroundColor: AppPalette.surfaceSoft,
-    shadowColor: AppPalette.shadow,
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 2,
   },
   noteCardTitle: {
     color: AppPalette.text,
@@ -437,27 +368,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '700',
-  },
-  todoEmptyCard: {
-    alignItems: 'center',
-    borderRadius: 24,
-    paddingHorizontal: 22,
-    paddingVertical: 34,
-    borderWidth: 1,
-    borderColor: AppPalette.border,
-    backgroundColor: AppPalette.surfaceSoft,
-    gap: 10,
-  },
-  todoTitle: {
-    color: AppPalette.text,
-    fontSize: 24,
-    lineHeight: 30,
-    fontWeight: '700',
-  },
-  todoDescription: {
-    color: AppPalette.textMuted,
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: 'center',
   },
 });
