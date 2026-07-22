@@ -29,6 +29,7 @@ services:
       dockerfile: docker/Dockerfile.backend
     image: astesia-backend:latest
     # .env 需要包含 DATABASE_URL、AUTH_TOKEN_SECRET、AI/SMTP 密钥等运行期配置。
+    # 容器启动会先执行 PostgreSQL 迁移，迁移失败时后端不会继续启动。
     # 后端进入容器后，DATABASE_URL 不要继续写 127.0.0.1；需改为容器可访问的数据库地址。
     env_file:
       - .env

@@ -1,3 +1,5 @@
+import { PRIVACY_POLICY_CONTENT, PRIVACY_POLICY_TITLE } from '@/constants/privacy-policy';
+
 const DEFAULT_APP_CONTENT_API_HOST = 'https://astesia.cc';
 const APP_CONTENT_API_HOST = resolveAppContentApiHost(process.env.EXPO_PUBLIC_AI_API_HOST);
 
@@ -45,14 +47,11 @@ export const DEFAULT_APP_CONTENT_BLOCKS: Record<AppContentKey, AppContentBlock> 
   },
   privacy: {
     key: 'privacy',
-    title: '隐私说明',
-    content: [
-      '隐私说明',
-      'Astesia 现在支持用户登录，用于识别当前账号、展示所属计划，并校验 AI 对话相关额度。',
-      '目前笔记、账单、待办和外观偏好仍默认保存在当前设备本地，不会因为登录自动上传。',
-      'AI 对话记录与 AI 计费摘要会按当前登录用户进行隔离，用于保证额度和会话数据不串用。',
-      '卸载 App、清空应用数据或手机损坏仍可能导致本地正式数据丢失，请定期导出或备份。',
-    ].join('\n\n'),
+    // [变更] 修改前: 个人页隐私说明只覆盖登录态、AI 数据与本地数据边界
+    // [变更] 修改后: 本地默认内容复用正式隐私政策全文
+    // [原因] 保证登录前同意的政策与个人页可查看内容一致
+    title: PRIVACY_POLICY_TITLE,
+    content: PRIVACY_POLICY_CONTENT,
     updatedBy: null,
     updatedAt: null,
   },

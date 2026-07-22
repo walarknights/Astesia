@@ -6,6 +6,7 @@ import { Link } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   StyleSheet,
   useWindowDimensions,
@@ -52,6 +53,20 @@ const PLACEHOLDER_DASHBOARD: WeatherDashboard = {
   indices: [],
   minutely: null,
   dailyForecasts: [],
+};
+
+const LOCATION_REQUEST_TIMEOUT_MS = 10000;
+const LAST_KNOWN_POSITION_MAX_AGE_MS = 30 * 60 * 1000;
+const LAST_KNOWN_POSITION_REQUIRED_ACCURACY_METERS = 20000;
+const WEB_GEOLOCATION_PERMISSION_DENIED = 1;
+const WEB_GEOLOCATION_POSITION_UNAVAILABLE = 2;
+const WEB_GEOLOCATION_TIMEOUT = 3;
+
+type DevicePosition = {
+  coords: {
+    latitude: number;
+    longitude: number;
+  };
 };
 
 
@@ -448,17 +463,231 @@ export default function HomeScreen() {
 }
 
 async function requestLocationWeather() {
-  const permission = await Location.requestForegroundPermissionsAsync();
-
-  if (permission.status !== 'granted') {
-    throw new Error('未获得定位权限，请先允许定位或改用手动切换城市。');
-  }
-
-  const position = await Location.getCurrentPositionAsync({
-    accuracy: Location.Accuracy.Balanced,
-  });
+  // [变更] 修改前: 权限通过后直接等待系统返回实时坐标
+  // [变更] 修改后: 按平台读取坐标，并在实时定位失败时回退最近一次可用坐标
+  // [原因] GPS 冷启动、室内弱信号或浏览器定位超时都会导致天气首页长期无法读取位置
+  const position = await requestDevicePosition();
 
   return getWeatherByCoordinates(position.coords.latitude, position.coords.longitude);
+}
+
+/**
+ * 读取当前设备坐标，Web 端绕过 expo-location 的无超时权限探测，原生端保留 Expo 权限链路。
+ *
+ * @returns 可用于城市级天气查询的经纬度坐标
+ * @example
+ *   const position = await requestDevicePosition()
+ */
+async function requestDevicePosition(): Promise<DevicePosition> {
+  if (Platform.OS === 'web') {
+    return requestWebPosition();
+  }
+
+  return requestNativePosition();
+}
+
+/**
+ * 读取原生端坐标，先尝试实时定位，失败后使用最近一次定位作为城市天气兜底。
+ *
+ * @returns 当前或最近一次可用的经纬度坐标
+ * @example
+ *   const position = await requestNativePosition()
+ */
+async function requestNativePosition(): Promise<DevicePosition> {
+  await assertNativeLocationServicesEnabled();
+
+  const permission = await Location.requestForegroundPermissionsAsync();
+
+  if (!permission.granted) {
+    throw new Error(
+      permission.canAskAgain
+        ? '未获得定位权限，请先允许定位或改用手动切换城市。'
+        : '定位权限已被系统关闭，请到系统设置中允许 Astesia 访问定位，或改用手动切换城市。'
+    );
+  }
+
+  let currentPositionError: unknown = null;
+
+  try {
+    return await withLocationTimeout(
+      Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+        mayShowUserSettingsDialog: true,
+      }),
+      LOCATION_REQUEST_TIMEOUT_MS,
+      '定位请求超时，请到开阔区域重试，或改用手动切换城市。'
+    );
+  } catch (error) {
+    currentPositionError = error;
+  }
+
+  const lastKnownPosition = await getLastKnownNativePosition();
+
+  if (lastKnownPosition) {
+    return lastKnownPosition;
+  }
+
+  throw new Error(getNativeLocationErrorMessage(currentPositionError));
+}
+
+/**
+ * 安全读取原生端最近一次定位，避免兜底查询失败覆盖实时定位的真实错误。
+ *
+ * @returns 最近一次可用坐标，不可用时返回 null
+ * @example
+ *   const position = await getLastKnownNativePosition()
+ */
+async function getLastKnownNativePosition() {
+  try {
+    return await Location.getLastKnownPositionAsync({
+      maxAge: LAST_KNOWN_POSITION_MAX_AGE_MS,
+      requiredAccuracy: LAST_KNOWN_POSITION_REQUIRED_ACCURACY_METERS,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 校验原生系统定位开关，避免权限已给但系统总开关关闭时继续等待坐标。
+ *
+ * @returns 系统定位服务可用时正常返回
+ * @example
+ *   await assertNativeLocationServicesEnabled()
+ */
+async function assertNativeLocationServicesEnabled() {
+  const providerStatus = await Location.getProviderStatusAsync();
+
+  if (!providerStatus.locationServicesEnabled) {
+    throw new Error('系统定位服务未开启，请打开手机定位开关，或改用手动切换城市。');
+  }
+}
+
+/**
+ * 读取浏览器坐标，并显式设置超时，避免 Web 首屏被权限弹窗或弱信号长期卡住。
+ *
+ * @returns 浏览器返回的经纬度坐标
+ * @example
+ *   const position = await requestWebPosition()
+ */
+async function requestWebPosition(): Promise<DevicePosition> {
+  assertWebLocationAvailable();
+
+  return withLocationTimeout(
+    new Promise<DevicePosition>((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          resolve({
+            coords: {
+              latitude: position.coords.latitude,
+              longitude: position.coords.longitude,
+            },
+          });
+        },
+        (error: { code?: number; message?: string }) => {
+          reject(new Error(getWebLocationErrorMessage(error)));
+        },
+        {
+          enableHighAccuracy: false,
+          maximumAge: LAST_KNOWN_POSITION_MAX_AGE_MS,
+          timeout: LOCATION_REQUEST_TIMEOUT_MS,
+        }
+      );
+    }),
+    LOCATION_REQUEST_TIMEOUT_MS + 1000,
+    '浏览器定位请求超时，请检查定位权限后重试，或改用手动切换城市。'
+  );
+}
+
+/**
+ * 校验浏览器定位运行环境，提前提示 HTTPS 和 API 支持问题。
+ *
+ * @returns 当前浏览器支持地理定位时正常返回
+ * @example
+ *   assertWebLocationAvailable()
+ */
+function assertWebLocationAvailable() {
+  const hostname = window.location.hostname;
+  const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+
+  if (!window.isSecureContext && !isLocalhost) {
+    throw new Error('浏览器定位需要 HTTPS 环境，请使用线上 HTTPS 地址访问，或改用手动切换城市。');
+  }
+
+  if (!navigator.geolocation) {
+    throw new Error('当前浏览器不支持地理定位，请改用手动切换城市。');
+  }
+}
+
+/**
+ * 给定位 Promise 增加业务超时，避免系统定位长时间不返回。
+ *
+ * @param operation - 正在执行的定位读取请求
+ * @param timeoutMs - 等待超时时长，单位毫秒
+ * @param timeoutMessage - 超时后展示给用户的提示
+ * @returns 定位请求成功时的原始结果
+ * @example
+ *   await withLocationTimeout(Location.getCurrentPositionAsync(), 10000, '定位请求超时')
+ */
+async function withLocationTimeout<T>(operation: Promise<T>, timeoutMs: number, timeoutMessage: string) {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+function getNativeLocationErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : '';
+  const normalizedMessage = message.toLowerCase();
+
+  if (message.includes('定位请求超时') || normalizedMessage.includes('timeout')) {
+    return '定位请求超时，请到开阔区域重试，或改用手动切换城市。';
+  }
+
+  if (
+    normalizedMessage.includes('permission') ||
+    normalizedMessage.includes('denied') ||
+    normalizedMessage.includes('unauthorized')
+  ) {
+    return '未获得定位权限，请在系统设置中允许 Astesia 访问定位，或改用手动切换城市。';
+  }
+
+  if (
+    normalizedMessage.includes('provider') ||
+    normalizedMessage.includes('settings') ||
+    normalizedMessage.includes('disabled') ||
+    normalizedMessage.includes('location service')
+  ) {
+    return '系统定位服务不可用，请打开手机定位开关并检查网络定位服务，或改用手动切换城市。';
+  }
+
+  return '无法读取当前位置，请检查定位权限、系统定位开关和网络状态，或改用手动切换城市。';
+}
+
+function getWebLocationErrorMessage(error: { code?: number; message?: string }) {
+  if (error.code === WEB_GEOLOCATION_PERMISSION_DENIED) {
+    return '浏览器定位权限被拒绝，请在浏览器设置中允许定位，或改用手动切换城市。';
+  }
+
+  if (error.code === WEB_GEOLOCATION_POSITION_UNAVAILABLE) {
+    return '浏览器暂时无法获取当前位置，请检查系统定位开关和网络状态，或改用手动切换城市。';
+  }
+
+  if (error.code === WEB_GEOLOCATION_TIMEOUT) {
+    return '浏览器定位请求超时，请稍后重试，或改用手动切换城市。';
+  }
+
+  return error.message || '浏览器无法读取当前位置，请改用手动切换城市。';
 }
 
 function getErrorMessage(error: unknown) {

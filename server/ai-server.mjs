@@ -9,6 +9,8 @@ import { cors } from 'hono/cors';
 import nodemailer from 'nodemailer';
 import pg from 'pg';
 
+import { PRIVACY_POLICY_CONTENT, PRIVACY_POLICY_TITLE } from './privacy-policy.mjs';
+
 loadLocalEnv();
 
 const NITRO_ROUTER_URL = 'https://api.nitrorouter.com/v1/chat/completions';
@@ -115,14 +117,8 @@ const DEFAULT_APP_CONTENT_BLOCKS = Object.freeze({
     ].join('\n'),
   },
   privacy: {
-    title: '隐私说明',
-    content: [
-      '隐私说明',
-      'Astesia 现在支持用户登录，用于识别当前账号、展示所属计划，并校验 AI 对话相关额度。',
-      '目前笔记、账单、待办和外观偏好仍默认保存在当前设备本地，不会因为登录自动上传。',
-      'AI 对话记录与 AI 计费摘要会按当前登录用户进行隔离，用于保证额度和会话数据不串用。',
-      '卸载 App、清空应用数据或手机损坏仍可能导致本地正式数据丢失，请定期导出或备份。',
-    ].join('\n\n'),
+    title: PRIVACY_POLICY_TITLE,
+    content: PRIVACY_POLICY_CONTENT,
   },
   about: {
     title: '关于应用',
@@ -144,6 +140,7 @@ const AUTH_RETURN_DEBUG_VERIFICATION_CODE = normalizeBooleanEnv(
   getEnvValue('AUTH_RETURN_DEBUG_VERIFICATION_CODE'),
   false
 );
+const CORS_ALLOWED_ORIGINS = createCorsAllowedOrigins(getEnvValue('CORS_ALLOWED_ORIGINS'));
 
 class AiAuthenticationError extends Error {}
 
@@ -173,6 +170,7 @@ class ResourceConflictError extends RequestValidationError {
 }
 
 app.use('*', cors({
+  origin: (origin) => resolveCorsOrigin(origin),
   allowHeaders: ['Accept', 'Authorization', 'Content-Type', AI_USER_ID_HEADER],
 }));
 
@@ -934,6 +932,68 @@ function normalizeDatabaseUrl(value) {
 
 function normalizeServerHost(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function createCorsAllowedOrigins(value) {
+  const allowedOrigins = new Set(['https://astesia.cc']);
+  const rawOrigins = typeof value === 'string' ? value.split(',') : [];
+
+  for (const rawOrigin of rawOrigins) {
+    const normalizedOrigin = normalizeCorsOrigin(rawOrigin);
+
+    if (normalizedOrigin) {
+      allowedOrigins.add(normalizedOrigin);
+    }
+  }
+
+  return allowedOrigins;
+}
+
+function resolveCorsOrigin(origin) {
+  if (!origin) {
+    return '';
+  }
+
+  const normalizedOrigin = normalizeCorsOrigin(origin);
+
+  if (!normalizedOrigin) {
+    return null;
+  }
+
+  if (CORS_ALLOWED_ORIGINS.has(normalizedOrigin) || isLocalDevelopmentOrigin(normalizedOrigin)) {
+    return normalizedOrigin;
+  }
+
+  return null;
+}
+
+function normalizeCorsOrigin(value) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return '';
+  }
+
+  try {
+    const url = new URL(value.trim());
+
+    if (!['http:', 'https:'].includes(url.protocol)) {
+      return '';
+    }
+
+    return url.origin;
+  } catch {
+    return '';
+  }
+}
+
+function isLocalDevelopmentOrigin(origin) {
+  try {
+    const url = new URL(origin);
+
+    return url.protocol === 'http:'
+      && ['localhost', '127.0.0.1'].includes(url.hostname);
+  } catch {
+    return false;
+  }
 }
 
 function shouldUseDatabaseSsl(databaseUrl) {

@@ -27,4 +27,4 @@ USER astesia
 
 EXPOSE 8787
 
-CMD ["node", "server/ai-server.mjs"]
+CMD ["sh", "-c", "node server/migrate-postgres.mjs && exec node server/ai-server.mjs"]

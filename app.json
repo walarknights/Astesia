@@ -1,14 +1,15 @@
 {
   "expo": {
-    "name": "my-app",
-    "slug": "my-app",
+    "name": "Astesia",
+    "slug": "astesia",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "scheme": "astesia",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
+      "bundleIdentifier": "cc.astesia.app",
       "supportsTablet": true
     },
     "android": {
@@ -23,10 +24,15 @@
       "permissions": [
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION"
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.READ_MEDIA_IMAGES"
       ],
-      "package": "com.anonymous.myapp"
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ],
+      "package": "cc.astesia.app"
     },
     "web": {
       "output": "static",
@@ -38,6 +44,19 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "允许 Astesia 获取你的位置信息，用于展示当前城市天气。"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "允许 Astesia 访问你选择的图片，用于设置头像、笔记插图、账单图片和个人页背景。"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "sounds": [],
+          "color": "#7C3AED"
         }
       ],
       [

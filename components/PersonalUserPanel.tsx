@@ -7,6 +7,7 @@ import {
   Alert,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   TextInput,
   View,
@@ -14,6 +15,7 @@ import {
 
 import { AstesiaLogo } from '@/components/AstesiaLogo';
 import { ThemedText } from '@/components/themed-text';
+import { PRIVACY_POLICY_CONTENT, PRIVACY_POLICY_TITLE } from '@/constants/privacy-policy';
 import { AppPalette, Fonts } from '@/constants/theme';
 import {
   getAiQuotaSummary,
@@ -24,6 +26,7 @@ import {
   type AiQuotaSummary,
   type AuthSession,
 } from '@/services/auth-session';
+import { DEFAULT_APP_CONTENT_BLOCKS, loadAppContentBlocks } from '@/services/app-content';
 
 type AuthMode = 'login' | 'register';
 type VerificationCooldownState = {
@@ -51,6 +54,10 @@ export function PersonalUserPanel() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [isConfirmPasswordVisible, setIsConfirmPasswordVisible] = useState(false);
+  const [hasAcceptedPrivacyPolicy, setHasAcceptedPrivacyPolicy] = useState(false);
+  const [isPrivacyPolicyVisible, setIsPrivacyPolicyVisible] = useState(false);
+  const [privacyPolicyTitle, setPrivacyPolicyTitle] = useState(PRIVACY_POLICY_TITLE);
+  const [privacyPolicyContent, setPrivacyPolicyContent] = useState(PRIVACY_POLICY_CONTENT);
   const [verificationCooldown, setVerificationCooldown] = useState<VerificationCooldownState | null>(null);
 
   useEffect(() => {
@@ -96,6 +103,28 @@ export function PersonalUserPanel() {
     };
 
     void syncUserPanel();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    const syncPrivacyPolicy = async () => {
+      const contentBlocks = await loadAppContentBlocks();
+      const privacyBlock = contentBlocks.privacy ?? DEFAULT_APP_CONTENT_BLOCKS.privacy;
+
+      if (!active) {
+        return;
+      }
+
+      setPrivacyPolicyTitle(privacyBlock.title || PRIVACY_POLICY_TITLE);
+      setPrivacyPolicyContent(privacyBlock.content || PRIVACY_POLICY_CONTENT);
+    };
+
+    void syncPrivacyPolicy();
 
     return () => {
       active = false;
@@ -192,6 +221,7 @@ export function PersonalUserPanel() {
 
   const openAuthModal = (mode: AuthMode) => {
     switchAuthMode(mode);
+    setHasAcceptedPrivacyPolicy(false);
     setIsAuthModalVisible(true);
   };
 
@@ -201,6 +231,10 @@ export function PersonalUserPanel() {
     }
 
     setIsAuthModalVisible(false);
+  };
+
+  const closePrivacyPolicy = () => {
+    setIsPrivacyPolicyVisible(false);
   };
 
   const refreshSessionState = useCallback(async () => {
@@ -232,6 +266,11 @@ export function PersonalUserPanel() {
   const handleSendVerificationCode = async () => {
     if (!normalizedAuthEmail) {
       Alert.alert('邮箱不能为空', '请先输入邮箱地址。');
+      return;
+    }
+
+    if (!hasAcceptedPrivacyPolicy) {
+      Alert.alert('请先同意隐私政策', '阅读并同意隐私政策后才能获取注册验证码。');
       return;
     }
 
@@ -279,6 +318,11 @@ export function PersonalUserPanel() {
 
     if (!normalizedEmail) {
       Alert.alert('邮箱不能为空', '请输入邮箱地址。');
+      return;
+    }
+
+    if (!hasAcceptedPrivacyPolicy) {
+      Alert.alert('请先同意隐私政策', '阅读并同意隐私政策后才能继续登录或注册。');
       return;
     }
 
@@ -551,14 +595,76 @@ export function PersonalUserPanel() {
                 : '登录成功后会展示用户头像、所属计划和当前 AI 剩余额度。'}
             </ThemedText>
 
+            {/*
+             * 渲染位置: 登录 / 注册弹层提交按钮上方
+             * 展示内容: 隐私政策同意勾选与查看政策入口
+             * 数据来源: hasAcceptedPrivacyPolicy 本地状态与 /api/app/content 隐私政策内容
+             */}
+            <View style={styles.privacyAgreementRow}>
+              <Pressable
+                accessibilityLabel="同意隐私政策"
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: hasAcceptedPrivacyPolicy }}
+                hitSlop={8}
+                style={[
+                  styles.privacyCheckbox,
+                  hasAcceptedPrivacyPolicy ? styles.privacyCheckboxChecked : null,
+                ]}
+                onPress={() => setHasAcceptedPrivacyPolicy((currentValue) => !currentValue)}>
+                {hasAcceptedPrivacyPolicy ? <MaterialIcons name="check" size={15} color="#FFFFFF" /> : null}
+              </Pressable>
+              <ThemedText style={styles.privacyAgreementText}>
+                我已阅读并同意
+                <ThemedText
+                  accessibilityRole="button"
+                  style={styles.privacyLinkText}
+                  onPress={() => setIsPrivacyPolicyVisible(true)}>
+                  《隐私政策》
+                </ThemedText>
+              </ThemedText>
+            </View>
+
             <Pressable
               accessibilityRole="button"
               disabled={isSubmitting || isBootstrapping}
-              style={[styles.submitButton, (isSubmitting || isBootstrapping) ? styles.buttonDisabled : null]}
+              style={[
+                styles.submitButton,
+                (isSubmitting || isBootstrapping || !hasAcceptedPrivacyPolicy) ? styles.buttonDisabled : null,
+              ]}
               onPress={() => void handleSubmitAuth()}>
               <ThemedText style={styles.submitButtonText}>
                 {isSubmitting ? '提交中...' : authMode === 'register' ? '确认注册' : '确认登录'}
               </ThemedText>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="slide"
+        transparent
+        visible={isPrivacyPolicyVisible}
+        onRequestClose={closePrivacyPolicy}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, styles.privacyPolicyCard]}>
+            <View style={styles.modalHeader}>
+              <ThemedText type="subtitle" style={styles.modalTitle}>
+                {privacyPolicyTitle}
+              </ThemedText>
+              <Pressable accessibilityRole="button" hitSlop={8} onPress={closePrivacyPolicy}>
+                <MaterialIcons name="close" size={24} color="#334155" />
+              </Pressable>
+            </View>
+            {/*
+             * 渲染位置: 隐私政策弹层正文区域
+             * 展示内容: 完整隐私政策纯文本，支持滚动查看
+             * 数据来源: /api/app/content 响应，接口失败时回退 constants/privacy-policy.ts
+             */}
+            <ScrollView style={styles.privacyPolicyScroll} contentContainerStyle={styles.privacyPolicyContent}>
+              <ThemedText style={styles.privacyPolicyText}>{privacyPolicyContent}</ThemedText>
+            </ScrollView>
+            <Pressable accessibilityRole="button" style={styles.submitButton} onPress={closePrivacyPolicy}>
+              <ThemedText style={styles.submitButtonText}>我知道了</ThemedText>
             </Pressable>
           </View>
         </View>
@@ -948,6 +1054,51 @@ const styles = StyleSheet.create({
     color: AppPalette.textMuted,
     fontSize: 13,
     lineHeight: 20,
+  },
+  privacyAgreementRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  privacyCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: AppPalette.borderStrong,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: AppPalette.surface,
+  },
+  privacyCheckboxChecked: {
+    borderColor: AppPalette.brand,
+    backgroundColor: AppPalette.brand,
+  },
+  privacyAgreementText: {
+    flex: 1,
+    color: AppPalette.textMuted,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+  privacyLinkText: {
+    color: AppPalette.brandLight,
+    fontSize: 13,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  privacyPolicyCard: {
+    maxHeight: '86%',
+  },
+  privacyPolicyScroll: {
+    maxHeight: 520,
+  },
+  privacyPolicyContent: {
+    paddingBottom: 8,
+  },
+  privacyPolicyText: {
+    color: AppPalette.textMuted,
+    fontSize: 13,
+    lineHeight: 22,
   },
   submitButton: {
     minHeight: 50,

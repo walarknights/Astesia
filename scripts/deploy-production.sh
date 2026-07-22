@@ -20,7 +20,7 @@ DEPLOY_BACKEND="${DEPLOY_BACKEND:-1}"
 DEPLOY_EXPO_WEB="${DEPLOY_EXPO_WEB:-1}"
 DEPLOY_ADMIN_WEB="${DEPLOY_ADMIN_WEB:-0}"
 REMOTE_INSTALL="${REMOTE_INSTALL:-0}"
-RUN_MIGRATIONS="${RUN_MIGRATIONS:-0}"
+RUN_MIGRATIONS="${RUN_MIGRATIONS:-1}"
 VERIFY_DEPLOY="${VERIFY_DEPLOY:-1}"
 
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10)
@@ -48,6 +48,62 @@ is_enabled() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "缺少命令：$1"
+}
+
+require_env() {
+  local name="$1"
+  local value="${!name:-}"
+
+  if [ -z "$value" ]; then
+    die "缺少环境变量：$name"
+  fi
+
+  case "$value" in
+    replace_with*|your_*|*your-api-host*)
+      die "环境变量 $name 仍是占位值，请替换成真实生产配置。"
+      ;;
+  esac
+}
+
+trim_env_value() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  value="${value%\"}"
+  value="${value#\"}"
+  value="${value%\'}"
+  value="${value#\'}"
+  printf '%s' "$value"
+}
+
+load_public_env_file() {
+  local file_path="$1"
+
+  if [ ! -f "$file_path" ]; then
+    return
+  fi
+
+  local line key value
+  while IFS= read -r line || [ -n "$line" ]; do
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" != *=* ]] && continue
+
+    key="$(trim_env_value "${line%%=*}")"
+    value="$(trim_env_value "${line#*=}")"
+
+    case "$key" in
+      EXPO_PUBLIC_QWEATHER_KEY|EXPO_PUBLIC_QWEATHER_API_HOST|EXPO_PUBLIC_QWEATHER_GEO_HOST|EXPO_PUBLIC_QWEATHER_WEATHER_HOST)
+        if [ -z "${!key:-}" ]; then
+          export "$key=$value"
+        fi
+        ;;
+    esac
+  done < "$file_path"
+}
+
+load_public_build_env() {
+  load_public_env_file "$ROOT_DIR/.env"
+  load_public_env_file "$ROOT_DIR/.env.production"
 }
 
 ssh_remote() {
@@ -91,11 +147,22 @@ build_expo_web() {
     return
   fi
 
+  load_public_build_env
+  require_env EXPO_PUBLIC_QWEATHER_KEY
+  require_env EXPO_PUBLIC_QWEATHER_API_HOST
+  require_env EXPO_PUBLIC_QWEATHER_GEO_HOST
+  require_env EXPO_PUBLIC_QWEATHER_WEATHER_HOST
+
   log "构建 Expo Web 前端"
   rm -rf "$APP_WEB_BUILD_DIR"
   (
     cd "$ROOT_DIR"
     EXPO_PUBLIC_AI_API_HOST="$PUBLIC_BASE_URL" \
+      EXPO_PUBLIC_AKSHARE_API_HOST="$PUBLIC_BASE_URL" \
+      EXPO_PUBLIC_QWEATHER_KEY="$EXPO_PUBLIC_QWEATHER_KEY" \
+      EXPO_PUBLIC_QWEATHER_API_HOST="$EXPO_PUBLIC_QWEATHER_API_HOST" \
+      EXPO_PUBLIC_QWEATHER_GEO_HOST="$EXPO_PUBLIC_QWEATHER_GEO_HOST" \
+      EXPO_PUBLIC_QWEATHER_WEATHER_HOST="$EXPO_PUBLIC_QWEATHER_WEATHER_HOST" \
       pnpm exec expo export --platform web --output-dir "$APP_WEB_BUILD_DIR"
   )
 }
