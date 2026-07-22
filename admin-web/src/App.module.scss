@@ -306,7 +306,8 @@ $green: #52d49b;
 
 .toolbar,
 .usersToolbar,
-.modelsSummary {
+.modelsSummary,
+.contentSummary {
   display: flex;
   min-height: 44px;
   align-items: center;
@@ -450,7 +451,9 @@ $green: #52d49b;
 .tableCard,
 .modelCard,
 .modelCardEnabled,
-.modelsSummary {
+.modelsSummary,
+.contentSummary,
+.contentCard {
   @include glass-card;
 
   border-radius: 18px;
@@ -981,7 +984,8 @@ $green: #52d49b;
   }
 }
 
-.modelsSummary {
+.modelsSummary,
+.contentSummary {
   min-height: 76px;
   padding: 14px 18px;
 
@@ -1013,7 +1017,8 @@ $green: #52d49b;
   }
 }
 
-.modelGrid {
+.modelGrid,
+.contentGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
@@ -1166,6 +1171,91 @@ $green: #52d49b;
   b {
     color: #9a8de9;
     font-weight: 600;
+  }
+}
+
+.contentCard {
+  display: flex;
+  min-height: 430px;
+  padding: 20px;
+  flex-direction: column;
+}
+
+.contentCardHeader {
+  display: flex;
+  margin-bottom: 18px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+
+  h2 {
+    margin: 7px 0 0;
+    color: #e2e5f1;
+    font-size: 16px;
+    font-weight: 650;
+  }
+}
+
+.contentMeta {
+  color: #626a83;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.contentField {
+  display: flex;
+  min-height: 240px;
+  margin-bottom: 18px;
+  flex: 1;
+  flex-direction: column;
+
+  > span {
+    display: block;
+    margin: 0 0 8px 2px;
+    color: #858da6;
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 240px;
+    padding: 14px;
+    border: 1px solid rgba(137, 147, 185, 0.16);
+    border-radius: 12px;
+    outline: none;
+    color: #e7e9f5;
+    background: rgba(20, 24, 43, 0.76);
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.7;
+    resize: vertical;
+    transition: 150ms ease;
+    flex: 1;
+
+    &:focus {
+      border-color: rgba(131, 112, 255, 0.5);
+      box-shadow: 0 0 0 3px rgba(112, 91, 230, 0.08);
+    }
+  }
+}
+
+.contentCardFooter {
+  display: flex;
+  padding-top: 14px;
+  border-top: 1px solid rgba(131, 141, 178, 0.09);
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+
+  > span {
+    color: #626a83;
+    font-size: 9px;
+  }
+
+  > div {
+    display: flex;
+    gap: 9px;
   }
 }
 
@@ -1739,7 +1829,8 @@ $green: #52d49b;
 
   .metricGrid,
   .rankingGrid,
-  .modelGrid {
+  .modelGrid,
+  .contentGrid {
     grid-template-columns: 1fr;
   }
 
@@ -1774,7 +1865,8 @@ $green: #52d49b;
     margin-right: auto;
   }
 
-  .modelsSummary {
+  .modelsSummary,
+  .contentSummary {
     flex-wrap: wrap;
 
     p {

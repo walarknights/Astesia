@@ -1,6 +1,7 @@
-export type AdminView = 'overview' | 'users' | 'models';
+export type AdminView = 'overview' | 'users' | 'models' | 'content';
 export type TrendGranularity = 'daily' | 'weekly' | 'monthly';
 export type TrendMetric = 'tokens' | 'cost' | 'requests';
+export type AppContentKey = 'updateAnnouncement' | 'help' | 'privacy' | 'about';
 
 export type AdminUserProfile = {
   userId: string;
@@ -91,6 +92,14 @@ export type ModelControl = {
     cachedInputPerMillionUsd: string;
     outputPerMillionUsd: string;
   };
+  updatedBy: string | null;
+  updatedAt: string | null;
+};
+
+export type AppContentBlock = {
+  key: AppContentKey;
+  title: string;
+  content: string;
   updatedBy: string | null;
   updatedAt: string | null;
 };

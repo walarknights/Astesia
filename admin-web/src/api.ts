@@ -1,4 +1,5 @@
 import type {
+  AppContentBlock,
   AdminSession,
   AdminUser,
   AdminUserProfile,
@@ -136,6 +137,30 @@ export async function updateModelControl(
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled }),
+    },
+  );
+}
+
+export async function getAppContentBlocks(session: AdminSession) {
+  return requestAdminJson<{ contents: AppContentBlock[] }>('/api/admin/app/content', session);
+}
+
+export async function updateAppContentBlock(
+  session: AdminSession,
+  contentBlock: AppContentBlock,
+  nextValue: { title: string; content: string },
+) {
+  return requestAdminJson<{ content: AppContentBlock }>(
+    `/api/admin/app/content/${encodeURIComponent(contentBlock.key)}`,
+    session,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: nextValue.title,
+        content: nextValue.content,
+        updatedAt: contentBlock.updatedAt,
+      }),
     },
   );
 }

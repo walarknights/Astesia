@@ -38,6 +38,11 @@ import {
   type ThemeMode,
   useAppSettings,
 } from '@/services/app-settings';
+import {
+  DEFAULT_APP_CONTENT_BLOCKS,
+  loadAppContentBlocks,
+  type AppContentKey,
+} from '@/services/app-content';
 
 type ChoiceOption<T extends string> = {
   label: string;
@@ -85,38 +90,15 @@ const BACKGROUND_OPTIONS: ChoiceOption<PersonalBackground>[] = [
   { label: '自定义背景', value: 'custom' },
 ];
 
-const UPDATE_ANNOUNCEMENT = [
-  'Astesia 1.0.0',
-  '1. 个人页顶部改为用户信息展示模块，并支持邮箱注册和登录。',
-  '2. 登录后可展示头像、用户名、所属计划和 AI 剩余额度。',
-  '3. 支持主题、字体、首页布局和个人页背景偏好。',
-  '4. 新增本地数据导出、导入、备份、恢复和清理入口。',
-].join('\n');
-
-const HELP_CONTENT = [
-  '使用帮助',
-  '1. 笔记入口用于记录灵感、备忘和长文本内容，并可在页面底部切换到待办。',
-  '2. 记账用于记录收入、支出和消费备注。',
-  '3. 待办用于拆解计划和跟踪完成状态。',
-  '4. 个人页顶部会根据登录状态展示用户信息卡，未登录时可通过邮箱注册或登录。',
-  '5. 注册使用“用户名 + 邮箱 + 验证码”，注册完成后后续使用“邮箱 + 密码”登录。',
-  '6. 笔记、记账和待办数据默认保存在本地，建议定期导出或本地备份，避免换机或卸载带来数据丢失。',
-  '7. 设置页的数据导出和本地备份可用于换机前的手动备份。',
-].join('\n');
-
-const PRIVACY_CONTENT = [
-  '隐私说明',
-  'Astesia 现在支持用户登录，用于识别当前账号、展示所属计划，并校验 AI 对话相关额度。',
-  '目前笔记、账单、待办和外观偏好仍默认保存在当前设备本地，不会因为登录自动上传。',
-  'AI 对话记录与 AI 计费摘要会按当前登录用户进行隔离，用于保证额度和会话数据不串用。',
-  '卸载 App、清空应用数据或手机损坏仍可能导致本地正式数据丢失，请定期导出或备份。',
-].join('\n\n');
+const FEEDBACK_EMAIL = '13062323959@163.com';
+const FEEDBACK_SUBJECT = 'Astesia Feedback';
 
 export default function PersonalScreen() {
   const router = useRouter();
   const { settings, updateSettings, resetSettings } = useAppSettings();
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [importText, setImportText] = useState('');
+  const [appContentBlocks, setAppContentBlocks] = useState(DEFAULT_APP_CONTENT_BLOCKS);
   const [customBackgroundImageUri, setCustomBackgroundImageUri] = useState<string | null>(null);
   const [isBackgroundModalVisible, setIsBackgroundModalVisible] = useState(false);
   const [isSavingBackgroundImage, setIsSavingBackgroundImage] = useState(false);
@@ -129,6 +111,14 @@ export default function PersonalScreen() {
   useEffect(() => {
     let active = true;
 
+    const syncAppContentBlocks = async () => {
+      const remoteContentBlocks = await loadAppContentBlocks();
+
+      if (active) {
+        setAppContentBlocks(remoteContentBlocks);
+      }
+    };
+
     const syncPersonalBackgroundImage = async () => {
       const storedUri = await loadPersonalBackgroundImageUri();
 
@@ -137,12 +127,22 @@ export default function PersonalScreen() {
       }
     };
 
+    void syncAppContentBlocks();
     void syncPersonalBackgroundImage();
 
     return () => {
       active = false;
     };
   }, []);
+
+  const handleOpenAppContent = (key: AppContentKey) => {
+    const contentBlock = appContentBlocks[key] ?? DEFAULT_APP_CONTENT_BLOCKS[key];
+
+    setDialog({
+      title: contentBlock.title,
+      content: contentBlock.content,
+    });
+  };
 
   const handleSelect = <T extends string,>(
     title: string,
@@ -407,16 +407,26 @@ export default function PersonalScreen() {
     });
   };
 
+  // [变更] 修改前: 先用 canOpenURL 判断 mailto 可用性，部分端上会误判导致无法拉起邮件客户端
+  // [变更] 修改后: 直接 openURL 打开系统邮件客户端，失败时提示用户手动发送
+  // [原因] canOpenURL 对 mailto 的多端可靠性不足，直接打开再兜底更符合反馈入口预期
   const handleFeedback = async () => {
-    const mailUrl = 'mailto:13062323959@163.com?subject=Astesia%20Feedback';
-    const canOpen = await Linking.canOpenURL(mailUrl);
+    const feedbackBody = [
+      '请在这里填写你的反馈：',
+      '',
+      `应用版本：${version}`,
+      `运行平台：${Platform.OS}`,
+    ].join('\n');
+    const mailUrl = `mailto:${FEEDBACK_EMAIL}?subject=${encodeURIComponent(FEEDBACK_SUBJECT)}&body=${encodeURIComponent(feedbackBody)}`;
 
-    if (canOpen) {
+    try {
       await Linking.openURL(mailUrl);
       return;
+    } catch {
+      // openURL 在无默认邮件客户端或浏览器拦截时可能抛错，统一走手动邮件兜底。
     }
 
-    Alert.alert('意见反馈', '请发送邮件到 13062323959@163.com。');
+    Alert.alert('意见反馈', `无法自动打开邮件客户端，请发送邮件到 ${FEEDBACK_EMAIL}。`);
   };
 
   return (
@@ -498,23 +508,28 @@ export default function PersonalScreen() {
         </SettingSection>
 
         <SettingSection title="关于">
+          {/*
+           * 渲染位置: 个人页“关于”分组顶部
+           * 展示内容: 更新公告、使用帮助、隐私说明和关于应用弹窗入口
+           * 数据来源: /api/app/content 响应与 DEFAULT_APP_CONTENT_BLOCKS 兜底内容
+           */}
           <SettingButton
             icon="campaign"
             title="更新公告"
             description="查看当前版本更新内容"
-            onPress={() => setDialog({ title: '更新公告', content: UPDATE_ANNOUNCEMENT })}
+            onPress={() => handleOpenAppContent('updateAnnouncement')}
           />
           <SettingButton
             icon="help-outline"
             title="使用帮助"
             description="查看登录方式、数据说明和核心功能指引"
-            onPress={() => setDialog({ title: '使用帮助', content: HELP_CONTENT })}
+            onPress={() => handleOpenAppContent('help')}
           />
           <SettingButton
             icon="privacy-tip"
             title="隐私说明"
             description="说明登录态、AI 数据与本地数据边界"
-            onPress={() => setDialog({ title: '隐私说明', content: PRIVACY_CONTENT })}
+            onPress={() => handleOpenAppContent('privacy')}
           />
           {/*
            * 渲染位置: 个人页“关于”分组内
@@ -527,6 +542,11 @@ export default function PersonalScreen() {
             description="查看当前可用 AI 模型的输入、缓存和输出单价"
             onPress={() => router.push('/model-pricing')}
           />
+          {/*
+           * 渲染位置: 个人页“关于”分组内
+           * 展示内容: 意见反馈邮件入口，点击后打开系统邮件客户端
+           * 数据来源: 静态反馈邮箱与 handleFeedback
+           */}
           <SettingButton icon="feedback" title="意见反馈" description="通过邮件发送建议" onPress={() => void handleFeedback()} />
           <SettingButton
             icon="system-update"
@@ -553,12 +573,7 @@ export default function PersonalScreen() {
             icon="info-outline"
             title="关于应用"
             description={`Astesia ${version}`}
-            onPress={() =>
-              setDialog({
-                title: '关于应用',
-                content: `Astesia ${version}\n\n一个支持邮箱登录、AI 助手和本地生活管理的笔记、记账、待办 App。`,
-              })
-            }
+            onPress={() => handleOpenAppContent('about')}
           />
           <SettingButton
             icon="restart-alt"

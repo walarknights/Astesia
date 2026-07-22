@@ -13,6 +13,13 @@ declare const styles: {
   readonly chartLabels: string;
   readonly chartScale: string;
   readonly chartWrap: string;
+  readonly contentCard: string;
+  readonly contentCardFooter: string;
+  readonly contentCardHeader: string;
+  readonly contentField: string;
+  readonly contentGrid: string;
+  readonly contentMeta: string;
+  readonly contentSummary: string;
   readonly disabledTag: string;
   readonly editButton: string;
   readonly emptyState: string;

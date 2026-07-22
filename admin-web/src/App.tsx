@@ -9,18 +9,22 @@ import {
 import {
   ApiError,
   clearAdminSession,
+  getAppContentBlocks,
   getAdminSession,
   getModelControls,
   getStatistics,
   getUsers,
   loadAdminSession,
   loginAdmin,
+  updateAppContentBlock,
   updateModelControl,
   updateUserQuota,
 } from './api';
 import { formatDateTime, formatTokens, formatTrendDate, formatUsd, getInitials } from './format';
 import styles from './App.module.scss';
 import type {
+  AppContentBlock,
+  AppContentKey,
   AdminSession,
   AdminUser,
   AdminView,
@@ -47,6 +51,19 @@ const VIEW_TITLES: Record<AdminView, { eyebrow: string; title: string; descripti
     title: '模型白名单',
     description: '统一管理可用模型与计费单价，停用后立即阻断新请求。',
   },
+  content: {
+    eyebrow: 'APP CONTENT',
+    title: '内容配置',
+    description: '维护更新公告、使用帮助、隐私说明和关于应用文案。',
+  },
+};
+
+const ADMIN_VIEWS: AdminView[] = ['overview', 'users', 'models', 'content'];
+const CONTENT_KEY_LABELS: Record<AppContentKey, string> = {
+  updateAnnouncement: '更新公告',
+  help: '使用帮助',
+  privacy: '隐私说明',
+  about: '关于应用',
 };
 
 const METRIC_ACCENT_CLASSES = {
@@ -60,6 +77,7 @@ const ICON_PATHS = {
   overview: 'M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-11h6V4h-6v5Z',
   users: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m7-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm13 10v-2a4 4 0 0 0-3-3.87m0-7.26a4 4 0 0 1 0 7.75',
   models: 'M12 3 3 8l9 5 9-5-9-5Zm-9 9 9 5 9-5M3 16l9 5 9-5',
+  content: 'M5 4h14a1 1 0 0 1 1 1v14l-4-2-4 2-4-2-4 2V5a1 1 0 0 1 1-1Zm3 5h8M8 13h6',
   refresh: 'M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5m-5 4a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5',
   logout: 'M10 17l5-5-5-5m5 5H3m9-9h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6',
   search: 'm21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z',
@@ -269,10 +287,10 @@ function AdminShell({
         <nav className={styles.nav} aria-label="管理端主导航">
           {/*
            * 渲染位置: 管理端左侧导航
-           * 展示内容: 总览、用户与模型白名单入口
+           * 展示内容: 总览、用户、模型白名单与内容配置入口
            * 数据来源: VIEW_TITLES 常量与当前 view 状态
            */}
-          {(['overview', 'users', 'models'] as AdminView[]).map((item) => (
+          {ADMIN_VIEWS.map((item) => (
             <button
               className={item === view ? styles.navItemActive : styles.navItem}
               key={item}
@@ -316,6 +334,7 @@ function AdminShell({
         {view === 'overview' ? <OverviewPage session={session} /> : null}
         {view === 'users' ? <UsersPage session={session} /> : null}
         {view === 'models' ? <ModelsPage session={session} /> : null}
+        {view === 'content' ? <ContentPage session={session} /> : null}
       </main>
     </div>
   );
@@ -1095,6 +1114,178 @@ function ModelsPage({ session }: { session: AdminSession }) {
   );
 }
 
+function ContentPage({ session }: { session: AdminSession }) {
+  const [contentBlocks, setContentBlocks] = useState<AppContentBlock[]>([]);
+  const [drafts, setDrafts] = useState<Partial<Record<AppContentKey, { title: string; content: string }>>>({});
+  const [savingKey, setSavingKey] = useState<AppContentKey | ''>('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  const loadContentBlocks = useCallback(async () => {
+    setIsLoading(true);
+    setErrorMessage('');
+
+    try {
+      const payload = await getAppContentBlocks(session);
+      setContentBlocks(payload.contents);
+      setDrafts(createContentDrafts(payload.contents));
+    } catch (error) {
+      setErrorMessage(getErrorMessage(error));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [session]);
+
+  useEffect(() => {
+    void loadContentBlocks();
+  }, [loadContentBlocks]);
+
+  async function handleSave(contentBlock: AppContentBlock) {
+    const draft = getContentDraft(drafts, contentBlock);
+    const title = draft.title.trim();
+    const content = draft.content.trim();
+
+    if (!title || !content) {
+      setErrorMessage('标题和正文都不能为空。');
+      return;
+    }
+
+    setSavingKey(contentBlock.key);
+    setErrorMessage('');
+
+    try {
+      const payload = await updateAppContentBlock(session, contentBlock, { title, content });
+      // 格式化: 内容块数组 → 替换刚保存的内容块 → 当前页面直接展示服务端版本
+      // 说明: 保存后要同步 updatedAt，后续编辑才能继续做并发校验
+      setContentBlocks((currentContentBlocks) => currentContentBlocks.map((item) => (
+        item.key === payload.content.key ? payload.content : item
+      )));
+      setDrafts((currentDrafts) => ({
+        ...currentDrafts,
+        [payload.content.key]: {
+          title: payload.content.title,
+          content: payload.content.content,
+        },
+      }));
+    } catch (error) {
+      const message = error instanceof ApiError && error.status === 409
+        ? '这段内容刚刚被其他管理员更新，请刷新后再保存。'
+        : getErrorMessage(error);
+      setErrorMessage(message);
+    } finally {
+      setSavingKey('');
+    }
+  }
+
+  function updateDraft(key: AppContentKey, field: 'title' | 'content', value: string) {
+    setDrafts((currentDrafts) => ({
+      ...currentDrafts,
+      [key]: {
+        title: currentDrafts[key]?.title ?? '',
+        content: currentDrafts[key]?.content ?? '',
+        [field]: value,
+      },
+    }));
+  }
+
+  return (
+    <section className={styles.pageBody}>
+      {/*
+       * 渲染位置: 内容配置管理页面
+       * 展示内容: 更新公告、使用帮助、隐私说明和关于应用的标题与正文编辑区
+       * 数据来源: /api/admin/app/content 响应与本地 drafts 表单状态
+       */}
+      <div className={styles.contentSummary}>
+        <div>
+          <span>可编辑内容</span>
+          <strong>{contentBlocks.length} 项</strong>
+        </div>
+        <p>保存后 App 个人页会通过公开接口读取最新文案；接口异常时仍使用内置兜底内容。</p>
+        <button className={styles.secondaryButton} disabled={isLoading} onClick={loadContentBlocks} type="button">
+          <Icon name="refresh" />
+          刷新
+        </button>
+      </div>
+
+      {errorMessage ? <InlineAlert message={errorMessage} /> : null}
+      {isLoading && contentBlocks.length === 0 ? <SectionLoader label="正在加载应用内容" /> : null}
+
+      <div className={styles.contentGrid}>
+        {/*
+         * 渲染位置: 内容配置页面主体网格
+         * 展示内容: 四个内容块的标题输入、正文输入、更新时间与保存动作
+         * 数据来源: contentBlocks 状态与 drafts 表单状态
+         */}
+        {contentBlocks.map((contentBlock) => {
+          const draft = getContentDraft(drafts, contentBlock);
+          const isDirty = draft.title !== contentBlock.title || draft.content !== contentBlock.content;
+          const isSaving = savingKey === contentBlock.key;
+
+          return (
+            <article className={styles.contentCard} key={contentBlock.key}>
+              <div className={styles.contentCardHeader}>
+                <div>
+                  <span className={styles.cardKicker}>{contentBlock.key}</span>
+                  <h2>{CONTENT_KEY_LABELS[contentBlock.key]}</h2>
+                </div>
+                <span className={styles.contentMeta}>
+                  {contentBlock.updatedAt ? formatDateTime(contentBlock.updatedAt) : '默认内容'}
+                </span>
+              </div>
+
+              <label className={styles.field}>
+                <span>弹窗标题</span>
+                <input
+                  maxLength={80}
+                  onChange={(event) => updateDraft(contentBlock.key, 'title', event.target.value)}
+                  value={draft.title}
+                />
+              </label>
+
+              <label className={styles.contentField}>
+                <span>正文内容</span>
+                <textarea
+                  maxLength={12000}
+                  onChange={(event) => updateDraft(contentBlock.key, 'content', event.target.value)}
+                  value={draft.content}
+                />
+              </label>
+
+              <footer className={styles.contentCardFooter}>
+                <span>{draft.content.trim().length.toLocaleString('zh-CN')} / 12,000 字</span>
+                <div>
+                  <button
+                    className={styles.secondaryButton}
+                    disabled={!isDirty || isSaving}
+                    onClick={() => setDrafts((currentDrafts) => ({
+                      ...currentDrafts,
+                      [contentBlock.key]: {
+                        title: contentBlock.title,
+                        content: contentBlock.content,
+                      },
+                    }))}
+                    type="button"
+                  >
+                    重置
+                  </button>
+                  <button
+                    className={styles.primaryButton}
+                    disabled={!isDirty || isSaving}
+                    onClick={() => handleSave(contentBlock)}
+                    type="button"
+                  >
+                    {isSaving ? '保存中...' : '保存'}
+                  </button>
+                </div>
+              </footer>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function BrandMark({ size = 'normal' }: { size?: 'normal' | 'large' }) {
   return (
     <span className={size === 'large' ? styles.brandMarkLarge : styles.brandMark} aria-hidden="true">
@@ -1189,6 +1380,31 @@ function EmptyState({ compact = false, message }: { compact?: boolean; message: 
   );
 }
 
+function createContentDrafts(contentBlocks: AppContentBlock[]) {
+  // 格式化: AppContentBlock 数组 → 以 key 建索引的表单草稿 → 四张编辑卡片的初始值
+  // 说明: 管理端编辑过程先落在草稿里，保存成功后再用服务端版本覆盖
+  return contentBlocks.reduce<Partial<Record<AppContentKey, { title: string; content: string }>>>(
+    (draftMap, contentBlock) => ({
+      ...draftMap,
+      [contentBlock.key]: {
+        title: contentBlock.title,
+        content: contentBlock.content,
+      },
+    }),
+    {},
+  );
+}
+
+function getContentDraft(
+  drafts: Partial<Record<AppContentKey, { title: string; content: string }>>,
+  contentBlock: AppContentBlock,
+) {
+  return drafts[contentBlock.key] ?? {
+    title: contentBlock.title,
+    content: contentBlock.content,
+  };
+}
+
 function getTrendValue(point: TrendPoint, metric: TrendMetric) {
   if (metric === 'cost') {
     return Number(point.totalCostUsd) || 0;
@@ -1213,7 +1429,7 @@ function getErrorMessage(error: unknown) {
 
 function readViewFromUrl(): AdminView {
   const value = new URLSearchParams(window.location.search).get('view');
-  return value === 'users' || value === 'models' ? value : 'overview';
+  return ADMIN_VIEWS.includes(value as AdminView) ? value as AdminView : 'overview';
 }
 
 function readTrendFromUrl(): TrendGranularity {

@@ -87,6 +87,51 @@ const AUTH_AVATAR_ALLOWED_TYPES = Object.freeze({
 const ADMIN_DEFAULT_PAGE_SIZE = 20;
 const ADMIN_MAX_PAGE_SIZE = 100;
 const ADMIN_MAX_QUOTA_LIMIT_USD = 1_000_000;
+const APP_CONTENT_KEYS = Object.freeze(['updateAnnouncement', 'help', 'privacy', 'about']);
+const APP_CONTENT_TITLE_MAX_LENGTH = 80;
+const APP_CONTENT_BODY_MAX_LENGTH = 12_000;
+const DEFAULT_APP_CONTENT_BLOCKS = Object.freeze({
+  updateAnnouncement: {
+    title: '更新公告',
+    content: [
+      'Astesia 1.0.0',
+      '1. 个人页顶部改为用户信息展示模块，并支持邮箱注册和登录。',
+      '2. 登录后可展示头像、用户名、所属计划和 AI 剩余额度。',
+      '3. 支持主题、字体、首页布局和个人页背景偏好。',
+      '4. 新增本地数据导出、导入、备份、恢复和清理入口。',
+    ].join('\n'),
+  },
+  help: {
+    title: '使用帮助',
+    content: [
+      '使用帮助',
+      '1. 笔记入口用于记录灵感、备忘和长文本内容，并可在页面底部切换到待办。',
+      '2. 记账用于记录收入、支出和消费备注。',
+      '3. 待办用于拆解计划和跟踪完成状态。',
+      '4. 个人页顶部会根据登录状态展示用户信息卡，未登录时可通过邮箱注册或登录。',
+      '5. 注册使用“用户名 + 邮箱 + 验证码”，注册完成后后续使用“邮箱 + 密码”登录。',
+      '6. 笔记、记账和待办数据默认保存在本地，建议定期导出或本地备份，避免换机或卸载带来数据丢失。',
+      '7. 设置页的数据导出和本地备份可用于换机前的手动备份。',
+    ].join('\n'),
+  },
+  privacy: {
+    title: '隐私说明',
+    content: [
+      '隐私说明',
+      'Astesia 现在支持用户登录，用于识别当前账号、展示所属计划，并校验 AI 对话相关额度。',
+      '目前笔记、账单、待办和外观偏好仍默认保存在当前设备本地，不会因为登录自动上传。',
+      'AI 对话记录与 AI 计费摘要会按当前登录用户进行隔离，用于保证额度和会话数据不串用。',
+      '卸载 App、清空应用数据或手机损坏仍可能导致本地正式数据丢失，请定期导出或备份。',
+    ].join('\n\n'),
+  },
+  about: {
+    title: '关于应用',
+    content: [
+      'Astesia',
+      '一个支持邮箱登录、AI 助手和本地生活管理的笔记、记账、待办 App。',
+    ].join('\n\n'),
+  },
+});
 const BREVO_SMTP_HOST = getEnvValue('BREVO_SMTP_HOST') || 'smtp-relay.brevo.com';
 const BREVO_SMTP_PORT = normalizePositiveInteger(getEnvValue('BREVO_SMTP_PORT'), 587);
 const BREVO_SMTP_USER = getEnvValue('BREVO_SMTP_USER');
@@ -267,6 +312,14 @@ app.get('/api/admin/session', async (c) => {
   }
 });
 
+app.get('/api/app/content', async (c) => {
+  try {
+    return c.json({ contents: await getPublicAppContentBlocks() });
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
+  }
+});
+
 app.get('/api/ai/models', async (c) => {
   try {
     const [deepseekModels, nitroModels] = await Promise.all([
@@ -327,6 +380,54 @@ app.get('/api/admin/ai/statistics', async (c) => {
     const topLimit = normalizeBoundedPositiveInteger(c.req.query('topLimit'), 10, 50);
 
     return c.json(await getAiUsageStatistics({ userLimit, topLimit }));
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
+  }
+});
+
+app.get('/api/admin/app/content', async (c) => {
+  try {
+    await resolveRequiredAdminUser(c);
+    return c.json({ contents: await getAdminAppContentBlocks() });
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
+  }
+});
+
+app.patch('/api/admin/app/content/:key', async (c) => {
+  try {
+    const adminUser = await resolveRequiredAdminUser(c);
+    const key = normalizeAppContentKey(c.req.param('key'));
+    const body = await c.req.json().catch(() => null);
+    const title = normalizeAppContentTitle(body?.title);
+    const content = normalizeAppContentBody(body?.content);
+    const expectedUpdatedAt = normalizeRequiredIsoString(body?.updatedAt);
+
+    if (!key) {
+      throw new RequestValidationError('内容类型无效。');
+    }
+
+    if (!title) {
+      throw new RequestValidationError(`标题必须是 1 到 ${APP_CONTENT_TITLE_MAX_LENGTH} 个字符。`);
+    }
+
+    if (!content) {
+      throw new RequestValidationError(`正文必须是 1 到 ${APP_CONTENT_BODY_MAX_LENGTH} 个字符。`);
+    }
+
+    if (!expectedUpdatedAt) {
+      throw new RequestValidationError('缺少内容更新时间，请刷新后重试。');
+    }
+
+    return c.json({
+      content: await updateAdminAppContentBlock({
+        adminUserId: adminUser.userId,
+        key,
+        title,
+        content,
+        expectedUpdatedAt,
+      }),
+    });
   } catch (error) {
     return c.json({ error: getRuntimeErrorMessage(error) }, getErrorStatus(error));
   }
@@ -1012,6 +1113,37 @@ function normalizeRequiredIsoString(value) {
 
   const parsedDate = new Date(value);
   return Number.isNaN(parsedDate.getTime()) ? '' : parsedDate.toISOString();
+}
+
+function normalizeAppContentKey(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const normalizedValue = value.trim();
+  return APP_CONTENT_KEYS.includes(normalizedValue) ? normalizedValue : '';
+}
+
+function normalizeAppContentTitle(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const normalizedValue = value.trim().replace(/\s+/g, ' ');
+  return normalizedValue.length > 0 && normalizedValue.length <= APP_CONTENT_TITLE_MAX_LENGTH
+    ? normalizedValue
+    : '';
+}
+
+function normalizeAppContentBody(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const normalizedValue = value.replace(/\r\n?/g, '\n').trim();
+  return normalizedValue.length > 0 && normalizedValue.length <= APP_CONTENT_BODY_MAX_LENGTH
+    ? normalizedValue
+    : '';
 }
 
 function normalizeBooleanEnv(value, fallbackValue = false) {
@@ -1913,6 +2045,99 @@ async function getAdminUsers({ page, pageSize, query }) {
       total,
       totalPages: Math.max(Math.ceil(total / pageSize), 1),
     },
+  };
+}
+
+async function getPublicAppContentBlocks() {
+  return readAppContentBlocks();
+}
+
+async function getAdminAppContentBlocks() {
+  return readAppContentBlocks();
+}
+
+async function readAppContentBlocks(queryable = getDatabasePool()) {
+  const { rows } = await queryable.query(`
+    SELECT key, title, content, updated_by, updated_at
+    FROM app_content_blocks
+    WHERE key = ANY($1::text[])
+  `, [APP_CONTENT_KEYS]);
+  const rowsByKey = new Map(rows.map((row) => [row.key, row]));
+
+  return APP_CONTENT_KEYS.map((key) => serializeAppContentBlock(key, rowsByKey.get(key)));
+}
+
+async function ensureAppContentBlockExists(queryable, key) {
+  const fallbackBlock = DEFAULT_APP_CONTENT_BLOCKS[key];
+
+  await queryable.query(`
+    INSERT INTO app_content_blocks (key, title, content)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (key) DO NOTHING
+  `, [key, fallbackBlock.title, fallbackBlock.content]);
+}
+
+async function updateAdminAppContentBlock({
+  adminUserId,
+  key,
+  title,
+  content,
+  expectedUpdatedAt,
+}) {
+  const pool = getDatabasePool();
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+    await ensureAppContentBlockExists(client, key);
+    const { rows } = await client.query(`
+      SELECT key, updated_at
+      FROM app_content_blocks
+      WHERE key = $1
+      FOR UPDATE
+    `, [key]);
+    const currentRow = rows[0];
+    const currentUpdatedAt = normalizeIsoString(currentRow?.updated_at, '');
+
+    if (
+      !currentRow
+      || !currentUpdatedAt
+      || new Date(currentUpdatedAt).getTime() !== new Date(expectedUpdatedAt).getTime()
+    ) {
+      throw new ResourceConflictError('内容已被其他管理员更新，请刷新后重试。');
+    }
+
+    const updateResult = await client.query(`
+      UPDATE app_content_blocks
+      SET title = $2,
+          content = $3,
+          updated_by = $4,
+          updated_at = now()
+      WHERE key = $1
+      RETURNING key, title, content, updated_by, updated_at
+    `, [key, title, content, adminUserId]);
+
+    await client.query('COMMIT');
+    return serializeAppContentBlock(key, updateResult.rows[0]);
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => null);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function serializeAppContentBlock(key, row) {
+  const fallbackBlock = DEFAULT_APP_CONTENT_BLOCKS[key];
+
+  return {
+    key,
+    title: normalizeAppContentTitle(row?.title) || fallbackBlock.title,
+    content: normalizeAppContentBody(row?.content) || fallbackBlock.content,
+    updatedBy: typeof row?.updated_by === 'string' ? row.updated_by : null,
+    updatedAt: row?.updated_at
+      ? normalizeIsoString(row.updated_at, new Date().toISOString())
+      : null,
   };
 }
 
