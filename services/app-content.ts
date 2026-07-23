@@ -1,7 +1,7 @@
 import { PRIVACY_POLICY_CONTENT, PRIVACY_POLICY_TITLE } from '@/constants/privacy-policy';
+import { resolveAstesiaApiHost } from '@/services/api-host';
 
-const DEFAULT_APP_CONTENT_API_HOST = 'https://astesia.cc';
-const APP_CONTENT_API_HOST = resolveAppContentApiHost(process.env.EXPO_PUBLIC_AI_API_HOST);
+const APP_CONTENT_API_HOST = resolveAstesiaApiHost(process.env.EXPO_PUBLIC_AI_API_HOST);
 
 export type AppContentKey = 'updateAnnouncement' | 'help' | 'privacy' | 'about';
 
@@ -138,34 +138,4 @@ function normalizeAppContentKey(value: unknown): AppContentKey | '' {
 
 function normalizeString(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function resolveAppContentApiHost(value?: string) {
-  const normalizedHost = normalizeApiHost(value);
-
-  if (!normalizedHost) {
-    return DEFAULT_APP_CONTENT_API_HOST;
-  }
-
-  try {
-    const url = new URL(normalizedHost);
-    const isLocalHttp = url.protocol === 'http:'
-      && ['localhost', '127.0.0.1', '10.0.2.2'].includes(url.hostname);
-
-    if (url.protocol !== 'https:' && !isLocalHttp) {
-      return DEFAULT_APP_CONTENT_API_HOST;
-    }
-
-    url.search = '';
-    url.hash = '';
-    return url.toString().replace(/\/+$/, '');
-  } catch {
-    return DEFAULT_APP_CONTENT_API_HOST;
-  }
-}
-
-function normalizeApiHost(value?: string) {
-  return typeof value === 'string'
-    ? value.trim().replace(/[`'"]/g, '').replace(/\/+$/, '')
-    : '';
 }

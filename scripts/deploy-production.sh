@@ -50,60 +50,12 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "缺少命令：$1"
 }
 
-require_env() {
-  local name="$1"
-  local value="${!name:-}"
+validate_public_base_url() {
+  PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
 
-  if [ -z "$value" ]; then
-    die "缺少环境变量：$name"
+  if [ "$PUBLIC_BASE_URL" != "https://astesia.cc" ]; then
+    die "PUBLIC_BASE_URL 仅允许使用 https://astesia.cc，当前值：$PUBLIC_BASE_URL"
   fi
-
-  case "$value" in
-    replace_with*|your_*|*your-api-host*)
-      die "环境变量 $name 仍是占位值，请替换成真实生产配置。"
-      ;;
-  esac
-}
-
-trim_env_value() {
-  local value="$1"
-  value="${value#"${value%%[![:space:]]*}"}"
-  value="${value%"${value##*[![:space:]]}"}"
-  value="${value%\"}"
-  value="${value#\"}"
-  value="${value%\'}"
-  value="${value#\'}"
-  printf '%s' "$value"
-}
-
-load_public_env_file() {
-  local file_path="$1"
-
-  if [ ! -f "$file_path" ]; then
-    return
-  fi
-
-  local line key value
-  while IFS= read -r line || [ -n "$line" ]; do
-    [[ "$line" =~ ^[[:space:]]*# ]] && continue
-    [[ "$line" != *=* ]] && continue
-
-    key="$(trim_env_value "${line%%=*}")"
-    value="$(trim_env_value "${line#*=}")"
-
-    case "$key" in
-      EXPO_PUBLIC_QWEATHER_KEY|EXPO_PUBLIC_QWEATHER_API_HOST|EXPO_PUBLIC_QWEATHER_GEO_HOST|EXPO_PUBLIC_QWEATHER_WEATHER_HOST)
-        if [ -z "${!key:-}" ]; then
-          export "$key=$value"
-        fi
-        ;;
-    esac
-  done < "$file_path"
-}
-
-load_public_build_env() {
-  load_public_env_file "$ROOT_DIR/.env"
-  load_public_env_file "$ROOT_DIR/.env.production"
 }
 
 ssh_remote() {
@@ -130,6 +82,9 @@ run_local_checks() {
     pnpm exec tsc --noEmit
     pnpm lint
     node --check server/ai-server.mjs
+    node --check server/migrate-postgres.mjs
+    node --check server/database-config.mjs
+    bash -n scripts/deploy-production.sh
   )
 
   if is_enabled "$DEPLOY_ADMIN_WEB"; then
@@ -147,22 +102,12 @@ build_expo_web() {
     return
   fi
 
-  load_public_build_env
-  require_env EXPO_PUBLIC_QWEATHER_KEY
-  require_env EXPO_PUBLIC_QWEATHER_API_HOST
-  require_env EXPO_PUBLIC_QWEATHER_GEO_HOST
-  require_env EXPO_PUBLIC_QWEATHER_WEATHER_HOST
-
   log "构建 Expo Web 前端"
   rm -rf "$APP_WEB_BUILD_DIR"
   (
     cd "$ROOT_DIR"
     EXPO_PUBLIC_AI_API_HOST="$PUBLIC_BASE_URL" \
       EXPO_PUBLIC_AKSHARE_API_HOST="$PUBLIC_BASE_URL" \
-      EXPO_PUBLIC_QWEATHER_KEY="$EXPO_PUBLIC_QWEATHER_KEY" \
-      EXPO_PUBLIC_QWEATHER_API_HOST="$EXPO_PUBLIC_QWEATHER_API_HOST" \
-      EXPO_PUBLIC_QWEATHER_GEO_HOST="$EXPO_PUBLIC_QWEATHER_GEO_HOST" \
-      EXPO_PUBLIC_QWEATHER_WEATHER_HOST="$EXPO_PUBLIC_QWEATHER_WEATHER_HOST" \
       pnpm exec expo export --platform web --output-dir "$APP_WEB_BUILD_DIR"
   )
 }
@@ -333,6 +278,7 @@ verify_deploy() {
 main() {
   cd "$ROOT_DIR"
 
+  validate_public_base_url
   log "部署目标：$DEPLOY_TARGET"
   log "后端目录：$REMOTE_APP_DIR"
   log "Expo Web 目录：$REMOTE_EXPO_WEB_DIR"

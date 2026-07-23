@@ -15,55 +15,20 @@ import {
   WeatherType,
 } from './type';
 
+import { resolveAstesiaApiHost } from '@/services/api-host';
 
-
-const QWEATHER_KEY = process.env.EXPO_PUBLIC_QWEATHER_KEY;
-const API_HOST = normalizeHost(
-  process.env.EXPO_PUBLIC_QWEATHER_API_HOST ?? process.env.EXPO_PUBLIC_QWEATHER_WEATHER_HOST
-);
-const GEO_API_HOST = normalizeHost(process.env.EXPO_PUBLIC_QWEATHER_GEO_HOST) ?? API_HOST;
-const WEATHER_API_HOST = API_HOST;
+const QWEATHER_API_HOST = resolveAstesiaApiHost(process.env.EXPO_PUBLIC_AI_API_HOST);
 const INDICES_TYPES = '1,3,5';
-
-function normalizeHost(host?: string) {
-  if (!host) {
-    return undefined;
-  }
-
-  return host.startsWith('http') ? host : `https://${host}`;
-}
-
-function getRequiredApiKey() {
-  if (!QWEATHER_KEY) {
-    throw new Error('缺少和风天气 Key，请先在 .env 中配置 EXPO_PUBLIC_QWEATHER_KEY。');
-  }
-
-  return QWEATHER_KEY;
-}
-
-function getRequiredApiHost() {
-  if (!WEATHER_API_HOST || !GEO_API_HOST) {
-    throw new Error('缺少和风天气 API Host，请先在 .env 中配置 EXPO_PUBLIC_QWEATHER_API_HOST。');
-  }
-
-  return {
-    weatherHost: WEATHER_API_HOST,
-    geoHost: GEO_API_HOST,
-  };
-}
 
 async function requestQWeather<T>(
   endpoint: string,
-  params: Record<string, string>,
-  host: string
+  params: Record<string, string>
 ): Promise<T> {
-  const key = getRequiredApiKey();
   const searchParams = new URLSearchParams(params);
-  const response = await fetch(`${host}${endpoint}?${searchParams.toString()}`, {
-    headers: {
-      'X-QW-Api-Key': key,
-    },
-  });
+  // [变更] 修改前: 客户端携带 EXPO_PUBLIC_QWEATHER_KEY 直连第三方天气服务
+  // [变更] 修改后: 客户端只请求 Astesia 后端天气代理
+  // [原因] Expo 公共环境变量会进入安装包和 Web 产物，不能承载第三方密钥
+  const response = await fetch(`${QWEATHER_API_HOST}${endpoint}?${searchParams.toString()}`);
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -82,16 +47,14 @@ async function requestOptionalQWeather<T>(requester: () => Promise<T>) {
 }
 // 城市查询
 async function lookupCity(location: string, number = 1) {
-  const { geoHost } = getRequiredApiHost();
   const result = await requestQWeather<QWeatherCityLookupResponse>(
-    '/geo/v2/city/lookup',
+    '/api/weather/city-lookup',
     {
       location,
       number: `${number}`,
       lang: 'zh',
       range: 'cn',
-    },
-    geoHost
+    }
   );
 
   if (result.code !== '200' || !result.location?.length) {
@@ -102,15 +65,13 @@ async function lookupCity(location: string, number = 1) {
 }
 // 实时天气
 async function getWeatherNow(location: string) {
-  const { weatherHost } = getRequiredApiHost();
   const result = await requestQWeather<QWeatherNowResponse>(
-    '/v7/weather/now',
+    '/api/weather/now',
     {
       location,
       lang: 'zh',
       unit: 'm',
-    },
-    weatherHost
+    }
   );
 
   if (result.code !== '200' || !result.now) {
@@ -121,15 +82,13 @@ async function getWeatherNow(location: string) {
 }
 // 7天天气预报
 async function getWeatherDailyForecasts(location: string) {
-  const { weatherHost } = getRequiredApiHost();
   const result = await requestQWeather<QWeatherDailyResponse>(
-    '/v7/weather/7d',
+    '/api/weather/daily',
     {
       location,
       lang: 'zh',
       unit: 'm',
-    },
-    weatherHost
+    }
   );
 
   if (result.code !== '200' || !result.daily?.length) {
@@ -146,15 +105,13 @@ async function getWeatherDailyForecasts(location: string) {
 }
 // 天气指数
 async function getWeatherIndices(location: string) {
-  const { weatherHost } = getRequiredApiHost();
   const result = await requestQWeather<QWeatherIndicesResponse>(
-    '/v7/indices/1d',
+    '/api/weather/indices',
     {
       location,
       type: INDICES_TYPES,
       lang: 'zh',
-    },
-    weatherHost
+    }
   );
 
   if (result.code !== '200') {
@@ -172,14 +129,12 @@ async function getWeatherIndices(location: string) {
 
 // 分钟降水
 async function getMinutelyPrecipitation(longitude: string, latitude: string) {
-  const { weatherHost } = getRequiredApiHost();
   const result = await requestQWeather<QWeatherMinutelyResponse>(
-    '/v7/minutely/5m',
+    '/api/weather/minutely',
     {
       location: `${longitude},${latitude}`,
       lang: 'zh',
-    },
-    weatherHost
+    }
   );
 
   if (result.code !== '200') {
@@ -199,13 +154,13 @@ async function getMinutelyPrecipitation(longitude: string, latitude: string) {
 
 // 空气质量
 async function getAirQuality(latitude: string, longitude: string) {
-  const { weatherHost } = getRequiredApiHost();
   const result = await requestQWeather<QWeatherAirCurrentResponse>(
-    `/airquality/v1/current/${latitude}/${longitude}`,
+    '/api/weather/air-quality',
     {
+      latitude,
+      longitude,
       lang: 'zh',
-    },
-    weatherHost
+    }
   );
 
   const primaryIndex = result.indexes?.[0];
@@ -230,14 +185,14 @@ async function getAirQuality(latitude: string, longitude: string) {
 
 // 天气预警
 async function getWeatherAlerts(latitude: string, longitude: string) {
-  const { weatherHost } = getRequiredApiHost();
   const result = await requestQWeather<QWeatherAlertResponse>(
-    `/weatheralert/v1/current/${latitude}/${longitude}`,
+    '/api/weather/alerts',
     {
+      latitude,
+      longitude,
       lang: 'zh',
       localTime: 'true',
-    },
-    weatherHost
+    }
   );
 
   return {

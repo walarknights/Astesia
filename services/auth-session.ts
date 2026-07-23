@@ -2,9 +2,9 @@ import { storage } from '@/services/storage';
 import { AUTH_USER_PROFILE_STORAGE_KEY } from '@/services/storage-keys';
 import { userStore } from '@/services/store/userStore';
 import type { User } from '@/services/types/user';
+import { resolveAstesiaApiHost } from '@/services/api-host';
 
-const DEFAULT_AUTH_API_HOST = 'https://astesia.cc';
-const AUTH_API_HOSTS = resolveApiHosts(process.env.EXPO_PUBLIC_AI_API_HOST);
+const AUTH_API_HOST = resolveAstesiaApiHost(process.env.EXPO_PUBLIC_AI_API_HOST);
 const USER_TOKEN_STORAGE_KEY = 'userToken';
 const USER_ID_STORAGE_KEY = 'userId';
 const AI_USER_ID_HEADER = 'X-AI-User-Id';
@@ -298,17 +298,15 @@ async function requestAuthJson<T extends Record<string, unknown>>(
 ) {
   let latestError: unknown = null;
 
-  for (const host of AUTH_API_HOSTS) {
-    try {
-      const response = await fetch(`${host}${pathname}`, init);
-      const data = await response.json().catch(() => ({})) as T;
-      return { response, data };
-    } catch (error) {
-      latestError = error;
+  try {
+    const response = await fetch(`${AUTH_API_HOST}${pathname}`, init);
+    const data = await response.json().catch(() => ({})) as T;
+    return { response, data };
+  } catch (error) {
+    latestError = error;
 
-      if (!isRetryableNetworkError(error)) {
-        throw normalizeAuthRequestError(error, defaultErrorMessage);
-      }
+    if (!isRetryableNetworkError(error)) {
+      throw normalizeAuthRequestError(error, defaultErrorMessage);
     }
   }
 
@@ -423,7 +421,7 @@ function normalizeOptionalAvatarUrl(value: unknown) {
   }
 
   if (avatarUrl.startsWith('/api/auth/avatars/')) {
-    return `${AUTH_API_HOSTS[0]}${avatarUrl}`;
+    return `${AUTH_API_HOST}${avatarUrl}`;
   }
 
   try {
@@ -449,39 +447,6 @@ function normalizeNonNegativeInteger(value: unknown) {
 function getDefaultUserName(email: string) {
   const [localPart] = email.split('@');
   return localPart || 'Astesia 用户';
-}
-
-function normalizeApiHost(value?: string) {
-  if (typeof value !== 'string') {
-    return '';
-  }
-
-  return value.trim().replace(/[`'"]/g, '').replace(/\/+$/, '');
-}
-
-/**
- * 归一化鉴权服务 host，并把历史本地调试地址收敛到真实后端。
- *
- * @param value - 环境变量中的鉴权服务地址
- * @returns 按优先级排序后的可用 host 列表
- * @example
- *   resolveApiHosts('http://127.0.0.1:8787')
- */
-function resolveApiHosts(value?: string) {
-  const normalizedHost = normalizeApiHost(value);
-
-  // [变更] 修改前: 本地调试地址会先请求 10.0.2.2 / 127.0.0.1，再失败回退线上
-  // [变更] 修改后: 缺省值和历史本地调试地址都直接请求真实后端域名
-  // [原因] 当前认证、额度等后端请求必须稳定命中线上服务，避免本地 8787 不可达造成等待或报错
-  const resolvedHost = !normalizedHost || isLocalDebugApiHost(normalizedHost)
-    ? DEFAULT_AUTH_API_HOST
-    : normalizedHost;
-
-  return [resolvedHost];
-}
-
-function isLocalDebugApiHost(value: string) {
-  return /^https?:\/\/(10\.0\.2\.2|127\.0\.0\.1|localhost)(:\d+)?$/i.test(value);
 }
 
 function isRetryableNetworkError(error: unknown) {

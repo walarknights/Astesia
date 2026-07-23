@@ -27,7 +27,10 @@ import {
   persistPersonalBackgroundImage,
 } from '@/services/personal-background-image-storage';
 import { storage } from '@/services/storage';
-import { LOCAL_BACKUP_STORAGE_KEY } from '@/services/storage-keys';
+import {
+  isExportableStorageKey,
+  LOCAL_BACKUP_STORAGE_KEY,
+} from '@/services/storage-keys';
 import {
   APP_SETTINGS_STORAGE_KEY,
   DEFAULT_APP_SETTINGS,
@@ -189,9 +192,7 @@ export default function PersonalScreen() {
     try {
       const parsedData = JSON.parse(importText);
       const importedStorage = getImportStorage(parsedData);
-      const entries = Object.entries(importedStorage).filter(
-        (entry): entry is [string, string] => typeof entry[1] === 'string'
-      );
+      const entries = getImportEntries(importedStorage);
 
       if (entries.length === 0) {
         Alert.alert('导入失败', '没有找到可导入的数据。');
@@ -216,7 +217,7 @@ export default function PersonalScreen() {
 
   const handleBackupData = async () => {
     try {
-      const exportedData = await collectStorageSnapshot([LOCAL_BACKUP_STORAGE_KEY]);
+      const exportedData = await collectStorageSnapshot();
       await storage.setItem(LOCAL_BACKUP_STORAGE_KEY, JSON.stringify(exportedData));
       Alert.alert('备份完成', '已在本机保存一份本地备份。');
     } catch {
@@ -239,9 +240,12 @@ export default function PersonalScreen() {
             }
 
             const importedStorage = getImportStorage(JSON.parse(backup));
-            const entries = Object.entries(importedStorage).filter(
-              (entry): entry is [string, string] => typeof entry[1] === 'string'
-            );
+            const entries = getImportEntries(importedStorage);
+
+            if (entries.length === 0) {
+              Alert.alert('恢复失败', '备份中没有找到可恢复的业务数据。');
+              return;
+            }
 
             await storage.multiSet(entries);
 
@@ -287,8 +291,11 @@ export default function PersonalScreen() {
         style: 'destructive',
         onPress: async () => {
           const keys = await storage.getAllKeys();
+          // [变更] 修改前: 除设置与备份外删除统一存储层中的全部 key
+          // [变更] 修改后: 只删除白名单内的正式业务数据并保留登录会话
+          // [原因] “清空数据”不应隐式删除 SecureStore 凭证或造成内存登录态不一致
           const dataKeys = keys.filter(
-            (key) => key !== APP_SETTINGS_STORAGE_KEY && key !== LOCAL_BACKUP_STORAGE_KEY
+            (key) => key !== APP_SETTINGS_STORAGE_KEY && isExportableStorageKey(key)
           );
 
           if (dataKeys.length > 0) {
@@ -728,8 +735,17 @@ function SettingButton({
   );
 }
 
-async function collectStorageSnapshot(excludedKeys: string[] = []) {
-  const keys = (await storage.getAllKeys()).filter((key) => !excludedKeys.includes(key));
+/**
+ * 收集允许用户迁移的本地业务数据快照。
+ *
+ * @returns 不包含登录凭证和账号资料的导出对象
+ * @example
+ *   await collectStorageSnapshot()
+ */
+async function collectStorageSnapshot() {
+  // 格式化: 统一存储层 key 列表 → 业务白名单过滤 → 可安全导出的键值快照
+  // 说明: 导出与本地备份只迁移业务数据，不迁移任何认证会话
+  const keys = (await storage.getAllKeys()).filter(isExportableStorageKey);
   const pairs = await storage.multiGet(keys);
 
   return {
@@ -737,6 +753,24 @@ async function collectStorageSnapshot(excludedKeys: string[] = []) {
     exportedAt: new Date().toISOString(),
     storage: Object.fromEntries(pairs),
   };
+}
+
+/**
+ * 从导入对象中提取允许写入的业务存储项。
+ *
+ * @param importedStorage - 导出文件中的原始 storage 对象
+ * @returns 已过滤认证 key 和未知 key 的字符串键值项
+ * @example
+ *   getImportEntries({ userToken: 'secret', 'astesia-notes': '[]' })
+ */
+function getImportEntries(importedStorage: Record<string, unknown>) {
+  // 格式化: 未知导入键值 → 校验字符串值并套用业务 key 白名单 → storage.multiSet 入参
+  // 说明: 即使导入文件被篡改，也不能覆盖 token、用户 ID 或账号资料
+  return Object.entries(importedStorage).filter(
+    (entry): entry is [string, string] => (
+      isExportableStorageKey(entry[0]) && typeof entry[1] === 'string'
+    )
+  );
 }
 
 function getImportStorage(value: unknown): Record<string, unknown> {

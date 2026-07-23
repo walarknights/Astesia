@@ -1,6 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 
 import { serve } from '@hono/node-server';
@@ -19,6 +19,7 @@ import nodemailer from 'nodemailer';
 import pg from 'pg';
 import { z } from 'zod';
 
+import { createDatabaseSslConfig } from './database-config.mjs';
 import { PRIVACY_POLICY_CONTENT, PRIVACY_POLICY_TITLE } from './privacy-policy.mjs';
 
 loadLocalEnv();
@@ -44,6 +45,10 @@ const AI_WEB_SEARCH_TIMEOUT_MS = 12_000;
 const AI_WEB_SEARCH_MAX_RESULTS = 5;
 const AI_WEB_SEARCH_MODE_SEARXNG = 'searxng';
 const AI_WEB_SEARCH_MODE_TAVILY = 'tavily';
+const QWEATHER_REQUEST_TIMEOUT_MS = 12_000;
+const WEATHER_RATE_LIMIT_WINDOW_MS = 60_000;
+const WEATHER_RATE_LIMIT_MAX_REQUESTS = 120;
+const MIGRATIONS_DIR_URL = new URL('./migrations/', import.meta.url);
 const CHAT_MAX_OUTPUT_TOKENS = normalizePositiveInteger(
   getEnvValue('AI_CHAT_MAX_OUTPUT_TOKENS'),
   DEFAULT_CHAT_MAX_OUTPUT_TOKENS
@@ -83,6 +88,7 @@ const app = new Hono();
 let databasePool = null;
 let brevoSmtpTransporter = null;
 let hasLoggedBrevoSmtpConfigWarning = false;
+const weatherRateLimitBuckets = new Map();
 const modelPricingMap = createModelPricingMap(getEnvValue('AI_MODEL_PRICING_JSON'));
 const AI_INITIAL_BALANCE_USD = normalizeNonNegativeNumber(
   getEnvValue('AI_INITIAL_BALANCE_USD'),
@@ -206,7 +212,47 @@ app.use('*', cors({
   ],
 }));
 
-app.get('/health', (c) => c.json({ ok: true }));
+app.get('/livez', (c) => c.json({ ok: true }));
+app.get('/readyz', handleReadinessRequest);
+app.get('/health', handleReadinessRequest);
+
+app.get('/api/weather/:resource', async (c) => {
+  try {
+    enforceWeatherRateLimit(c);
+    const upstreamUrl = createQWeatherUpstreamUrl(
+      c.req.param('resource'),
+      c.req.query()
+    );
+    const response = await fetch(upstreamUrl, {
+      headers: {
+        'X-QW-Api-Key': getRequiredQWeatherApiKey(),
+      },
+      signal: AbortSignal.timeout(QWEATHER_REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      console.error(`[weather] QWeather upstream failed: status=${response.status}`);
+      return c.json({ error: '天气服务暂时不可用，请稍后重试。' }, 502);
+    }
+
+    return c.body(await response.text(), 200, {
+      'Cache-Control': 'public, max-age=60',
+      'Content-Type': 'application/json; charset=utf-8',
+    });
+  } catch (error) {
+    const isExpectedError = error instanceof RequestValidationError;
+
+    if (!isExpectedError) {
+      console.error('[weather] proxy request failed:', error);
+    }
+
+    return c.json({
+      error: isExpectedError
+        ? error.message
+        : '天气服务暂时不可用，请稍后重试。',
+    }, isExpectedError ? getErrorStatus(error) : 502);
+  }
+});
 
 app.get('/api/auth/avatars/:fileName', (c) => {
   const fileName = normalizeAvatarFileName(c.req.param('fileName'));
@@ -899,11 +945,49 @@ function getDatabasePool() {
   if (!databasePool) {
     databasePool = new Pool({
       connectionString: databaseUrl,
-      ssl: shouldUseDatabaseSsl(databaseUrl) ? { rejectUnauthorized: false } : undefined,
+      ssl: createDatabaseSslConfig(databaseUrl),
     });
   }
 
   return databasePool;
+}
+
+async function handleReadinessRequest(c) {
+  try {
+    const latestMigrationVersion = getLatestMigrationVersion();
+    const pool = getDatabasePool();
+
+    await pool.query('SELECT 1');
+    const { rows } = await pool.query(
+      'SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1) AS applied',
+      [latestMigrationVersion]
+    );
+
+    if (rows[0]?.applied !== true) {
+      throw new Error('latest migration is not applied');
+    }
+
+    return c.json({
+      ok: true,
+      latestMigration: latestMigrationVersion,
+    });
+  } catch (error) {
+    console.error('[health] readiness check failed:', error);
+    return c.json({ ok: false }, 503);
+  }
+}
+
+function getLatestMigrationVersion() {
+  const migrationFiles = readdirSync(MIGRATIONS_DIR_URL)
+    .filter((fileName) => fileName.endsWith('.sql'))
+    .sort();
+  const latestMigrationVersion = migrationFiles.at(-1);
+
+  if (!latestMigrationVersion) {
+    throw new Error('no migration files found');
+  }
+
+  return latestMigrationVersion;
 }
 
 function normalizeDatabaseUrl(value) {
@@ -918,22 +1002,33 @@ function normalizeServerHost(value) {
 
 function resolveAuthTokenSecret() {
   const secret = getEnvValue('AUTH_TOKEN_SECRET');
+  const allowsLocalFallback = (
+    !isProductionRuntime()
+    && isLoopbackServerHost(HOST)
+    && normalizeBooleanEnv(getEnvValue('AUTH_ALLOW_INSECURE_LOCAL_SECRET'), false)
+  );
 
-  if (isProductionRuntime()) {
-    if (!secret) {
-      throw new Error(`生产环境缺少 AUTH_TOKEN_SECRET，请配置至少 ${AUTH_TOKEN_SECRET_MIN_LENGTH} 个字符的随机密钥。`);
-    }
-
-    if (AUTH_TOKEN_SECRET_PLACEHOLDERS.includes(secret) || secret.length < AUTH_TOKEN_SECRET_MIN_LENGTH) {
-      throw new Error(`生产环境 AUTH_TOKEN_SECRET 无效，请使用至少 ${AUTH_TOKEN_SECRET_MIN_LENGTH} 个字符的随机密钥。`);
-    }
+  if (!secret && allowsLocalFallback) {
+    return AUTH_LOCAL_TOKEN_SECRET;
   }
 
-  return secret || AUTH_LOCAL_TOKEN_SECRET;
+  if (!secret) {
+    throw new Error(`缺少 AUTH_TOKEN_SECRET，请配置至少 ${AUTH_TOKEN_SECRET_MIN_LENGTH} 个字符的随机密钥。`);
+  }
+
+  if (AUTH_TOKEN_SECRET_PLACEHOLDERS.includes(secret) || secret.length < AUTH_TOKEN_SECRET_MIN_LENGTH) {
+    throw new Error(`AUTH_TOKEN_SECRET 无效，请使用至少 ${AUTH_TOKEN_SECRET_MIN_LENGTH} 个字符的随机密钥。`);
+  }
+
+  return secret;
 }
 
 function isProductionRuntime() {
   return getEnvValue('NODE_ENV') === 'production';
+}
+
+function isLoopbackServerHost(host) {
+  return ['127.0.0.1', 'localhost', '::1'].includes(host);
 }
 
 function createCorsAllowedOrigins(value) {
@@ -962,7 +1057,10 @@ function resolveCorsOrigin(origin) {
     return null;
   }
 
-  if (CORS_ALLOWED_ORIGINS.has(normalizedOrigin) || isLocalDevelopmentOrigin(normalizedOrigin)) {
+  if (
+    CORS_ALLOWED_ORIGINS.has(normalizedOrigin)
+    || (!isProductionRuntime() && isLocalDevelopmentOrigin(normalizedOrigin))
+  ) {
     return normalizedOrigin;
   }
 
@@ -998,16 +1096,184 @@ function isLocalDevelopmentOrigin(origin) {
   }
 }
 
-function shouldUseDatabaseSsl(databaseUrl) {
-  if (getEnvValue('DATABASE_SSL') === 'true') {
-    return true;
+function enforceWeatherRateLimit(c) {
+  const forwardedFor = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
+  const clientKey = forwardedFor || c.req.header('x-real-ip') || 'unknown';
+  const now = Date.now();
+  const currentBucket = weatherRateLimitBuckets.get(clientKey);
+
+  if (!currentBucket || currentBucket.expiresAt <= now) {
+    weatherRateLimitBuckets.set(clientKey, {
+      count: 1,
+      expiresAt: now + WEATHER_RATE_LIMIT_WINDOW_MS,
+    });
+    pruneExpiredWeatherRateLimitBuckets(now);
+    return;
   }
 
-  if (getEnvValue('DATABASE_SSL') === 'false') {
-    return false;
+  if (currentBucket.count >= WEATHER_RATE_LIMIT_MAX_REQUESTS) {
+    throw new RequestValidationError('天气请求过于频繁，请稍后重试。', 429);
   }
 
-  return !/localhost|127\.0\.0\.1|0\.0\.0\.0/.test(databaseUrl);
+  currentBucket.count += 1;
+}
+
+function pruneExpiredWeatherRateLimitBuckets(now) {
+  if (weatherRateLimitBuckets.size < 1_000) {
+    return;
+  }
+
+  for (const [key, bucket] of weatherRateLimitBuckets) {
+    if (bucket.expiresAt <= now) {
+      weatherRateLimitBuckets.delete(key);
+    }
+  }
+}
+
+function getRequiredQWeatherApiKey() {
+  const apiKey = getEnvValue('QWEATHER_KEY')
+    || getEnvValue('EXPO_PUBLIC_QWEATHER_KEY');
+
+  if (!apiKey) {
+    throw new RequestValidationError('天气服务尚未配置。', 503);
+  }
+
+  return apiKey;
+}
+
+function createQWeatherUpstreamUrl(resource, query) {
+  const weatherHost = getRequiredQWeatherHost(
+    getEnvValue('QWEATHER_API_HOST')
+      || getEnvValue('EXPO_PUBLIC_QWEATHER_API_HOST')
+      || getEnvValue('EXPO_PUBLIC_QWEATHER_WEATHER_HOST'),
+    'QWEATHER_API_HOST'
+  );
+  const geoHost = getRequiredQWeatherHost(
+    getEnvValue('QWEATHER_GEO_HOST')
+      || getEnvValue('EXPO_PUBLIC_QWEATHER_GEO_HOST')
+      || weatherHost,
+    'QWEATHER_GEO_HOST'
+  );
+  const getLocation = () => normalizeRequiredWeatherQuery(
+    query.location,
+    128,
+    '缺少有效的天气位置。'
+  );
+  let url;
+
+  switch (resource) {
+    case 'city-lookup': {
+      const location = getLocation();
+      url = new URL('/geo/v2/city/lookup', `${geoHost}/`);
+      url.searchParams.set('location', location);
+      url.searchParams.set('number', String(normalizeBoundedPositiveInteger(query.number, 1, 20)));
+      url.searchParams.set('lang', 'zh');
+      url.searchParams.set('range', 'cn');
+      break;
+    }
+    case 'now':
+      url = createQWeatherLocationUrl(weatherHost, '/v7/weather/now', getLocation());
+      url.searchParams.set('unit', 'm');
+      break;
+    case 'daily':
+      url = createQWeatherLocationUrl(weatherHost, '/v7/weather/7d', getLocation());
+      url.searchParams.set('unit', 'm');
+      break;
+    case 'indices':
+      url = createQWeatherLocationUrl(weatherHost, '/v7/indices/1d', getLocation());
+      url.searchParams.set('type', '1,3,5');
+      break;
+    case 'minutely':
+      url = createQWeatherLocationUrl(weatherHost, '/v7/minutely/5m', getLocation());
+      break;
+    case 'air-quality': {
+      const latitude = normalizeWeatherCoordinate(query.latitude, -90, 90, '纬度');
+      const longitude = normalizeWeatherCoordinate(query.longitude, -180, 180, '经度');
+      url = new URL(`/airquality/v1/current/${latitude}/${longitude}`, `${weatherHost}/`);
+      url.searchParams.set('lang', 'zh');
+      break;
+    }
+    case 'alerts': {
+      const latitude = normalizeWeatherCoordinate(query.latitude, -90, 90, '纬度');
+      const longitude = normalizeWeatherCoordinate(query.longitude, -180, 180, '经度');
+      url = new URL(`/weatheralert/v1/current/${latitude}/${longitude}`, `${weatherHost}/`);
+      url.searchParams.set('lang', 'zh');
+      url.searchParams.set('localTime', 'true');
+      break;
+    }
+    default:
+      throw new RequestValidationError('天气接口不存在。', 404);
+  }
+
+  return url;
+}
+
+function createQWeatherLocationUrl(host, pathname, location) {
+  const url = new URL(pathname, `${host}/`);
+  url.searchParams.set('location', location);
+  url.searchParams.set('lang', 'zh');
+  return url;
+}
+
+function getRequiredQWeatherHost(value, envName) {
+  if (!value) {
+    throw new RequestValidationError(`天气服务缺少 ${envName} 配置。`, 503);
+  }
+
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+    const isQWeatherHost = (
+      hostname === 'qweather.com'
+      || hostname.endsWith('.qweather.com')
+      || hostname === 'qweatherapi.com'
+      || hostname.endsWith('.qweatherapi.com')
+    );
+
+    if (
+      url.protocol !== 'https:'
+      || url.username
+      || url.password
+      || (url.pathname !== '/' && url.pathname !== '')
+      || url.search
+      || url.hash
+      || !isQWeatherHost
+    ) {
+      throw new Error('invalid QWeather host');
+    }
+
+    return url.origin;
+  } catch {
+    throw new RequestValidationError(`天气服务 ${envName} 配置无效。`, 503);
+  }
+}
+
+function normalizeRequiredWeatherQuery(value, maxLength, errorMessage) {
+  if (typeof value !== 'string') {
+    throw new RequestValidationError(errorMessage);
+  }
+
+  const normalizedValue = value.trim();
+
+  if (
+    !normalizedValue
+    || normalizedValue.length > maxLength
+    || /[\u0000-\u001f\u007f]/.test(normalizedValue)
+  ) {
+    throw new RequestValidationError(errorMessage);
+  }
+
+  return normalizedValue;
+}
+
+function normalizeWeatherCoordinate(value, minValue, maxValue, label) {
+  const numericValue = Number(value);
+
+  if (!Number.isFinite(numericValue) || numericValue < minValue || numericValue > maxValue) {
+    throw new RequestValidationError(`${label}无效。`);
+  }
+
+  return String(numericValue);
 }
 
 function resolveRequiredAiUser(c) {

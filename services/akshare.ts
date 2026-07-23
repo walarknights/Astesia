@@ -1,3 +1,5 @@
+import { resolveAstesiaApiHost } from '@/services/api-host';
+
 export type AssetRangeLabel = '近7日' | '近一个月' | '近1年';
 
 export type SecurityType = '股票' | '基金';
@@ -32,7 +34,7 @@ export type SecurityTrendResult = SecuritySearchResult & {
 // [变更] 修改前: 未配置环境变量时默认请求本机 AkShare 服务
 // [变更] 修改后: 默认请求云服务器统一转发的 AkShare 接口
 // [原因] 行情服务已迁移到云服务器，移动端不应依赖开发电脑常驻服务
-const AKSHARE_API_HOST = (process.env.EXPO_PUBLIC_AKSHARE_API_HOST ?? 'https://astesia.cc').replace(/\/$/, '');
+const AKSHARE_API_HOST = resolveAstesiaApiHost(process.env.EXPO_PUBLIC_AKSHARE_API_HOST);
 
 async function requestAkShare<T>(endpoint: string) {
   const response = await fetch(`${AKSHARE_API_HOST}${endpoint}`);

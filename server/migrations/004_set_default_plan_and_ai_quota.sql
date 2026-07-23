@@ -20,31 +20,5 @@ WHERE NOT EXISTS (
   WHERE wallet.user_id = u.id::text
 );
 
-WITH reserved_totals AS (
-  SELECT
-    user_id,
-    COALESCE(SUM(reserved_usd), 0) AS active_reserved_usd
-  FROM ai_wallet_reservations
-  WHERE status = 'reserved'
-  GROUP BY user_id
-)
-UPDATE ai_user_wallets AS wallet
-SET balance_usd = GREATEST(
-      1::numeric
-      - wallet.total_charged_usd
-      - COALESCE(reserved_totals.active_reserved_usd, 0),
-      0
-    ),
-    updated_at = now()
-FROM reserved_totals
-WHERE reserved_totals.user_id = wallet.user_id;
-
-UPDATE ai_user_wallets AS wallet
-SET balance_usd = GREATEST(1::numeric - wallet.total_charged_usd, 0),
-    updated_at = now()
-WHERE NOT EXISTS (
-  SELECT 1
-  FROM ai_wallet_reservations AS reservation
-  WHERE reservation.user_id = wallet.user_id
-    AND reservation.status = 'reserved'
-);
+-- 仅为缺失钱包的用户补齐初始余额。
+-- 已有钱包可能包含充值或人工调额，迁移不得根据默认额度重算 balance_usd。

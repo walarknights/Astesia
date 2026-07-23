@@ -1,5 +1,5 @@
-const STATIC_CACHE_NAME = 'astesia-static-v1';
-const RUNTIME_CACHE_NAME = 'astesia-runtime-v1';
+const STATIC_CACHE_NAME = 'astesia-static-v2';
+const RUNTIME_CACHE_NAME = 'astesia-runtime-v2';
 const OFFLINE_PAGE_URL = '/offline.html';
 const STATIC_ASSET_URLS = [
   OFFLINE_PAGE_URL,
@@ -58,25 +58,19 @@ self.addEventListener('fetch', (event) => {
 });
 
 async function handleNavigationRequest(event) {
-  const runtimeCache = await caches.open(RUNTIME_CACHE_NAME);
-  const cachedResponse = await runtimeCache.match(event.request);
   const preloadResponse = await event.preloadResponse;
 
   if (preloadResponse) {
-    runtimeCache.put(event.request, preloadResponse.clone());
     return preloadResponse;
   }
 
   try {
-    const networkResponse = await fetch(event.request);
-
-    if (networkResponse.ok) {
-      runtimeCache.put(event.request, networkResponse.clone());
-    }
-
-    return networkResponse;
+    // [变更] 修改前: 缓存并在离线时返回旧版本导航 HTML
+    // [变更] 修改后: 导航始终请求当前入口，失败时只返回独立离线页
+    // [原因] 部署会删除旧 chunk，旧 HTML 引用旧资源会导致 PWA 发版后白屏
+    return await fetch(event.request);
   } catch {
-    return cachedResponse ?? caches.match(OFFLINE_PAGE_URL);
+    return caches.match(OFFLINE_PAGE_URL);
   }
 }
 

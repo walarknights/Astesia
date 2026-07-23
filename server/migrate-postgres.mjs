@@ -2,10 +2,13 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 
 import pg from 'pg';
 
+import { createDatabaseSslConfig } from './database-config.mjs';
+
 loadLocalEnv();
 
 const { Pool } = pg;
 const MIGRATIONS_DIR_URL = new URL('./migrations/', import.meta.url);
+const MIGRATION_LOCK_NAME = 'astesia_schema_migrations';
 const DATABASE_URL = normalizeDatabaseUrl(process.env.DATABASE_URL);
 
 if (!DATABASE_URL) {
@@ -15,7 +18,7 @@ if (!DATABASE_URL) {
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: shouldUseDatabaseSsl(DATABASE_URL) ? { rejectUnauthorized: false } : undefined,
+  ssl: createDatabaseSslConfig(DATABASE_URL),
 });
 
 try {
@@ -26,8 +29,15 @@ try {
 
 async function runMigrations() {
   const client = await pool.connect();
+  let hasMigrationLock = false;
 
   try {
+    await client.query(
+      'SELECT pg_advisory_lock(hashtext($1))',
+      [MIGRATION_LOCK_NAME]
+    );
+    hasMigrationLock = true;
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version TEXT PRIMARY KEY,
@@ -61,6 +71,13 @@ async function runMigrations() {
     await client.query('ROLLBACK').catch(() => null);
     throw error;
   } finally {
+    if (hasMigrationLock) {
+      await client.query(
+        'SELECT pg_advisory_unlock(hashtext($1))',
+        [MIGRATION_LOCK_NAME]
+      ).catch(() => null);
+    }
+
     client.release();
   }
 }
@@ -69,18 +86,6 @@ function normalizeDatabaseUrl(value) {
   return typeof value === 'string'
     ? value.trim().replace(/^['"]|['"]$/g, '')
     : '';
-}
-
-function shouldUseDatabaseSsl(databaseUrl) {
-  if (process.env.DATABASE_SSL === 'true') {
-    return true;
-  }
-
-  if (process.env.DATABASE_SSL === 'false') {
-    return false;
-  }
-
-  return !/localhost|127\.0\.0\.1|0\.0\.0\.0/.test(databaseUrl);
 }
 
 function loadLocalEnv() {

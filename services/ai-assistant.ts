@@ -4,6 +4,7 @@ import {
   AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY,
   AI_ASSISTANT_MESSAGES_STORAGE_KEY,
 } from '@/services/storage-keys';
+import { resolveAstesiaApiHost } from '@/services/api-host';
 import { storage } from '@/services/storage';
 import { userStore } from '@/services/store/userStore';
 
@@ -153,14 +154,13 @@ export const AI_ASSISTANT_WELCOME_MESSAGE: AiAssistantMessage = {
   createdAt: '2026-01-01T00:00:00.000Z',
 };
 
-const DEFAULT_AI_API_HOST = 'https://astesia.cc';
-
-const AI_API_HOST = resolveAiApiHost(process.env.EXPO_PUBLIC_AI_API_HOST);
+const AI_API_HOST = resolveAstesiaApiHost(process.env.EXPO_PUBLIC_AI_API_HOST);
 const AI_USER_TOKEN_STORAGE_KEY = 'userToken';
 const AI_USER_ID_STORAGE_KEY = 'userId';
 const AI_USER_ID_HEADER = 'X-AI-User-Id';
 const AI_STREAM_PROTOCOL_HEADER = 'X-AI-Stream-Protocol';
 const AI_STREAM_PROTOCOL_VERSION = 'ui-message-v1';
+const SECURE_STORE_KEY_SAFE_CHAR_PATTERN = /^[A-Za-z0-9._-]$/;
 
 /**
  * 创建 AI 对话消息，统一补齐 id 与创建时间。
@@ -567,7 +567,7 @@ async function getAiAssistantConversationsStorageKey() {
   const aiUserContext = await resolveAiUserContext();
 
   return aiUserContext.userId
-    ? `${AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY}:${aiUserContext.userId}`
+    ? createUserScopedAiStorageKey(AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY, aiUserContext.userId)
     : AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY;
 }
 
@@ -575,8 +575,30 @@ async function getAiAssistantMessagesStorageKey() {
   const aiUserContext = await resolveAiUserContext();
 
   return aiUserContext.userId
-    ? `${AI_ASSISTANT_MESSAGES_STORAGE_KEY}:${aiUserContext.userId}`
+    ? createUserScopedAiStorageKey(AI_ASSISTANT_MESSAGES_STORAGE_KEY, aiUserContext.userId)
     : AI_ASSISTANT_MESSAGES_STORAGE_KEY;
+}
+
+/**
+ * 生成兼容 Expo SecureStore 的用户维度 AI 缓存键。
+ *
+ * @param baseKey - AI 缓存基础键
+ * @param userId - 当前登录用户 ID，可能包含邮箱、冒号等 SecureStore 不允许的字符
+ * @returns 仅包含字母、数字、点、横线和下划线的本地存储键
+ * @example
+ *   createUserScopedAiStorageKey('astesia-ai-assistant-messages', 'a:b@example.com')
+ */
+function createUserScopedAiStorageKey(baseKey: string, userId: string) {
+  // [变更] 修改前: 使用 `${baseKey}:${userId}` 作为原生 SecureStore key，冒号会触发运行时错误
+  // [变更] 修改后: 使用点号分隔，并把 userId 中的非法字符编码为 `_uXX_`
+  // [原因] 停止对话会立即保存本地会话，必须保证用户维度缓存 key 满足 SecureStore 约束
+  const encodedUserId = Array.from(userId).map((character) => (
+    SECURE_STORE_KEY_SAFE_CHAR_PATTERN.test(character)
+      ? character
+      : `_u${character.codePointAt(0)?.toString(16) ?? '0'}_`
+  )).join('');
+
+  return `${baseKey}.${encodedUserId || 'anonymous'}`;
 }
 
 async function readAiStorageValueWithLegacyFallback(primaryKey: string, legacyKey: string) {
@@ -609,31 +631,6 @@ function normalizeAuthorizationToken(value: unknown) {
 
   const normalizedValue = value.trim();
   return normalizedValue.replace(/^Bearer\s+/i, '');
-}
-
-function normalizeApiHost(value?: string) {
-  if (typeof value !== 'string') {
-    return '';
-  }
-
-  return value.trim().replace(/[`'"]/g, '').replace(/\/+$/, '');
-}
-
-function resolveAiApiHost(value?: string) {
-  const normalizedHost = normalizeApiHost(value);
-
-  // [变更] 修改前: 缺省或 Android 本地调试地址会请求 10.0.2.2 / 127.0.0.1
-  // [变更] 修改后: 缺省值和本地调试地址统一落到真实后端域名
-  // [原因] 当前所有 AI 后端请求都必须走线上服务，避免本地 8787 未启动导致功能失败
-  if (!normalizedHost || isLocalDebugApiHost(normalizedHost)) {
-    return DEFAULT_AI_API_HOST;
-  }
-
-  return normalizedHost;
-}
-
-function isLocalDebugApiHost(value: string) {
-  return /^https?:\/\/(10\.0\.2\.2|127\.0\.0\.1|localhost)(:\d+)?$/i.test(value);
 }
 
 function isModelItem(value: unknown): value is { id: string } {
