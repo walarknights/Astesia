@@ -7,6 +7,8 @@ import { EditorContent, type Editor, useEditor } from '@tiptap/react';
 import TiptapStarterKit from '@tiptap/starter-kit';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { sanitizeNoteContentHtml } from '@/services/note-html';
+
 type TiptapRichTextEditorProps = {
   initialHtml: string;
   insertedImageUri?: string;
@@ -55,6 +57,10 @@ export default function TiptapRichTextEditor({
 }: TiptapRichTextEditorProps) {
   const [lastInsertedImageToken, setLastInsertedImageToken] = useState('');
   const [toolbarState, setToolbarState] = useState<ToolbarState>(DEFAULT_TOOLBAR_STATE);
+  const sanitizedInitialHtml = useMemo(
+    () => sanitizeNoteContentHtml(initialHtml || EMPTY_HTML),
+    [initialHtml]
+  );
   const editorExtensions = useMemo(
     () => [
       TiptapStarterKit.configure({
@@ -79,7 +85,10 @@ export default function TiptapRichTextEditor({
 
   const editor = useEditor({
     extensions: editorExtensions,
-    content: initialHtml || EMPTY_HTML,
+    // [变更] 修改前: Web 端编辑器直接加载本地存储中的 HTML
+    // [变更] 修改后: 加载前先执行与原生端一致的白名单清洗
+    // [原因] 导入或历史缓存中的富文本不能绕过 Web 端渲染边界
+    content: sanitizedInitialHtml,
     immediatelyRender: false,
     editorProps: {
       attributes: {
@@ -105,14 +114,14 @@ export default function TiptapRichTextEditor({
   }, [editor, syncToolbarState]);
 
   useEffect(() => {
-    if (!editor || !initialHtml) {
+    if (!editor || !sanitizedInitialHtml) {
       return;
     }
 
-    if (editor.getHTML() !== initialHtml) {
-      editor.commands.setContent(initialHtml, { emitUpdate: false });
+    if (editor.getHTML() !== sanitizedInitialHtml) {
+      editor.commands.setContent(sanitizedInitialHtml, { emitUpdate: false });
     }
-  }, [editor, initialHtml]);
+  }, [editor, sanitizedInitialHtml]);
 
   useEffect(() => {
     if (!editor || !insertedImageUri || !insertedImageToken || insertedImageToken === lastInsertedImageToken) {

@@ -16,19 +16,34 @@ import {
 } from './type';
 
 import { resolveAstesiaApiHost } from '@/services/api-host';
+import { loadAuthSession } from '@/services/auth-session';
 
 const QWEATHER_API_HOST = resolveAstesiaApiHost(process.env.EXPO_PUBLIC_AI_API_HOST);
 const INDICES_TYPES = '1,3,5';
+const AI_USER_ID_HEADER = 'X-AI-User-Id';
 
 async function requestQWeather<T>(
   endpoint: string,
   params: Record<string, string>
 ): Promise<T> {
   const searchParams = new URLSearchParams(params);
+  const session = await loadAuthSession();
+
+  if (!session) {
+    throw new Error('请先登录后再使用天气服务。');
+  }
+
+  const requestHeaders = new Headers({
+    Authorization: `Bearer ${session.token}`,
+    [AI_USER_ID_HEADER]: String(session.user.userId),
+  });
+
   // [变更] 修改前: 客户端携带 EXPO_PUBLIC_QWEATHER_KEY 直连第三方天气服务
-  // [变更] 修改后: 客户端只请求 Astesia 后端天气代理
-  // [原因] Expo 公共环境变量会进入安装包和 Web 产物，不能承载第三方密钥
-  const response = await fetch(`${QWEATHER_API_HOST}${endpoint}?${searchParams.toString()}`);
+  // [变更] 修改后: 客户端只请求 Astesia 后端天气代理，并携带登录态供代理鉴权和按用户限流
+  // [原因] Expo 公共环境变量不能承载第三方密钥，后端代理也不能作为匿名公开消耗入口
+  const response = await fetch(`${QWEATHER_API_HOST}${endpoint}?${searchParams.toString()}`, {
+    headers: requestHeaders,
+  });
 
   if (!response.ok) {
     const errorText = await response.text();

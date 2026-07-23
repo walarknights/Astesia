@@ -218,7 +218,9 @@ app.get('/health', handleReadinessRequest);
 
 app.get('/api/weather/:resource', async (c) => {
   try {
-    enforceWeatherRateLimit(c);
+    const aiUser = resolveRequiredAiUser(c);
+
+    enforceWeatherRateLimit(aiUser.userId);
     const upstreamUrl = createQWeatherUpstreamUrl(
       c.req.param('resource'),
       c.req.query()
@@ -240,7 +242,8 @@ app.get('/api/weather/:resource', async (c) => {
       'Content-Type': 'application/json; charset=utf-8',
     });
   } catch (error) {
-    const isExpectedError = error instanceof RequestValidationError;
+    const isExpectedError = error instanceof RequestValidationError
+      || error instanceof AiAuthenticationError;
 
     if (!isExpectedError) {
       console.error('[weather] proxy request failed:', error);
@@ -1096,9 +1099,7 @@ function isLocalDevelopmentOrigin(origin) {
   }
 }
 
-function enforceWeatherRateLimit(c) {
-  const forwardedFor = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
-  const clientKey = forwardedFor || c.req.header('x-real-ip') || 'unknown';
+function enforceWeatherRateLimit(clientKey) {
   const now = Date.now();
   const currentBucket = weatherRateLimitBuckets.get(clientKey);
 

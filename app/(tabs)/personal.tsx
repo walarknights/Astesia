@@ -30,7 +30,9 @@ import { storage } from '@/services/storage';
 import {
   isExportableStorageKey,
   LOCAL_BACKUP_STORAGE_KEY,
+  NOTES_STORAGE_KEY,
 } from '@/services/storage-keys';
+import { sanitizeNotesStorageValue } from '@/services/notes-storage';
 import {
   APP_SETTINGS_STORAGE_KEY,
   DEFAULT_APP_SETTINGS,
@@ -764,13 +766,24 @@ async function collectStorageSnapshot() {
  *   getImportEntries({ userToken: 'secret', 'astesia-notes': '[]' })
  */
 function getImportEntries(importedStorage: Record<string, unknown>) {
-  // 格式化: 未知导入键值 → 校验字符串值并套用业务 key 白名单 → storage.multiSet 入参
-  // 说明: 即使导入文件被篡改，也不能覆盖 token、用户 ID 或账号资料
-  return Object.entries(importedStorage).filter(
-    (entry): entry is [string, string] => (
-      isExportableStorageKey(entry[0]) && typeof entry[1] === 'string'
-    )
-  );
+  // 格式化: 未知导入键值 → 校验业务 key 白名单并清洗高风险 HTML 数据 → storage.multiSet 入参
+  // 说明: 即使导入文件被篡改，也不能覆盖登录凭证或写入可执行笔记 HTML
+  return Object.entries(importedStorage)
+    .map(normalizeImportEntry)
+    .filter((entry): entry is [string, string] => entry !== null);
+}
+
+function normalizeImportEntry([key, value]: [string, unknown]) {
+  if (!isExportableStorageKey(key) || typeof value !== 'string') {
+    return null;
+  }
+
+  if (key === NOTES_STORAGE_KEY) {
+    const sanitizedNotesValue = sanitizeNotesStorageValue(value);
+    return sanitizedNotesValue ? [key, sanitizedNotesValue] : null;
+  }
+
+  return [key, value] satisfies [string, string];
 }
 
 function getImportStorage(value: unknown): Record<string, unknown> {

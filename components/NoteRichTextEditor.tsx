@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { WebView, type WebViewMessageEvent } from 'react-native-webview';
+import { WebView, type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
+
+import { sanitizeNoteContentHtml } from '@/services/note-html';
 
 type NoteRichTextEditorProps = {
   initialHtml: string;
@@ -33,12 +35,18 @@ export default function NoteRichTextEditor({
   // [变更] 修改后: WebView HTML 只在组件挂载时生成一次，后续输入仅通过 postMessage 同步给 React Native
   // [原因] Android 输入法需要稳定的 WebView 页面才能连续输入中文拼音
   const [editorSource] = useState(() => ({
-    html: buildEditorDocument(initialHtml || EMPTY_HTML, placeholder),
+    // [变更] 修改前: initialHtml 原样进入 WebView 后由 innerHTML 渲染
+    // [变更] 修改后: WebView 文档生成前先执行笔记 HTML 白名单清洗
+    // [原因] 历史缓存或导入文件可能包含脚本、事件属性和远程资源
+    html: buildEditorDocument(sanitizeNoteContentHtml(initialHtml || EMPTY_HTML), placeholder),
   }));
 
   const handleEditorRef = useCallback((nextWebView: WebView | null) => {
     setWebView(nextWebView);
   }, []);
+  const allowEditorNavigation = useCallback((request: WebViewNavigation) => (
+    request.url === 'about:blank'
+  ), []);
 
   const handleMessage = useCallback((event: WebViewMessageEvent) => {
     const message = parseEditorMessage(event.nativeEvent.data);
@@ -94,11 +102,12 @@ export default function NoteRichTextEditor({
        */}
       <WebView
         ref={handleEditorRef}
-        originWhitelist={['*']}
+        originWhitelist={['about:blank']}
         javaScriptEnabled
         domStorageEnabled
         keyboardDisplayRequiresUserAction={false}
         hideKeyboardAccessoryView
+        onShouldStartLoadWithRequest={allowEditorNavigation}
         scrollEnabled={false}
         source={editorSource}
         style={styles.webView}
@@ -135,6 +144,10 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'none'; img-src data: blob:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; frame-src 'none'; object-src 'none';"
+  />
   <style>
     * {
       box-sizing: border-box;

@@ -21,6 +21,7 @@ import NoteRichTextEditor from '@/components/NoteRichTextEditor';
 import { ThemedText } from '@/components/themed-text';
 import { AppPalette } from '@/constants/theme';
 import { clearActiveNoteEditorDraft, setActiveNoteEditorDraft } from '@/services/note-editor-draft';
+import { sanitizeNoteContentHtml } from '@/services/note-html';
 import {
   createEmptyNote,
   getNoteImageCount,
@@ -89,7 +90,9 @@ export default function NoteEditorScreen() {
         if (active && storedNote) {
           setNote({
             ...storedNote,
-            contentHtml: await normalizeEditorImageSources(storedNote.contentHtml),
+            contentHtml: sanitizeNoteContentHtml(
+              await normalizeEditorImageSources(storedNote.contentHtml)
+            ),
           });
         }
       } finally {

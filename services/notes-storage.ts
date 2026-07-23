@@ -1,4 +1,5 @@
 import { NOTES_STORAGE_KEY } from '@/services/storage-keys';
+import { sanitizeNoteContentHtml } from '@/services/note-html';
 import { storage } from '@/services/storage';
 
 export type NoteTextBlock = {
@@ -142,7 +143,7 @@ function normalizeNoteRecord(value: unknown): NoteRecord | null {
   const blocks = record.blocks.filter(isNoteBlock);
   const normalizedBlocks = blocks.length > 0 ? blocks : [createTextBlock()];
   const contentHtml = typeof record.contentHtml === 'string' && record.contentHtml.trim()
-    ? record.contentHtml
+    ? sanitizeNoteContentHtml(record.contentHtml)
     : getHtmlFromBlocks(normalizedBlocks);
 
   return {
@@ -191,7 +192,10 @@ export async function saveNote(note: NoteRecord) {
   const savedNote: NoteRecord = {
     ...note,
     title: note.title.trim(),
-    contentHtml: note.contentHtml.trim() || EMPTY_NOTE_HTML,
+    // [变更] 修改前: 富文本 HTML 按编辑器返回值原样落盘
+    // [变更] 修改后: 写入前统一执行白名单清洗
+    // [原因] 防止导入或历史缓存中的脚本、事件属性和远程资源进入 WebView 渲染链路
+    contentHtml: sanitizeNoteContentHtml(note.contentHtml),
     updatedAt: new Date().toISOString(),
   };
   const nextNotes = [savedNote, ...notes.filter((item) => item.id !== note.id)];
@@ -199,6 +203,34 @@ export async function saveNote(note: NoteRecord) {
   await storage.setItem(NOTES_STORAGE_KEY, JSON.stringify(nextNotes));
 
   return savedNote;
+}
+
+/**
+ * 清洗导入文件中的笔记存储值，返回可直接写入本地存储的 JSON 字符串。
+ *
+ * @param value - 导入 JSON 中 astesia-notes 对应的原始字符串
+ * @returns 清洗后的笔记数组 JSON；结构无效时返回 null
+ * @example
+ *   sanitizeNotesStorageValue('[{"contentHtml":"<script>1</script>"}]')
+ */
+export function sanitizeNotesStorageValue(value: string) {
+  try {
+    const parsedValue = JSON.parse(value);
+
+    if (!Array.isArray(parsedValue)) {
+      return null;
+    }
+
+    // 格式化: 导入文件中的笔记数组 → 过滤无效记录并清洗 contentHtml → 可写入的笔记 JSON
+    // 说明: 数据导入只迁移合法笔记内容，不把可执行 HTML 带入本地缓存
+    const notes = parsedValue
+      .map(normalizeNoteRecord)
+      .filter((note): note is NoteRecord => note !== null);
+
+    return JSON.stringify(notes);
+  } catch {
+    return null;
+  }
 }
 
 export function getNotePlainText(note: NoteRecord) {
