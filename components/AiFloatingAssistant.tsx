@@ -3,7 +3,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useGlobalSearchParams, usePathname } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Markdown from 'react-native-markdown-display';
+import Markdown, { type ASTNode, type RenderRules } from 'react-native-markdown-display';
 import {
   ActivityIndicator,
   Alert,
@@ -27,6 +27,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
+import { MermaidDiagram } from '@/components/MermaidDiagram';
 import { AppPalette } from '@/constants/theme';
 import {
   AI_ASSISTANT_WELCOME_MESSAGE,
@@ -45,6 +46,7 @@ import {
   saveAiAssistantConversation,
   type AiAssistantConversation,
   type AiAssistantMessage,
+  type AiAssistantStreamStatus,
   type AiModel,
 } from '@/services/ai-assistant';
 import { buildAiScreenKnowledge, type AiScreenKnowledgeSnapshot } from '@/services/ai-screen-knowledge';
@@ -106,8 +108,11 @@ export function AiFloatingAssistant() {
   const [selectedModel, setSelectedModel] = useState(DEFAULT_AI_MODEL_ID);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const [streamStatus, setStreamStatus] = useState<AiAssistantStreamStatus>('thinking');
   const [isModelsLoading, setIsModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState<string | null>(null);
+  const [isWebSearchAvailable, setIsWebSearchAvailable] = useState(false);
+  const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(false);
   const [isModelSheetVisible, setIsModelSheetVisible] = useState(false);
   const [isConversationDrawerVisible, setIsConversationDrawerVisible] = useState(false);
   const [activeConversationActionId, setActiveConversationActionId] = useState<string | null>(null);
@@ -142,6 +147,7 @@ export function AiFloatingAssistant() {
   const currentConversationRef = useRef(currentConversation);
   const conversationsRef = useRef<AiAssistantConversation[]>([]);
   const autoScrollEnabledRef = useRef(true);
+  const activeAiRequestAbortControllerRef = useRef<AbortController | null>(null);
   const lastScrollOffsetYRef = useRef(0);
   const floatingPositionRef = useRef({ x: 0, y: FLOATING_BUTTON_INITIAL_TOP });
   const floatingDragStartRef = useRef({ x: 0, y: FLOATING_BUTTON_INITIAL_TOP });
@@ -160,6 +166,7 @@ export function AiFloatingAssistant() {
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
+      activeAiRequestAbortControllerRef.current?.abort();
     };
   }, []);
 
@@ -196,6 +203,8 @@ export function AiFloatingAssistant() {
     // [原因] 模型列表失败时应降级为默认模型，而不是让抽屉组件报错
     setModels(nextModels);
     setModelsError(result.errorMessage);
+    setIsWebSearchAvailable(result.webSearchAvailable);
+    setIsWebSearchEnabled((currentValue) => currentValue && result.webSearchAvailable);
     setSelectedModel((currentModel) => (
       nextModels.some((model) => model.id === currentModel) ? currentModel : nextModels[0].id
     ));
@@ -957,6 +966,12 @@ export function AiFloatingAssistant() {
     }
   }, [isDrawerVisible, isHistoryLoading, scrollMessagesToEnd]);
 
+  // [新增] 发送中的按钮需要复用为停止入口，通过 AbortController 终止当前 AI 流式请求
+  // [原因] 长回复或联网搜索耗时较长时，用户应能主动结束本轮对话
+  const stopStreamingReply = useCallback(() => {
+    activeAiRequestAbortControllerRef.current?.abort();
+  }, []);
+
   const sendMessage = useCallback(async () => {
     if (isSending) {
       return;
@@ -968,35 +983,7 @@ export function AiFloatingAssistant() {
       return;
     }
 
-    setIsSending(true);
-
-    let requestKnowledgeSnapshot = activeScreenKnowledge;
-
-    if (shouldIncludeScreenKnowledge && activeScreenKnowledge.source !== 'user-edited') {
-      try {
-        // [变更] 修改前: 发送时直接复用当前面板里的屏幕知识，可能落后于同页内最新图表状态
-        // [变更] 修改后: 自动知识库在发送前再次读取当前页面摘要，手动编辑内容仍保留用户版本
-        // [原因] 股票区间切换、天气更新等同路由内数据变化，需要在真正发起对话前拿到最新上下文
-        const latestKnowledge = await refreshScreenKnowledge();
-
-        if (latestKnowledge) {
-          requestKnowledgeSnapshot = latestKnowledge;
-        }
-      } catch {
-        requestKnowledgeSnapshot = activeScreenKnowledge;
-      }
-    }
-
-    // [变更] 修改前: 每次发送都会无条件携带当前屏幕知识
-    // [变更] 修改后: 仅在用户显式开启后，才把 route/summary 注入本轮 AI 请求
-    // [原因] 当前屏幕知识属于可选辅助上下文，不应默认影响所有对话
-    const requestScreenKnowledge = shouldIncludeScreenKnowledge
-      ? { route: requestKnowledgeSnapshot.route, summary: requestKnowledgeSnapshot.summary }
-      : null;
-
-    // [变更] 修改前: 图片附件状态会拼接成用户气泡里的说明文字
-    // [变更] 修改后: 用户消息只保留输入框文本，附件继续停留在独立附件 UI 中
-    // [原因] 屏幕截图当前还未接入多模态发送，不能伪装成用户输入内容
+    const abortController = new AbortController();
     const userMessage = createAiAssistantMessage('user', nextMessage);
     const assistantMessage = createAiAssistantMessage('assistant', '');
     const requestMessages = [...messagesRef.current, userMessage];
@@ -1007,18 +994,56 @@ export function AiFloatingAssistant() {
       && isDefaultAiConversationTitle(currentConversationRef.current.title)
     );
 
-    autoScrollEnabledRef.current = true;
-    updateMessages(pendingMessages);
-    setDraftMessage('');
-    setPendingImageAttachments([]);
-    scrollMessagesToEnd();
+    activeAiRequestAbortControllerRef.current = abortController;
+    setIsSending(true);
+    setStreamStatus('thinking');
 
     try {
-        // [变更] 修改前: AI 请求只上传消息内容，不携带当前会话 id
-        // [变更] 修改后: 把 activeConversationId 一并传给服务层
-        // [原因] 服务端需要按用户 + 会话归档 token 消耗与扣费记录
+      let requestKnowledgeSnapshot = activeScreenKnowledge;
+
+      if (shouldIncludeScreenKnowledge && activeScreenKnowledge.source !== 'user-edited') {
+        try {
+          // [变更] 修改前: 发送时直接复用当前面板里的屏幕知识，可能落后于同页内最新图表状态
+          // [变更] 修改后: 自动知识库在发送前再次读取当前页面摘要，手动编辑内容仍保留用户版本
+          // [原因] 股票区间切换、天气更新等同路由内数据变化，需要在真正发起对话前拿到最新上下文
+          const latestKnowledge = await refreshScreenKnowledge();
+
+          if (latestKnowledge) {
+            requestKnowledgeSnapshot = latestKnowledge;
+          }
+        } catch {
+          requestKnowledgeSnapshot = activeScreenKnowledge;
+        }
+      }
+
+      // [变更] 修改前: 每次发送都会无条件携带当前屏幕知识
+      // [变更] 修改后: 仅在用户显式开启后，才把 route/summary 注入本轮 AI 请求
+      // [原因] 当前屏幕知识属于可选辅助上下文，不应默认影响所有对话
+      const requestScreenKnowledge = shouldIncludeScreenKnowledge
+        ? { route: requestKnowledgeSnapshot.route, summary: requestKnowledgeSnapshot.summary }
+        : null;
+
+      if (abortController.signal.aborted) {
+        return;
+      }
+
+      // [变更] 修改前: 图片附件状态会拼接成用户气泡里的说明文字
+      // [变更] 修改后: 用户消息只保留输入框文本，附件继续停留在独立附件 UI 中
+      // [原因] 屏幕截图当前还未接入多模态发送，不能伪装成用户输入内容
+      autoScrollEnabledRef.current = true;
+      updateMessages(pendingMessages);
+      setDraftMessage('');
+      setPendingImageAttachments([]);
+      scrollMessagesToEnd();
+
+      // [变更] 修改前: AI 请求只上传消息内容，不携带当前会话 id
+      // [变更] 修改后: 把 activeConversationId 一并传给服务层，并用 AbortSignal 支持用户停止回复
+      // [原因] 服务端需要按用户 + 会话归档 token 消耗与扣费记录，前端也需要能主动终止长回复
       const assistantReply = await requestAiAssistantReply(requestMessages, requestScreenKnowledge, selectedModel, {
-          conversationId: activeConversationId,
+        conversationId: activeConversationId,
+        signal: abortController.signal,
+        webSearchEnabled: isWebSearchEnabled,
+        onStatusChange: setStreamStatus,
         onChunk: (_, fullContent) => {
           updateMessages((currentMessages) => currentMessages.map((message) => (
             message.id === assistantMessage.id
@@ -1043,6 +1068,21 @@ export function AiFloatingAssistant() {
         ], finalMessages);
       }
     } catch (error) {
+      if (abortController.signal.aborted) {
+        updateMessages((currentMessages) => {
+          if (!currentMessages.some((message) => message.id === userMessage.id)) {
+            return currentMessages;
+          }
+
+          const nextMessages = currentMessages.filter((message) => (
+            message.id !== assistantMessage.id || message.content.trim().length > 0
+          ));
+
+          return [...nextMessages, createAiAssistantMessage('system', '已停止本轮回复。')];
+        });
+        return;
+      }
+
       const errorMessage = error instanceof Error ? error.message : 'AI 服务暂时不可用，请稍后再试。';
 
       updateMessages((currentMessages) => {
@@ -1053,7 +1093,12 @@ export function AiFloatingAssistant() {
         return [...nextMessages, createAiAssistantMessage('system', errorMessage)];
       });
     } finally {
+      if (activeAiRequestAbortControllerRef.current === abortController) {
+        activeAiRequestAbortControllerRef.current = null;
+      }
+
       setIsSending(false);
+      setStreamStatus('thinking');
     }
   }, [
     draftMessage,
@@ -1063,12 +1108,34 @@ export function AiFloatingAssistant() {
     scrollMessagesToEnd,
     selectedModel,
     shouldIncludeScreenKnowledge,
+    isWebSearchEnabled,
     summarizeConversationTitle,
     updateMessages,
   ]);
 
-  const isSendDisabled = isSending || !draftMessage.trim();
-  const sendButtonLabel = isSending ? '发送中' : '发送';
+  const handleSendActionPress = useCallback(() => {
+    if (isSending) {
+      stopStreamingReply();
+      return;
+    }
+
+    void sendMessage();
+  }, [isSending, sendMessage, stopStreamingReply]);
+
+  // [变更] 修改前: 发送中按钮禁用，只能等待 AI 流自然结束
+  // [变更] 修改后: 仅在空闲且无输入时禁用，发送中保持可点击并触发停止
+  // [原因] 用户需要在长回复或搜索过程中主动终止当前对话
+  const isSendDisabled = !isSending && !draftMessage.trim();
+  const sendButtonLabel = isSending ? '停止' : '发送';
+  const streamingStatusLabel = formatAiStreamStatus(streamStatus);
+  const toggleWebSearch = useCallback(() => {
+    if (!isWebSearchAvailable) {
+      Alert.alert('联网搜索不可用', '服务端尚未配置联网搜索能力。');
+      return;
+    }
+
+    setIsWebSearchEnabled((currentValue) => !currentValue);
+  }, [isWebSearchAvailable]);
 
   const drawerStyle = useMemo(
     () => [
@@ -1417,7 +1484,7 @@ export function AiFloatingAssistant() {
                        * 数据来源: messages 状态中的单条 message
                        */}
                       {message.role === 'assistant' && message.content.trim() ? (
-                        <Markdown style={markdownStyles}>
+                        <Markdown rules={markdownRules} style={markdownStyles}>
                           {message.content}
                         </Markdown>
                       ) : (
@@ -1433,7 +1500,7 @@ export function AiFloatingAssistant() {
                       {message.role === 'assistant' && !message.content.trim() && isSending && index === messages.length - 1 ? (
                         <View style={styles.streamingState}>
                           <ActivityIndicator color={AppPalette.brandLight} size="small" />
-                          <ThemedText style={styles.loadingText}>AI 正在思考...</ThemedText>
+                          <ThemedText style={styles.loadingText}>{streamingStatusLabel}</ThemedText>
                         </View>
                       ) : null}
                     </View>
@@ -1455,17 +1522,36 @@ export function AiFloatingAssistant() {
                     <Pressable accessibilityLabel="上传文件" onPress={pickDocument} style={styles.toolButton}>
                       <MaterialIcons name="folder-open" size={22} color={AppPalette.textMuted} />
                     </Pressable>
-                    <Pressable accessibilityLabel="插件功能" onPress={() => showPendingFeature('插件功能')} style={styles.toolButton}>
-                      <MaterialIcons name="star-border" size={22} color={AppPalette.textMuted} />
+                    <Pressable
+                      accessibilityLabel={isWebSearchEnabled ? '关闭联网搜索' : '开启联网搜索'}
+                      accessibilityRole="switch"
+                      accessibilityState={{ checked: isWebSearchEnabled, disabled: isSending }}
+                      disabled={isSending}
+                      onPress={toggleWebSearch}
+                      style={[
+                        styles.toolButton,
+                        isWebSearchEnabled && styles.toolButtonActive,
+                        !isWebSearchAvailable && styles.toolButtonUnavailable,
+                      ]}>
+                      <MaterialIcons
+                        name="travel-explore"
+                        size={22}
+                        color={isWebSearchEnabled ? '#FFFFFF' : AppPalette.textMuted}
+                      />
                     </Pressable>
                     <Pressable accessibilityLabel="AI 配置" onPress={() => showPendingFeature('AI 配置')} style={styles.toolButton}>
                       <MaterialIcons name="add" size={22} color={AppPalette.textMuted} />
                     </Pressable>
                   </View>
+                  {/*
+                   * 渲染位置: AI 抽屉底部操作栏右侧
+                   * 展示内容: 空闲时显示发送入口，发送中显示转圈动画并可点击停止回复
+                   * 数据来源: isSending 与 draftMessage 状态
+                   */}
                   <Pressable
-                    accessibilityLabel="发送消息"
+                    accessibilityLabel={isSending ? '停止 AI 回复' : '发送消息'}
                     disabled={isSendDisabled}
-                    onPress={sendMessage}
+                    onPress={handleSendActionPress}
                     style={[styles.sendActionButton, isSendDisabled && styles.sendButtonDisabled]}>
                     {isSending ? (
                       <ActivityIndicator color="#FFFFFF" size="small" />
@@ -1873,6 +1959,26 @@ function countUserMessages(messages: AiAssistantMessage[]) {
   return messages.filter((message) => message.role === 'user' && message.content.trim().length > 0).length;
 }
 
+/**
+ * 将 AI 流阶段转换为用户可读的等待提示。
+ *
+ * @param status - 当前流式响应阶段
+ * @returns AI 消息气泡中的状态文案
+ * @example
+ *   formatAiStreamStatus('searching') // => '正在联网搜索...'
+ */
+function formatAiStreamStatus(status: AiAssistantStreamStatus) {
+  if (status === 'searching') {
+    return '正在联网搜索...';
+  }
+
+  if (status === 'writing') {
+    return '正在整理回答...';
+  }
+
+  return 'AI 正在思考...';
+}
+
 function waitForScreenSettled() {
   return new Promise<void>((resolve) => {
     setTimeout(() => {
@@ -1880,6 +1986,41 @@ function waitForScreenSettled() {
     }, DRAWER_ANIMATION_MS + 80);
   });
 }
+
+type MarkdownFenceNode = ASTNode & {
+  sourceInfo?: string;
+};
+
+const markdownRules: RenderRules = {
+  fence: (node, _children, _parent, styles, inheritedStyles = {}) => {
+    const language = String((node as MarkdownFenceNode).sourceInfo || '').trim().toLowerCase();
+    // 格式化: Markdown fence 文本 → 去除解析器附加的末尾换行 → 可渲染代码或 Mermaid 源码
+    // 说明: 避免普通代码块和图表底部多出空行
+    const content = node.content.endsWith('\n')
+      ? node.content.slice(0, -1)
+      : node.content;
+
+    if (language === 'mermaid') {
+      /*
+       * 渲染位置: AI Markdown 回复中的 mermaid 代码块
+       * 展示内容: 流程图、时序图等可视化图表
+       * 数据来源: Markdown AST 节点中的 Mermaid 源码
+       */
+      return <MermaidDiagram key={node.key} chart={content} />;
+    }
+
+    /*
+     * 渲染位置: AI Markdown 回复中的普通围栏代码块
+     * 展示内容: 保留原格式的代码文本
+     * 数据来源: Markdown AST 节点内容
+     */
+    return (
+      <ThemedText key={node.key} style={[inheritedStyles, styles.fence]}>
+        {content}
+      </ThemedText>
+    );
+  },
+};
 
 const markdownStyles = {
   body: {
@@ -2547,6 +2688,13 @@ const styles = StyleSheet.create({
     height: 28,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: 8,
+  },
+  toolButtonActive: {
+    backgroundColor: AppPalette.brand,
+  },
+  toolButtonUnavailable: {
+    opacity: 0.4,
   },
   composer: {
     minHeight: 44,

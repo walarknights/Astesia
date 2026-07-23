@@ -13,10 +13,13 @@ RUN addgroup -S astesia \
 
 RUN npm init -y >/dev/null \
   && npm install --omit=dev --no-audit --no-fund --package-lock=false \
+    @ai-sdk/openai@4.0.17 \
     @hono/node-server@1.19.6 \
+    ai@7.0.34 \
     hono@4.10.7 \
     nodemailer@9.0.3 \
-    pg@8.22.0
+    pg@8.22.0 \
+    zod@4.4.3
 
 COPY server ./server
 

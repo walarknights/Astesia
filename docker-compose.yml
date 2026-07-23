@@ -28,6 +28,9 @@ services:
       context: .
       dockerfile: docker/Dockerfile.backend
     image: astesia-backend:latest
+    depends_on:
+      searxng:
+        condition: service_healthy
     # .env 需要包含 DATABASE_URL、AUTH_TOKEN_SECRET、AI/SMTP 密钥等运行期配置。
     # 容器启动会先执行 PostgreSQL 迁移，迁移失败时后端不会继续启动。
     # 后端进入容器后，DATABASE_URL 不要继续写 127.0.0.1；需改为容器可访问的数据库地址。
@@ -36,6 +39,7 @@ services:
     environment:
       AI_SERVER_HOST: 0.0.0.0
       AI_SERVER_PORT: 8787
+      AI_WEB_SEARCH_SEARXNG_URL: http://searxng:8080/search
       NODE_ENV: production
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -56,6 +60,29 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  searxng:
+    image: searxng/searxng@sha256:b8ca38ba06eea544d7555e88321e212ddc0d5c3c7de055419cfb2e5c6bf30812
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+    expose:
+      - "8080"
+    volumes:
+      - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--header=X-Forwarded-For: 127.0.0.1",
+          "-qO-",
+          "http://127.0.0.1:8080/healthz"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   akshare:
     build:
