@@ -1,6 +1,15 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { type ComponentProps, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { StatusBar } from 'expo-status-bar';
+import {
+  createContext,
+  type ComponentProps,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -12,8 +21,13 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { styles } from '@/styles/accountingEntry';
-import { AppPalette } from '@/constants/theme';
+import {
+  getProductivityPalette,
+  PRODUCTIVITY_PALETTE,
+  type ProductivityPalette,
+} from '@/constants/productivity-theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { createAccountingEntryStyles } from '@/styles/accountingEntry';
 
 import { ThemedText } from '@/components/themed-text';
 import {
@@ -36,6 +50,19 @@ type DatePickerDay = {
   value: string;
   isCurrentMonth: boolean;
 };
+type AccountingEntryThemeContextValue = {
+  palette: ProductivityPalette;
+  styles: ReturnType<typeof createAccountingEntryStyles>;
+};
+
+const AccountingEntryThemeContext = createContext<AccountingEntryThemeContextValue>({
+  palette: PRODUCTIVITY_PALETTE.dark,
+  styles: createAccountingEntryStyles(PRODUCTIVITY_PALETTE.dark),
+});
+
+function useAccountingEntryTheme() {
+  return useContext(AccountingEntryThemeContext);
+}
 
 const CUSTOM_OPTION = '自定义';
 const DATE_INPUT_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -176,6 +203,10 @@ const getClockPartFromInput = (value: string) => {
 
 export default function AccountingEntryScreen() {
   const router = useRouter();
+  const colorScheme = useColorScheme();
+  const palette = getProductivityPalette(colorScheme);
+  const styles = useMemo(() => createAccountingEntryStyles(palette), [palette]);
+  const themeContextValue = useMemo(() => ({ palette, styles }), [palette, styles]);
   const params = useLocalSearchParams<{ entryId?: string }>();
   const initialDateTimeParts = getCurrentDateTimeParts();
   const editingEntryId = typeof params.entryId === 'string' ? params.entryId : '';
@@ -394,8 +425,18 @@ export default function AccountingEntryScreen() {
   };
 
   return (
-    <>
-      <Stack.Screen options={{ headerShown: false }} />
+    <AccountingEntryThemeContext.Provider value={themeContextValue}>
+      {/*
+       * 渲染位置: 账单录入整页
+       * 展示内容: 随应用主题切换的表单、选择器、日期时间弹层和保存按钮
+       * 数据来源: useColorScheme()、本地表单状态和编辑账单记录
+       */}
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <StatusBar
+          style={colorScheme === 'light' ? 'dark' : 'light'}
+          backgroundColor={palette.background}
+        />
       <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
         <KeyboardAvoidingView
           // [变更] 修改前: 账单录入页依赖系统窗口缩放，页面底部备注输入框仍可能被键盘覆盖
@@ -405,7 +446,7 @@ export default function AccountingEntryScreen() {
           style={styles.screen}>
           <View style={styles.header}>
             <Pressable style={styles.iconButton} onPress={() => router.back()}>
-              <MaterialIcons name="arrow-back" size={24} color={AppPalette.text} />
+              <MaterialIcons name="arrow-back" size={24} color={palette.text} />
             </Pressable>
             <ThemedText style={styles.headerTitle}>{isEditing ? '更改账单' : '账单录入'}</ThemedText>
             <View style={styles.iconButton} />
@@ -439,7 +480,7 @@ export default function AccountingEntryScreen() {
                     <MaterialIcons
                       name={selectedBillTypeOption?.icon ?? 'edit-note'}
                       size={24}
-                      color={AppPalette.textMuted}
+                      color={palette.textMuted}
                     />
                   </View>
                   <View style={styles.summaryTextGroup}>
@@ -457,8 +498,9 @@ export default function AccountingEntryScreen() {
                     value={customBillType}
                     onChangeText={setCustomBillType}
                     placeholder="请输入自定义类型"
-                    placeholderTextColor={AppPalette.textSubtle}
+                    placeholderTextColor={palette.textSubtle}
                     style={styles.input}
+                    underlineColorAndroid="transparent"
                   />
                 </FormField>
               ) : null}
@@ -468,11 +510,12 @@ export default function AccountingEntryScreen() {
                   value={amount}
                   onChangeText={handleAmountChange}
                   placeholder="请输入金额"
-                  placeholderTextColor={AppPalette.textSubtle}
+                  placeholderTextColor={palette.textSubtle}
                   inputMode="decimal"
                   keyboardType="default"
                   autoCorrect={false}
                   style={styles.input}
+                  underlineColorAndroid="transparent"
                 />
                 {showAmountError ? (
                   <ThemedText style={styles.errorText}>请输入正确的金额</ThemedText>
@@ -490,17 +533,18 @@ export default function AccountingEntryScreen() {
                     value={dateInput}
                     onChangeText={handleDateInputChange}
                     placeholder="YYYY-MM-DD"
-                    placeholderTextColor={AppPalette.textSubtle}
+                    placeholderTextColor={palette.textSubtle}
                     inputMode="numeric"
                     keyboardType="numbers-and-punctuation"
                     autoCorrect={false}
                     style={styles.inputWithPickerText}
+                    underlineColorAndroid="transparent"
                   />
                   <Pressable
                     accessibilityLabel="选择账单日期"
                     style={styles.inputPickerButton}
                     onPress={openDatePicker}>
-                    <MaterialIcons name="calendar-today" size={20} color={AppPalette.brandLight} />
+                    <MaterialIcons name="calendar-today" size={20} color={palette.brandLight} />
                   </Pressable>
                 </View>
                 {dateInputError ? <ThemedText style={styles.errorText}>{dateInputError}</ThemedText> : null}
@@ -517,17 +561,18 @@ export default function AccountingEntryScreen() {
                     value={clockInput}
                     onChangeText={handleClockInputChange}
                     placeholder="HH:mm"
-                    placeholderTextColor={AppPalette.textSubtle}
+                    placeholderTextColor={palette.textSubtle}
                     inputMode="numeric"
                     keyboardType="numbers-and-punctuation"
                     autoCorrect={false}
                     style={styles.inputWithPickerText}
+                    underlineColorAndroid="transparent"
                   />
                   <Pressable
                     accessibilityLabel="选择账单时间"
                     style={styles.inputPickerButton}
                     onPress={() => setIsClockPickerVisible(true)}>
-                    <MaterialIcons name="schedule" size={22} color={AppPalette.brandLight} />
+                    <MaterialIcons name="schedule" size={22} color={palette.brandLight} />
                   </Pressable>
                 </View>
                 {clockInputError ? <ThemedText style={styles.errorText}>{clockInputError}</ThemedText> : null}
@@ -538,9 +583,10 @@ export default function AccountingEntryScreen() {
                   value={remark}
                   onChangeText={setRemark}
                   placeholder="请输入备注"
-                  placeholderTextColor={AppPalette.textSubtle}
+                  placeholderTextColor={palette.textSubtle}
                   multiline
                   style={[styles.input, styles.remarkInput]}
+                  underlineColorAndroid="transparent"
                 />
               </FormField>
             </View>
@@ -597,7 +643,7 @@ export default function AccountingEntryScreen() {
                       <MaterialIcons
                         name={option.icon}
                         size={30}
-                        color={billType === option.label ? '#2563EB' : '#5B5B5B'}
+                        color={billType === option.label ? palette.brandLight : palette.textMuted}
                       />
                     </View>
                     <ThemedText
@@ -625,11 +671,11 @@ export default function AccountingEntryScreen() {
             <View style={styles.datePickerContent}>
               <View style={styles.datePickerHeader}>
                 <Pressable style={styles.datePickerMonthButton} onPress={() => handleChangeDatePickerMonth(-1)}>
-                  <MaterialIcons name="chevron-left" size={22} color={AppPalette.brandLight} />
+                  <MaterialIcons name="chevron-left" size={22} color={palette.brandLight} />
                 </Pressable>
                 <ThemedText style={styles.datePickerMonthText}>{datePickerMonthLabel}</ThemedText>
                 <Pressable style={styles.datePickerMonthButton} onPress={() => handleChangeDatePickerMonth(1)}>
-                  <MaterialIcons name="chevron-right" size={22} color={AppPalette.brandLight} />
+                  <MaterialIcons name="chevron-right" size={22} color={palette.brandLight} />
                 </Pressable>
               </View>
               <View style={styles.weekdayRow}>
@@ -674,7 +720,7 @@ export default function AccountingEntryScreen() {
              */}
             <View style={styles.clockPickerContent}>
               <Pressable style={styles.clockNowButton} onPress={handleUseCurrentClock}>
-                <MaterialIcons name="access-time" size={18} color={AppPalette.brandLight} />
+                <MaterialIcons name="access-time" size={18} color={palette.brandLight} />
                 <ThemedText style={styles.clockNowButtonText}>使用当前时间</ThemedText>
               </Pressable>
               <ThemedText style={styles.clockPickerSectionTitle}>小时</ThemedText>
@@ -724,11 +770,14 @@ export default function AccountingEntryScreen() {
           </SelectorModal>
         </KeyboardAvoidingView>
       </SafeAreaView>
-    </>
+      </>
+    </AccountingEntryThemeContext.Provider>
   );
 }
 
 function FormField({ label, children }: { label: string; children: ReactNode }) {
+  const { styles } = useAccountingEntryTheme();
+
   return (
     <View style={styles.field}>
       <ThemedText style={styles.fieldLabel}>{label}</ThemedText>
@@ -748,15 +797,17 @@ function TopSelector({
   onPress: () => void;
   icon?: MaterialIconName;
 }) {
+  const { palette, styles } = useAccountingEntryTheme();
+
   return (
     <Pressable style={styles.topSelector} onPress={onPress}>
       <ThemedText style={styles.topSelectorLabel}>{label}</ThemedText>
       <View style={styles.topSelectorValueRow}>
-        {icon ? <MaterialIcons name={icon} size={18} color="#525252" /> : null}
+        {icon ? <MaterialIcons name={icon} size={18} color={palette.textMuted} /> : null}
         <ThemedText style={styles.topSelectorValue} numberOfLines={1}>
           {value}
         </ThemedText>
-        <MaterialIcons name="keyboard-arrow-down" size={20} color="#737373" />
+        <MaterialIcons name="keyboard-arrow-down" size={20} color={palette.textMuted} />
       </View>
     </Pressable>
   );
@@ -773,6 +824,8 @@ function SelectorModal({
   onClose: () => void;
   children: ReactNode;
 }) {
+  const { palette, styles } = useAccountingEntryTheme();
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.modalRoot}>
@@ -781,7 +834,7 @@ function SelectorModal({
           <View style={styles.topSheetHeader}>
             <ThemedText style={styles.topSheetTitle}>{title}</ThemedText>
             <Pressable style={styles.closeButton} onPress={onClose}>
-              <MaterialIcons name="close" size={20} color="#525252" />
+              <MaterialIcons name="close" size={20} color={palette.textMuted} />
             </Pressable>
           </View>
           <ScrollView showsVerticalScrollIndicator={false}>{children}</ScrollView>

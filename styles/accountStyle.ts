@@ -1,10 +1,14 @@
 import { StyleSheet } from 'react-native';
-import { AppPalette } from '@/constants/theme';
+import {
+  PRODUCTIVITY_PALETTE,
+  type ProductivityPalette,
+} from '@/constants/productivity-theme';
 
-// [变更] 修改前: 记账与资产页使用浅蓝渐变、白色卡片和系统蓝按钮
-// [变更] 修改后: 使用推广页的深色玻璃卡片、靛青按钮与柔和描边
-// [原因] 统一品牌视觉，收支涨跌等业务状态色继续保留
-export const styles = StyleSheet.create({
+export function createAccountingStyles(AppPalette: ProductivityPalette) {
+  return StyleSheet.create({
+  // [变更] 修改前: 记账与资产页样式固定引用深色 AppPalette
+  // [变更] 修改后: 使用传入的生产力页面色板动态生成卡片、文字和浮层颜色
+  // [原因] 浅色模式下记账主页、资产页和弹层必须一起切换，不能只改外层背景
   safeArea: {
     flex: 1,
     backgroundColor: 'transparent',
@@ -45,7 +49,7 @@ export const styles = StyleSheet.create({
     fontSize: 20,
     lineHeight: 28,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: AppPalette.text,
   },
   assetHeaderSpacer: {
     width: 36,
@@ -102,7 +106,7 @@ export const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    backgroundColor: AppPalette.brandSoft,
   },
   assetOverviewActionText: {
     fontSize: 13,
@@ -276,7 +280,7 @@ export const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    backgroundColor: AppPalette.brandSoft,
   },
   assetRangeChipActive: {
     backgroundColor: AppPalette.brand,
@@ -402,7 +406,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 22,
-    backgroundColor: 'rgba(2, 2, 8, 0.74)',
+    backgroundColor: AppPalette.overlay,
   },
   assetSearchModalCard: {
     width: '100%',
@@ -520,16 +524,10 @@ export const styles = StyleSheet.create({
   heroCard: {
     height: 192,
     borderRadius: 18,
-    overflow: 'hidden',
     justifyContent: 'space-between',
-    backgroundColor: '#D4D4D4',
-  },
-  heroImage: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  heroOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(38, 38, 38, 0.22)',
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
   },
   heroContent: {
     flex: 1,
@@ -546,41 +544,19 @@ export const styles = StyleSheet.create({
     fontSize: 22,
     lineHeight: 22,
     fontWeight: '800',
-    color: '#E5E7EB',
+    color: AppPalette.text,
   },
   heroBalance: {
     marginTop: 4,
     fontSize: 18,
     lineHeight: 28,
-    
-    color: '#FFFFFF',
-  },
-  heroTag: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    backgroundColor: 'rgba(255, 255, 255, 0.92)',
-  },
-  heroTagPressed: {
-    backgroundColor: 'rgba(255, 255, 255, 0.78)',
-  },
-  heroTagDisabled: {
-    opacity: 0.6,
-  },
-  heroTagText: {
-    fontSize: 15,
-    lineHeight: 18,
-    color: '#525252',
+    color: AppPalette.text,
   },
   heroSummary: {
     marginTop: 4,
     fontSize: 18,
     lineHeight: 28,
-    color: '#FFFFFF',
+    color: AppPalette.textMuted,
   },
   heroSummaryRow: {
     flexDirection: 'column',
@@ -641,7 +617,7 @@ export const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 5,
-    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    backgroundColor: AppPalette.brandSoft,
   },
   budgetEditText: {
     fontSize: 13,
@@ -681,7 +657,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 9,
-    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    backgroundColor: AppPalette.brandSoft,
   },
   budgetHelpText: {
     fontSize: 12,
@@ -731,7 +707,7 @@ export const styles = StyleSheet.create({
   chartLabel: {
     fontSize: 12,
     lineHeight: 16,
-    color: '#9CA3AF',
+    color: AppPalette.textMuted,
   },
   billCard: {
     borderRadius: 18,
@@ -848,7 +824,7 @@ export const styles = StyleSheet.create({
     paddingVertical: 10,
     borderWidth: 1,
     borderColor: AppPalette.border,
-    backgroundColor: 'rgba(23, 23, 38, 0.97)',
+    backgroundColor: AppPalette.toolbarBackground,
     shadowColor: AppPalette.shadow,
     shadowOpacity: 0.16,
     shadowRadius: 22,
@@ -887,7 +863,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 24,
-    backgroundColor: 'rgba(2, 2, 8, 0.74)',
+    backgroundColor: AppPalette.overlay,
   },
   actionSheetCard: {
     width: '80%',
@@ -1016,7 +992,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 24,
-    backgroundColor: 'rgba(2, 2, 8, 0.74)',
+    backgroundColor: AppPalette.overlay,
   },
   modalCard: {
     width: '100%',
@@ -1057,7 +1033,7 @@ export const styles = StyleSheet.create({
     backgroundColor: AppPalette.surfaceSoft,
   },
   pickerScopeButtonActive: {
-    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    backgroundColor: AppPalette.brandSoft,
   },
   pickerScopeText: {
     fontSize: 15,
@@ -1128,19 +1104,6 @@ export const styles = StyleSheet.create({
     gap: 10,
     marginTop: 20,
   },
-  heroImageDialogActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    marginTop: 28,
-  },
-  heroImageDialogRightActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 10,
-  },
   modalCancelButton: {
     borderRadius: 999,
     paddingHorizontal: 18,
@@ -1168,4 +1131,7 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
-});
+  });
+}
+
+export const styles = createAccountingStyles(PRODUCTIVITY_PALETTE.dark);

@@ -8,6 +8,7 @@ import { useEffect } from 'react';
 import 'react-native-reanimated';
 
 import { AiFloatingAssistant } from '@/components/AiFloatingAssistant';
+import { AppAlertProvider } from '@/components/AppAlertProvider';
 import { PwaInstallBanner } from '@/components/PwaInstallBanner';
 import { AppPalette } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -51,7 +52,9 @@ export default function RootLayout() {
 
   return (
     <AppSettingsProvider>
-      <RootNavigator />
+      <AppAlertProvider>
+        <RootNavigator />
+      </AppAlertProvider>
     </AppSettingsProvider>
   );
 }

@@ -1,9 +1,10 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
-import { type ComponentProps } from 'react';
+import { type ComponentProps, useMemo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { AppPalette } from '@/constants/theme';
+import { getProductivityPalette, type ProductivityPalette } from '@/constants/productivity-theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 
 type MaterialIconName = ComponentProps<typeof MaterialIcons>['name'];
 
@@ -27,6 +28,10 @@ export function BottomSwitchBar({
   onPressAdd,
   addIcon = 'add',
 }: BottomSwitchBarProps) {
+  const colorScheme = useColorScheme();
+  const palette = getProductivityPalette(colorScheme);
+  const styles = useMemo(() => createStyles(palette), [palette]);
+
   return (
     <View style={styles.bottomBar}>
       {/*
@@ -44,12 +49,16 @@ export function BottomSwitchBar({
 }
 
 function BottomSwitchTab({ icon, label, active, onPress }: SwitchBarTab) {
+  const colorScheme = useColorScheme();
+  const palette = getProductivityPalette(colorScheme);
+  const styles = useMemo(() => createStyles(palette), [palette]);
+
   return (
     <Pressable style={styles.bottomTab} onPress={onPress}>
       <MaterialIcons
         name={icon}
         size={24}
-        color={active ? AppPalette.brandLight : AppPalette.textSubtle}
+        color={active ? palette.brandLight : palette.textSubtle}
       />
       <ThemedText style={[styles.bottomTabLabel, active && styles.bottomTabLabelActive]}>
         {label}
@@ -58,10 +67,11 @@ function BottomSwitchTab({ icon, label, active, onPress }: SwitchBarTab) {
   );
 }
 
-const styles = StyleSheet.create({
-  // [变更] 修改前: 功能切换栏使用不透明白底和蓝色按钮
-  // [变更] 修改后: 改为深色玻璃容器、暗色投影与靛青紫品牌按钮
-  // [原因] 保持笔记、待办和记账入口与推广页视觉一致
+function createStyles(palette: ProductivityPalette) {
+  return StyleSheet.create({
+  // [变更] 修改前: 功能切换栏固定使用深色玻璃容器
+  // [变更] 修改后: 容器、文字和图标跟随生产力页面主题色板
+  // [原因] 记账页浅色模式下底部导航不能继续保留深色底
   bottomBar: {
     position: 'absolute',
     left: 12,
@@ -71,12 +81,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderColor: AppPalette.border,
+    borderColor: palette.border,
     borderRadius: 28,
     paddingHorizontal: 28,
     paddingVertical: 10,
-    backgroundColor: 'rgba(23, 23, 38, 0.97)',
-    shadowColor: AppPalette.shadow,
+    backgroundColor: palette.toolbarBackground,
+    shadowColor: palette.shadow,
     shadowOpacity: 0.16,
     shadowRadius: 22,
     shadowOffset: { width: 0, height: -4 },
@@ -88,12 +98,12 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   bottomTabLabel: {
-    color: AppPalette.textSubtle,
+    color: palette.textSubtle,
     fontSize: 12,
     lineHeight: 16,
   },
   bottomTabLabelActive: {
-    color: AppPalette.brandLight,
+    color: palette.brandLight,
   },
   addButton: {
     width: 56,
@@ -102,11 +112,12 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: AppPalette.brand,
-    shadowColor: AppPalette.brandLight,
+    backgroundColor: palette.brand,
+    shadowColor: palette.brandLight,
     shadowOpacity: 0.48,
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
   },
 });
+}

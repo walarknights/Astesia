@@ -1,12 +1,9 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect } from '@react-navigation/native';
-import * as DocumentPicker from 'expo-document-picker';
-import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { Image } from 'expo-image';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -20,8 +17,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Line, Rect } from 'react-native-svg';
-import { styles } from '@/styles/accountStyle';
-import { AppPalette } from '@/constants/theme';
+import { getProductivityPalette } from '@/constants/productivity-theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { createAccountingStyles } from '@/styles/accountStyle';
 
 import { BottomSwitchBar } from '@/components/BottomSwitchBar';
 import { ThemedText } from '@/components/themed-text';
@@ -37,10 +35,6 @@ import {
   type AccountingEntryRecord,
 } from '@/services/accounting-entry-storage';
 import {
-  loadAccountingHeroImageUri,
-  persistAccountingHeroImage,
-} from '@/services/accounting-hero-image-storage';
-import {
   loadSecurityTrend,
   searchSecurities,
   type AssetRangeLabel,
@@ -50,7 +44,6 @@ import {
 } from '@/services/akshare';
 import { setCachedAccountingScreenSnapshot } from '@/services/accounting-screen-store';
 
-const HERO_IMAGE = require('@/assets/images/cloudy.jpg');
 const WEEK_DAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'] as const;
 const MONTH_OPTIONS = Array.from({ length: 12 }, (_item, index) => index + 1);
 const ASSET_RANGE_OPTIONS = ['近7日', '近一个月', '近1年'] as const;
@@ -417,6 +410,9 @@ function mergeSecurityRangeData(
 
 export default function AccountingScreen() {
   const router = useRouter();
+  const colorScheme = useColorScheme();
+  const palette = getProductivityPalette(colorScheme);
+  const styles = useMemo(() => createAccountingStyles(palette), [palette]);
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [entries, setEntries] = useState<AccountingEntryRecord[]>([]);
   const [activeTab, setActiveTab] = useState<AccountingTab>('bill');
@@ -440,9 +436,6 @@ export default function AccountingScreen() {
   const [isBudgetModalVisible, setIsBudgetModalVisible] = useState(false);
   const [isBudgetDailyHelpVisible, setIsBudgetDailyHelpVisible] = useState(false);
   const [isSavingBudget, setIsSavingBudget] = useState(false);
-  const [heroImageUri, setHeroImageUri] = useState<string | null>(null);
-  const [isHeroImageModalVisible, setIsHeroImageModalVisible] = useState(false);
-  const [isSavingHeroImage, setIsSavingHeroImage] = useState(false);
   const [totalAsset, setTotalAsset] = useState<number | null>(null);
   const [assetInput, setAssetInput] = useState('');
   const [assetInputError, setAssetInputError] = useState('');
@@ -469,7 +462,6 @@ export default function AccountingScreen() {
   const currentBillPeriodLabel =
     billQueryScope === 'year' ? `${currentDate.getFullYear()}年` : `${currentMonthLabel}`;
   const monthlyBudget = monthlyBudgetRecord.amount;
-  const heroImageSource = heroImageUri ? { uri: heroImageUri } : HERO_IMAGE;
   const [securityName, setSecurityName] = useState('股票/基金名称');
 
 
@@ -479,10 +471,9 @@ export default function AccountingScreen() {
 
       const syncAccountingEntries = async () => {
         const nextCurrentDate = new Date();
-        const [storedEntries, storedMonthlyBudget, storedHeroImageUri, storedTotalAsset] = await Promise.all([
+        const [storedEntries, storedMonthlyBudget, storedTotalAsset] = await Promise.all([
           loadAccountingEntries(),
           loadAccountingMonthlyBudget(nextCurrentDate),
-          loadAccountingHeroImageUri(),
           loadAccountingTotalAsset(),
         ]);
 
@@ -490,7 +481,6 @@ export default function AccountingScreen() {
           setCurrentDate(nextCurrentDate);
           setEntries(storedEntries);
           setMonthlyBudgetRecord(storedMonthlyBudget);
-          setHeroImageUri(storedHeroImageUri);
           setTotalAsset(storedTotalAsset);
         }
       };
@@ -881,18 +871,6 @@ export default function AccountingScreen() {
     setIsBillPeriodModalVisible(false);
   };
 
-  const openHeroImageModal = () => {
-    setIsHeroImageModalVisible(true);
-  };
-
-  const closeHeroImageModal = () => {
-    if (isSavingHeroImage) {
-      return;
-    }
-
-    setIsHeroImageModalVisible(false);
-  };
-
   const closeEntryActionModal = () => {
     setSelectedEntryAction(null);
   };
@@ -1014,85 +992,6 @@ export default function AccountingScreen() {
     }
   };
 
-  const saveHeroImageFromPicker = async (asset: {
-    uri: string;
-    name?: string | null;
-    mimeType?: string | null;
-    file?: globalThis.File | null;
-    base64?: string | null;
-  }) => {
-    try {
-      setIsSavingHeroImage(true);
-      const nextHeroImageUri = await persistAccountingHeroImage(asset);
-      setHeroImageUri(nextHeroImageUri);
-      setIsHeroImageModalVisible(false);
-    } catch (error) {
-      const isUnsupportedImage = error instanceof Error && error.message === 'UNSUPPORTED_IMAGE_FORMAT';
-      Alert.alert(
-        isUnsupportedImage ? '图片格式不支持' : '保存失败',
-        isUnsupportedImage
-          ? '请选择 jpg、png、webp、gif、heic 或 heif 格式的图片'
-          : '背景图片暂未保存成功，请稍后重试'
-      );
-    } finally {
-      setIsSavingHeroImage(false);
-    }
-  };
-
-  const handleOpenGallery = async () => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-
-    if (!permission.granted) {
-      Alert.alert('无法打开图库', '请允许访问系统图库后再选择背景图片');
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      allowsEditing: false,
-      allowsMultipleSelection: false,
-      mediaTypes: ['images'],
-      // [变更] 修改前: Web 端只保存 picker 返回的临时 URI
-      // [变更] 修改后: Web 端额外请求 base64，并把 file/base64 交给持久化层统一转换
-      // [原因] PWA 刷新后 blob 地址会失效，自定义背景图需要保存为可长期复用的数据地址
-      base64: Platform.OS === 'web',
-      quality: 1,
-    });
-
-    if (result.canceled || !result.assets[0]) {
-      return;
-    }
-
-    const [asset] = result.assets;
-    await saveHeroImageFromPicker({
-      uri: asset.uri,
-      name: asset.fileName,
-      file: asset.file,
-      base64: asset.base64,
-      mimeType: asset.mimeType,
-    });
-  };
-
-  const handleOpenFile = async () => {
-    const result = await DocumentPicker.getDocumentAsync({
-      copyToCacheDirectory: true,
-      multiple: false,
-      type: 'image/*',
-    });
-
-    if (result.canceled || !result.assets[0]) {
-      return;
-    }
-
-    const [asset] = result.assets;
-    await saveHeroImageFromPicker({
-      uri: asset.uri,
-      name: asset.name,
-      file: asset.file,
-      base64: asset.base64,
-      mimeType: asset.mimeType,
-    });
-  };
-
   const transactionGroups = useMemo<TransactionGroup[]>(() => {
     const sortedEntries = [...entries].sort(
       (left, right) => parseEntryDate(right).getTime() - parseEntryDate(left).getTime()
@@ -1148,15 +1047,18 @@ export default function AccountingScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <StatusBar style="light" />
+      <StatusBar
+        style={colorScheme === 'light' ? 'dark' : 'light'}
+        backgroundColor={palette.background}
+      />
       <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
         {/*
          * 渲染位置: 记账页与资产页安全区和内容区最底层
-         * 展示内容: 与资产页一致的整屏纵向渐变背景
-         * 数据来源: LinearGradient 固定渐变色配置
+         * 展示内容: 随浅深色模式切换的整屏纵向渐变背景
+         * 数据来源: useColorScheme() 解析出的生产力页面色板
          */}
         <LinearGradient
-          colors={['#29285B', '#17172E', AppPalette.background]}
+          colors={[palette.gradientStart, palette.gradientMiddle, palette.gradientEnd]}
           start={{ x: 0.5, y: 0 }}
           end={{ x: 0.5, y: 1 }}
           pointerEvents="none"
@@ -1173,7 +1075,7 @@ export default function AccountingScreen() {
               <View style={styles.assetPage}>
                 <View style={styles.assetHeader}>
                   <Pressable style={styles.iconButton} onPress={() => router.back()}>
-                    <MaterialIcons name="arrow-back" size={24} color="#FFFFFF" />
+                    <MaterialIcons name="arrow-back" size={24} color={palette.text} />
                   </Pressable>
                   <ThemedText style={styles.assetHeaderTitle}>资产</ThemedText>
                   <View style={styles.assetHeaderSpacer} />
@@ -1185,13 +1087,14 @@ export default function AccountingScreen() {
                       <ThemedText style={styles.assetOverviewTitle}>总资产</ThemedText>
                       <ThemedText style={styles.assetOverviewAmount}>¥{displayedTotalAsset.toFixed(2)}</ThemedText>
                     </View>
+                    {/*
+                     * 渲染位置: 资产总览卡片操作区
+                     * 展示内容: 仅保留总资产设置入口，移除资产页自定义图片入口
+                     * 数据来源: openAssetModal 弹层开关
+                     */}
                     <View style={styles.assetOverviewActionGroup}>
-                      <Pressable style={styles.assetOverviewActionButton} onPress={openHeroImageModal}>
-                        <MaterialIcons name="image" size={16} color={AppPalette.brandLight} />
-                        <ThemedText style={styles.assetOverviewActionText}>背景</ThemedText>
-                      </Pressable>
                       <Pressable style={styles.assetOverviewActionButton} onPress={openAssetModal}>
-                        <MaterialIcons name="edit" size={16} color={AppPalette.brandLight} />
+                        <MaterialIcons name="edit" size={16} color={palette.brandLight} />
                         <ThemedText style={styles.assetOverviewActionText}>设置</ThemedText>
                       </Pressable>
                     </View>
@@ -1200,11 +1103,11 @@ export default function AccountingScreen() {
                   <View style={styles.assetBillLinkRow}>
                     <Pressable style={styles.assetBillLinkButton} onPress={() => openBillPeriodModal('year')}>
                       <ThemedText style={styles.assetBillLinkText}>年账单</ThemedText>
-                      <MaterialIcons name="chevron-right" size={18} color={AppPalette.textMuted} />
+                      <MaterialIcons name="chevron-right" size={18} color={palette.textMuted} />
                     </Pressable>
                     <Pressable style={styles.assetBillLinkButton} onPress={() => openBillPeriodModal('month')}>
                       <ThemedText style={styles.assetBillLinkText}>月账单</ThemedText>
-                      <MaterialIcons name="chevron-right" size={18} color={AppPalette.textMuted} />
+                      <MaterialIcons name="chevron-right" size={18} color={palette.textMuted} />
                     </Pressable>
                   </View>
 
@@ -1250,7 +1153,7 @@ export default function AccountingScreen() {
                 <View style={styles.assetSearchCard}>
                   <ThemedText style={styles.assetSearchTitle}>{securityName}</ThemedText>
                   <Pressable style={styles.assetSearchBox} onPress={openAssetSearchModal}>
-                    <MaterialIcons name="search" size={20} color={AppPalette.textMuted} />
+                    <MaterialIcons name="search" size={20} color={palette.textMuted} />
                     <ThemedText style={styles.assetSearchPlaceholder}>
                       {selectedSecurity ? `${selectedSecurity.code} · ${selectedSecurity.type}` : '搜索股票/基金'}
                     </ThemedText>
@@ -1336,7 +1239,7 @@ export default function AccountingScreen() {
                                   height={candle.bodyHeight}
                                   rx="1.4"
                                   fill={candleColor}
-                                  stroke={isSelectedCandle ? '#0F172A' : candleColor}
+                                  stroke={isSelectedCandle ? palette.text : candleColor}
                                   strokeWidth={isSelectedCandle ? '1.6' : '0'}
                                   onPress={() => setSelectedSecurityCandle(candle)}
                                 />
@@ -1403,7 +1306,7 @@ export default function AccountingScreen() {
                     </View>
                   ) : (
                     <View style={styles.assetTrendEmpty}>
-                      <MaterialIcons name="show-chart" size={26} color="#94A3B8" />
+                      <MaterialIcons name="show-chart" size={26} color={palette.textMuted} />
                       <ThemedText style={styles.assetTrendEmptyText}>搜索并选择股票/基金后查看走势图</ThemedText>
                     </View>
                   )}
@@ -1413,28 +1316,30 @@ export default function AccountingScreen() {
               <>
                 <View style={styles.header}>
                   <Pressable style={styles.iconButton} onPress={() => router.back()}>
-                    <MaterialIcons name="arrow-back" size={24} color={AppPalette.text} />
+                    <MaterialIcons name="arrow-back" size={24} color={palette.text} />
                   </Pressable>
 
                   <Pressable style={styles.monthBadge} onPress={() => openBillPeriodModal(billQueryScope)}>
                     <ThemedText style={styles.monthText}>{currentBillPeriodLabel}</ThemedText>
-                    <MaterialIcons name="keyboard-arrow-down" size={18} color={AppPalette.text} />
+                    <MaterialIcons name="keyboard-arrow-down" size={18} color={palette.text} />
                   </Pressable>
 
                   <View style={styles.headerActions}>
                     <View style={styles.iconButton}>
-                      <MaterialIcons name="calendar-today" size={21} color={AppPalette.text} />
+                      <MaterialIcons name="calendar-today" size={21} color={palette.text} />
                     </View>
                     <View style={styles.iconButton}>
-                      <MaterialIcons name="insert-chart-outlined" size={22} color={AppPalette.text} />
+                      <MaterialIcons name="insert-chart-outlined" size={22} color={palette.text} />
                     </View>
                   </View>
                 </View>
 
+                {/*
+                 * 渲染位置: 账单页顶部结余概览卡片
+                 * 展示内容: 当前查询范围的结余、收入和支出摘要，不再提供自定义图片设置
+                 * 数据来源: billQueryScope、monthlyBalance、monthlySummaryText、monthlyBalanceText
+                 */}
                 <View style={styles.heroCard}>
-                  <Image source={heroImageSource} contentFit="cover" style={styles.heroImage} />
-                  <View style={styles.heroOverlay} />
-
                   <View style={styles.heroContent}>
                     <View style={styles.heroTopRow}>
                       <View>
@@ -1443,24 +1348,6 @@ export default function AccountingScreen() {
                         </ThemedText>
                         <ThemedText style={styles.heroBalance}>¥{monthlyBalance.toFixed(2)}</ThemedText>
                       </View>
-
-                      {/*
-                       * 渲染位置: 顶部背景卡片右上角
-                       * 展示内容: 背景设置入口，点击后打开图片来源选择对话框
-                       * 数据来源: useState 中的 heroImageUri 与内置 HERO_IMAGE
-                       */}
-                      <Pressable
-                        accessibilityRole="button"
-                        disabled={isSavingHeroImage}
-                        onPress={openHeroImageModal}
-                        style={({ pressed }) => [
-                          styles.heroTag,
-                          pressed && styles.heroTagPressed,
-                          isSavingHeroImage && styles.heroTagDisabled,
-                        ]}>
-                        <ThemedText style={styles.heroTagText}>背景设置</ThemedText>
-                        <MaterialIcons name="chevron-right" size={16} color="#525252" />
-                      </Pressable>
                     </View>
                     <View style={styles.heroSummaryRow}>
                       <ThemedText style={styles.heroSummary}>{monthlySummaryText}</ThemedText>
@@ -1473,7 +1360,7 @@ export default function AccountingScreen() {
                   <View style={styles.cardHeader}>
                     <ThemedText style={styles.cardTitle}>预算</ThemedText>
                     <Pressable style={styles.budgetEditButton} onPress={openBudgetModal}>
-                      <MaterialIcons name="edit" size={16} color="#3B82F6" />
+                      <MaterialIcons name="edit" size={16} color={palette.brandLight} />
                       <ThemedText style={styles.budgetEditText}>设置</ThemedText>
                     </Pressable>
                   </View>
@@ -1514,7 +1401,7 @@ export default function AccountingScreen() {
                       <ThemedText style={styles.cardTitle}>本周支出</ThemedText>
                       <ThemedText style={styles.cardSubtitle}>共计 ¥{weeklyTotal.toFixed(2)}</ThemedText>
                     </View>
-                    <MaterialIcons name="more-horiz" size={22} color="#9CA3AF" />
+                    <MaterialIcons name="more-horiz" size={22} color={palette.textMuted} />
                   </View>
 
                   <View style={styles.chart}>
@@ -1590,7 +1477,7 @@ export default function AccountingScreen() {
                   ))
                 ) : (
                   <View style={styles.emptyBillCard}>
-                    <MaterialIcons name="receipt-long" size={24} color="#94A3B8" />
+                    <MaterialIcons name="receipt-long" size={24} color={palette.textMuted} />
                     <ThemedText style={styles.emptyBillTitle}>暂无{currentBillPeriodLabel}账单</ThemedText>
                     <ThemedText style={styles.emptyBillText}>
                       点击资产页的年账单或月账单可选择其他时间段查询。
@@ -1637,7 +1524,7 @@ export default function AccountingScreen() {
               当前账单：{selectedEntryAction?.title ?? '未命名账单'}
             </ThemedText>
             <Pressable style={styles.actionSheetButton} onPress={handleStartEditEntry}>
-              <MaterialIcons name="edit-note" size={20} color="#2563EB" />
+              <MaterialIcons name="edit-note" size={20} color={palette.brandLight} />
               <ThemedText style={styles.actionSheetButtonText}>更改</ThemedText>
             </Pressable>
             <Pressable
@@ -1733,9 +1620,10 @@ export default function AccountingScreen() {
               value={budgetInput}
               onChangeText={handleBudgetInputChange}
               placeholder="请输入本月预算"
-              placeholderTextColor="#A3A3A3"
+              placeholderTextColor={palette.textSubtle}
               keyboardType="decimal-pad"
               style={[styles.budgetInput, budgetInputError ? styles.budgetInputError : null]}
+              underlineColorAndroid="transparent"
             />
             {budgetInputError ? (
               <ThemedText style={styles.errorText}>{budgetInputError}</ThemedText>
@@ -1776,9 +1664,10 @@ export default function AccountingScreen() {
               value={assetInput}
               onChangeText={handleAssetInputChange}
               placeholder="请输入总资产"
-              placeholderTextColor="#A3A3A3"
+              placeholderTextColor={palette.textSubtle}
               keyboardType="numbers-and-punctuation"
               style={[styles.budgetInput, assetInputError ? styles.budgetInputError : null]}
+              underlineColorAndroid="transparent"
             />
             {assetInputError ? (
               <ThemedText style={styles.errorText}>{assetInputError}</ThemedText>
@@ -1818,19 +1707,20 @@ export default function AccountingScreen() {
             <View style={styles.assetSearchModalHeader}>
               <ThemedText style={styles.assetSearchModalTitle}>搜索股票/基金</ThemedText>
               <Pressable style={styles.assetSearchModalClose} onPress={closeAssetSearchModal}>
-                <MaterialIcons name="close" size={20} color="#475569" />
+                <MaterialIcons name="close" size={20} color={palette.textMuted} />
               </Pressable>
             </View>
 
             <View style={styles.assetSearchModalInputBox}>
-              <MaterialIcons name="search" size={20} color="#6B7280" />
+              <MaterialIcons name="search" size={20} color={palette.textMuted} />
               <TextInput
                 value={assetSearchKeyword}
                 onChangeText={setAssetSearchKeyword}
                 autoFocus
                 placeholder="输入名称、代码或类型"
-                placeholderTextColor="#9CA3AF"
+                placeholderTextColor={palette.textSubtle}
                 style={styles.assetSearchInput}
+                underlineColorAndroid="transparent"
               />
             </View>
 
@@ -1863,7 +1753,7 @@ export default function AccountingScreen() {
                 ))
               ) : (
                 <View style={styles.assetSearchEmpty}>
-                  <MaterialIcons name="search-off" size={26} color="#94A3B8" />
+                  <MaterialIcons name="search-off" size={26} color={palette.textMuted} />
                   <ThemedText style={styles.assetSearchEmptyText}>没有找到匹配的股票/基金</ThemedText>
                 </View>
               )}
@@ -1960,42 +1850,6 @@ export default function AccountingScreen() {
         </View>
       </Modal>
 
-      <Modal
-        transparent
-        visible={isHeroImageModalVisible}
-        animationType="fade"
-        onRequestClose={closeHeroImageModal}>
-        <View style={styles.modalBackdrop}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={closeHeroImageModal} />
-          {/*
-           * 渲染位置: 账单页中部背景图设置弹层
-           * 展示内容: “更改当前图片”标题，以及取消、打开图库、打开文件三个操作
-           * 数据来源: isHeroImageModalVisible、isSavingHeroImage
-           */}
-          <View style={styles.modalCard}>
-            <ThemedText style={styles.modalTitle}>更改当前图片</ThemedText>
-            <View style={styles.heroImageDialogActions}>
-              <Pressable style={styles.modalCancelButton} onPress={closeHeroImageModal}>
-                <ThemedText style={styles.modalCancelText}>取消</ThemedText>
-              </Pressable>
-              <View style={styles.heroImageDialogRightActions}>
-                <Pressable
-                  disabled={isSavingHeroImage}
-                  style={[styles.modalConfirmButton, isSavingHeroImage && styles.modalButtonDisabled]}
-                  onPress={() => void handleOpenGallery()}>
-                  <ThemedText style={styles.modalConfirmText}>打开图库</ThemedText>
-                </Pressable>
-                <Pressable
-                  disabled={isSavingHeroImage}
-                  style={[styles.modalConfirmButton, isSavingHeroImage && styles.modalButtonDisabled]}
-                  onPress={() => void handleOpenFile()}>
-                  <ThemedText style={styles.modalConfirmText}>打开文件</ThemedText>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </>
   );
 }

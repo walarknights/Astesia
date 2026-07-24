@@ -532,10 +532,11 @@ export function PersonalUserPanel() {
         visible={isAuthModalVisible}
         onRequestClose={closeAuthModal}>
         <KeyboardAvoidingView
-          // [变更] 修改前: 登录注册底部弹层没有参与键盘布局，邮箱和密码字段可能被直接覆盖
-          // [变更] 修改后: 原生端按键盘高度缩短弹层，并允许较长的注册表单纵向滚动
-          // [原因] 小屏设备在注册模式下无法同时容纳完整表单与软键盘
-          behavior={Platform.select({ android: 'height', ios: 'padding' })}
+          // [变更] 修改前: Android 使用 height 模式按键盘高度反复压缩底部登录弹层
+          // [变更] 修改后: 仅 iOS 启用 padding 避让，Android 交给系统键盘窗口处理
+          // [原因] 避免邮箱和密码输入聚焦时弹层循环重排造成上下跳动闪烁
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          enabled={Platform.OS === 'ios'}
           style={[styles.modalBackdrop, { backgroundColor: panelTheme.modalBackdrop }]}>
           <ScrollView
             bounces={false}

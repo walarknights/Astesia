@@ -1,10 +1,14 @@
 import { StyleSheet } from 'react-native';
-import { AppPalette } from '@/constants/theme';
+import {
+  PRODUCTIVITY_PALETTE,
+  type ProductivityPalette,
+} from '@/constants/productivity-theme';
 
-// [变更] 修改前: 账单录入使用浅灰页面和白色表单卡片
-// [变更] 修改后: 使用深色玻璃表单与靛青选中态
-// [原因] 保持录入流程不变，并与记账首页统一视觉
-export const styles = StyleSheet.create({
+export function createAccountingEntryStyles(AppPalette: ProductivityPalette) {
+  return StyleSheet.create({
+  // [变更] 修改前: 账单录入页固定引用深色 AppPalette
+  // [变更] 修改后: 表单、选择器、日期时间弹层由当前主题色板生成
+  // [原因] 浅色模式下录入页不能继续显示深色背景和高亮描边
   safeArea: {
     flex: 1,
     backgroundColor: AppPalette.background,
@@ -108,7 +112,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 26,
-    backgroundColor: 'rgba(99, 102, 241, 0.16)',
+    backgroundColor: AppPalette.brandSoft,
   },
   summaryTextGroup: {
     flex: 1,
@@ -173,8 +177,8 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderLeftWidth: StyleSheet.hairlineWidth,
-    borderLeftColor: '#D4D4D4',
-    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    borderLeftColor: AppPalette.divider,
+    backgroundColor: AppPalette.brandSoft,
   },
   remarkInput: {
     minHeight: 88,
@@ -198,7 +202,7 @@ export const styles = StyleSheet.create({
   },
   modalRoot: {
     flex: 1,
-    backgroundColor: 'rgba(2, 2, 8, 0.74)',
+    backgroundColor: AppPalette.overlay,
   },
   modalBackdrop: {
     flex: 1,
@@ -256,7 +260,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 19,
-    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    backgroundColor: AppPalette.brandSoft,
   },
   datePickerMonthText: {
     fontSize: 17,
@@ -291,7 +295,7 @@ export const styles = StyleSheet.create({
   },
   dateGridItemActive: {
     borderRadius: 12,
-    backgroundColor: 'rgba(99, 102, 241, 0.22)',
+    backgroundColor: AppPalette.brandSoft,
   },
   dateGridItemText: {
     fontSize: 15,
@@ -317,7 +321,7 @@ export const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    backgroundColor: AppPalette.brandSoft,
   },
   clockNowButtonText: {
     fontSize: 14,
@@ -345,7 +349,7 @@ export const styles = StyleSheet.create({
     backgroundColor: AppPalette.surfaceSoft,
   },
   clockOptionActive: {
-    backgroundColor: 'rgba(99, 102, 241, 0.22)',
+    backgroundColor: AppPalette.brandSoft,
   },
   clockOptionText: {
     fontSize: 15,
@@ -383,7 +387,7 @@ export const styles = StyleSheet.create({
     backgroundColor: AppPalette.surfaceSoft,
   },
   incomeExpenseOptionActive: {
-    backgroundColor: 'rgba(99, 102, 241, 0.22)',
+    backgroundColor: AppPalette.brandSoft,
   },
   incomeExpenseOptionText: {
     fontSize: 16,
@@ -418,7 +422,7 @@ export const styles = StyleSheet.create({
     backgroundColor: AppPalette.surfaceSoft,
   },
   billTypeIconCircleActive: {
-    backgroundColor: 'rgba(99, 102, 241, 0.22)',
+    backgroundColor: AppPalette.brandSoft,
   },
   billTypeOptionLabel: {
     fontSize: 14,
@@ -429,4 +433,7 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
     color: AppPalette.brandLight,
   },
-});
+  });
+}
+
+export const styles = createAccountingEntryStyles(PRODUCTIVITY_PALETTE.dark);
