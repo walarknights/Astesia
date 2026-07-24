@@ -235,7 +235,10 @@ export default function AccountManagementScreen() {
         style={styles.gradientBackground}>
         <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            // [变更] 修改前: 仅 iOS 启用键盘避让，Android 页面底部的邮箱和密码输入可能被遮挡
+            // [变更] 修改后: Android 缩短表单可用高度，由内部滚动容器将聚焦输入框移入可视区
+            // [原因] 账号表单较长，需要让所有平台都能在键盘弹出后继续滚动到当前字段
+            behavior={Platform.select({ android: 'height', ios: 'padding' })}
             style={styles.keyboardAvoidingView}>
             <View style={styles.header}>
               <Pressable accessibilityRole="button" style={styles.iconButton} onPress={() => router.back()}>
@@ -246,6 +249,8 @@ export default function AccountManagementScreen() {
             </View>
 
             <ScrollView
+              automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.scrollContent}>

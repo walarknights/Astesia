@@ -4,9 +4,10 @@ import * as DocumentPicker from 'expo-document-picker';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import {
   Alert,
+  KeyboardAvoidingView,
   Linking,
   Modal,
   Platform,
@@ -21,6 +22,11 @@ import { AstesiaLogo } from '@/components/AstesiaLogo';
 import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { PersonalUserPanel } from '@/components/PersonalUserPanel';
 import { ThemedText } from '@/components/themed-text';
+import {
+  getPersonalSurfacePalette,
+  PERSONAL_SURFACE_PALETTE,
+  type PersonalSurfacePalette,
+} from '@/constants/personal-theme';
 import { AppPalette, Fonts } from '@/constants/theme';
 import {
   loadPersonalBackgroundImageUri,
@@ -98,9 +104,15 @@ const BACKGROUND_OPTIONS: ChoiceOption<PersonalBackground>[] = [
 const FEEDBACK_EMAIL = '13062323959@163.com';
 const FEEDBACK_SUBJECT = 'Astesia Feedback';
 
+const PersonalSurfaceThemeContext = createContext<PersonalSurfacePalette>(PERSONAL_SURFACE_PALETTE.dark);
+
+function usePersonalSurfaceTheme() {
+  return useContext(PersonalSurfaceThemeContext);
+}
+
 export default function PersonalScreen() {
   const router = useRouter();
-  const { settings, updateSettings, resetSettings } = useAppSettings();
+  const { settings, updateSettings, resetSettings, resolvedColorScheme } = useAppSettings();
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [importText, setImportText] = useState('');
   const [appContentBlocks, setAppContentBlocks] = useState(DEFAULT_APP_CONTENT_BLOCKS);
@@ -112,6 +124,7 @@ export default function PersonalScreen() {
   const backgroundImage = settings.personalBackground === 'custom' && customBackgroundImageUri
     ? { uri: customBackgroundImageUri }
     : BACKGROUND_IMAGES[selectedBuiltInBackground];
+  const personalTheme = getPersonalSurfacePalette(resolvedColorScheme);
 
   useEffect(() => {
     let active = true;
@@ -439,9 +452,12 @@ export default function PersonalScreen() {
   };
 
   return (
-    <>
+    <PersonalSurfaceThemeContext.Provider value={personalTheme}>
       <ParallaxScrollView
-        headerBackgroundColor={{ light: AppPalette.background, dark: AppPalette.background }}
+        headerBackgroundColor={{
+          light: PERSONAL_SURFACE_PALETTE.light.headerBackground,
+          dark: PERSONAL_SURFACE_PALETTE.dark.headerBackground,
+        }}
         headerImage={
           <View style={styles.headerImage}>
             {/*
@@ -454,7 +470,7 @@ export default function PersonalScreen() {
               contentFit="cover"
               style={[StyleSheet.absoluteFillObject, styles.weatherBackgroundImage]}
             />
-            <View style={styles.headerOverlay} />
+            <View style={[styles.headerOverlay, { backgroundColor: personalTheme.headerOverlay }]} />
             <View style={styles.headerContent}>
               <View style={styles.logoWrapper}>
                 <AstesiaLogo size={112} />
@@ -594,32 +610,67 @@ export default function PersonalScreen() {
       </ParallaxScrollView>
 
       <Modal animationType="slide" transparent visible={dialog !== null} onRequestClose={() => setDialog(null)}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
+        <KeyboardAvoidingView
+          // [变更] 修改前: 数据导入弹层固定在屏幕底部，长文本输入区可能被键盘遮住
+          // [变更] 修改后: 原生端按键盘高度收缩弹层，内部内容继续支持滚动
+          // [原因] 导入 JSON 时需要持续看到当前编辑位置和确认按钮
+          behavior={Platform.select({ android: 'height', ios: 'padding' })}
+          style={[styles.modalBackdrop, { backgroundColor: personalTheme.modalBackdrop }]}>
+          <View
+            style={[
+              styles.modalCard,
+              {
+                borderColor: personalTheme.cardBorder,
+                backgroundColor: personalTheme.modalBackground,
+              },
+            ]}>
             <View style={styles.modalHeader}>
-              <ThemedText type="subtitle" style={styles.modalTitle}>
+              <ThemedText type="subtitle" style={[styles.modalTitle, { color: personalTheme.text }]}>
                 {dialog?.title}
               </ThemedText>
               <Pressable accessibilityRole="button" hitSlop={8} onPress={() => setDialog(null)}>
-                <MaterialIcons name="close" size={24} color={AppPalette.textMuted} />
+                <MaterialIcons name="close" size={24} color={personalTheme.icon} />
               </Pressable>
             </View>
-            <ScrollView style={styles.modalScroll}>
+            <ScrollView
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              keyboardShouldPersistTaps="handled"
+              style={styles.modalScroll}>
               {dialog?.editable ? (
                 <>
-                  <ThemedText style={styles.modalCopy}>{dialog.content}</ThemedText>
+                  <ThemedText style={[styles.modalCopy, { color: personalTheme.textMuted }]}>
+                    {dialog.content}
+                  </ThemedText>
                   <TextInput
                     multiline
                     value={importText}
                     onChangeText={setImportText}
                     placeholder="粘贴 JSON 数据"
-                    placeholderTextColor="#94A3B8"
-                    style={styles.importInput}
+                    placeholderTextColor={personalTheme.placeholder}
+                    style={[
+                      styles.importInput,
+                      {
+                        borderColor: personalTheme.inputBorder,
+                        color: personalTheme.text,
+                        backgroundColor: personalTheme.inputBackground,
+                      },
+                    ]}
                     textAlignVertical="top"
                   />
                 </>
               ) : (
-                <TextInput multiline editable={false} value={dialog?.content ?? ''} style={styles.exportOutput} />
+                <TextInput
+                  multiline
+                  editable={false}
+                  value={dialog?.content ?? ''}
+                  style={[
+                    styles.exportOutput,
+                    {
+                      color: personalTheme.textMuted,
+                      backgroundColor: personalTheme.inputBackground,
+                    },
+                  ]}
+                />
               )}
             </ScrollView>
             {dialog?.editable ? (
@@ -628,7 +679,7 @@ export default function PersonalScreen() {
               </Pressable>
             ) : null}
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal
@@ -636,21 +687,28 @@ export default function PersonalScreen() {
         visible={isBackgroundModalVisible}
         animationType="fade"
         onRequestClose={closeBackgroundModal}>
-        <View style={styles.modalBackdrop}>
+        <View style={[styles.modalBackdrop, { backgroundColor: personalTheme.modalBackdrop }]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={closeBackgroundModal} />
           {/*
            * 渲染位置: 个人页背景设置弹层
            * 展示内容: 内置背景选择，以及打开图库/打开文件上传自定义背景
            * 数据来源: settings.personalBackground、customBackgroundImageUri、isSavingBackgroundImage
            */}
-          <View style={styles.modalCard}>
+          <View
+            style={[
+              styles.modalCard,
+              {
+                borderColor: personalTheme.cardBorder,
+                backgroundColor: personalTheme.modalBackground,
+              },
+            ]}>
             <View style={styles.modalHeader}>
-              <ThemedText type="subtitle" style={styles.modalTitle}>背景设置</ThemedText>
+              <ThemedText type="subtitle" style={[styles.modalTitle, { color: personalTheme.text }]}>背景设置</ThemedText>
               <Pressable accessibilityRole="button" hitSlop={8} onPress={closeBackgroundModal}>
-                <MaterialIcons name="close" size={24} color={AppPalette.textMuted} />
+                <MaterialIcons name="close" size={24} color={personalTheme.icon} />
               </Pressable>
             </View>
-            <ThemedText style={styles.backgroundModalDescription}>
+            <ThemedText style={[styles.backgroundModalDescription, { color: personalTheme.textMuted }]}>
               选择内置背景，或上传一张自己的图片作为个人页顶部背景。
             </ThemedText>
             <View style={styles.backgroundOptionGrid}>
@@ -660,13 +718,25 @@ export default function PersonalScreen() {
                   accessibilityRole="button"
                   style={[
                     styles.backgroundOptionButton,
-                    settings.personalBackground === option.value ? styles.backgroundOptionButtonActive : null,
+                    {
+                      borderColor: personalTheme.cardBorder,
+                      backgroundColor: personalTheme.chipBackground,
+                    },
+                    settings.personalBackground === option.value
+                      ? {
+                          borderColor: personalTheme.chipActiveBorder,
+                          backgroundColor: personalTheme.chipActiveBackground,
+                        }
+                      : null,
                   ]}
                   onPress={() => handleSelectBuiltInBackground(option.value)}>
                   <ThemedText
                     style={[
                       styles.backgroundOptionText,
-                      settings.personalBackground === option.value ? styles.backgroundOptionTextActive : null,
+                      { color: personalTheme.textMuted },
+                      settings.personalBackground === option.value
+                        ? { color: personalTheme.chipActiveText }
+                        : null,
                     ]}>
                     {option.label}
                   </ThemedText>
@@ -674,8 +744,10 @@ export default function PersonalScreen() {
               ))}
             </View>
             <View style={styles.backgroundUploadActions}>
-              <Pressable style={styles.modalCancelButton} onPress={closeBackgroundModal}>
-                <ThemedText style={styles.modalCancelText}>取消</ThemedText>
+              <Pressable
+                style={[styles.modalCancelButton, { backgroundColor: personalTheme.softButtonBackground }]}
+                onPress={closeBackgroundModal}>
+                <ThemedText style={[styles.modalCancelText, { color: personalTheme.textMuted }]}>取消</ThemedText>
               </Pressable>
               <View style={styles.backgroundUploadRightActions}>
                 <Pressable
@@ -695,17 +767,30 @@ export default function PersonalScreen() {
           </View>
         </View>
       </Modal>
-    </>
+    </PersonalSurfaceThemeContext.Provider>
   );
 }
 
-function SettingSection({ title, children }: { title: string; children: React.ReactNode }) {
+function SettingSection({ title, children }: { title: string; children: ReactNode }) {
+  const personalTheme = usePersonalSurfaceTheme();
+
   return (
     <View style={styles.section}>
-      <ThemedText type="subtitle" style={styles.sectionTitle}>
+      <ThemedText type="subtitle" style={[styles.sectionTitle, { color: personalTheme.text }]}>
         {title}
       </ThemedText>
-      <View style={styles.sectionCard}>{children}</View>
+      <View
+        style={[
+          styles.sectionCard,
+          {
+            borderColor: personalTheme.cardBorder,
+            backgroundColor: personalTheme.cardBackground,
+            shadowColor: personalTheme.shadowColor,
+            shadowOpacity: personalTheme.cardShadowOpacity,
+          },
+        ]}>
+        {children}
+      </View>
     </View>
   );
 }
@@ -723,16 +808,41 @@ function SettingButton({
   danger?: boolean;
   onPress: () => void;
 }) {
+  const personalTheme = usePersonalSurfaceTheme();
+
   return (
-    <Pressable accessibilityRole="button" style={styles.settingRow} onPress={onPress}>
-      <View style={[styles.iconBadge, danger ? styles.dangerIconBadge : undefined]}>
-        <MaterialIcons name={icon} size={22} color={danger ? '#DC2626' : '#ffffffff'} />
+    <Pressable
+      accessibilityRole="button"
+      style={[styles.settingRow, { borderBottomColor: personalTheme.divider }]}
+      onPress={onPress}>
+      <View
+        style={[
+          styles.iconBadge,
+          {
+            backgroundColor: danger
+              ? personalTheme.dangerIconBadgeBackground
+              : personalTheme.iconBadgeBackground,
+          },
+        ]}>
+        <MaterialIcons
+          name={icon}
+          size={22}
+          color={danger ? personalTheme.dangerText : personalTheme.iconBadgeColor}
+        />
       </View>
       <View style={styles.settingCopy}>
-        <ThemedText style={[styles.settingTitle, danger ? styles.dangerText : undefined]}>{title}</ThemedText>
-        <ThemedText style={styles.settingDescription}>{description}</ThemedText>
+        <ThemedText
+          style={[
+            styles.settingTitle,
+            { color: danger ? personalTheme.dangerText : personalTheme.text },
+          ]}>
+          {title}
+        </ThemedText>
+        <ThemedText style={[styles.settingDescription, { color: personalTheme.textMuted }]}>
+          {description}
+        </ThemedText>
       </View>
-      <MaterialIcons name="chevron-right" size={22} color="#94A3B8" />
+      <MaterialIcons name="chevron-right" size={22} color={personalTheme.icon} />
     </Pressable>
   );
 }

@@ -5,7 +5,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -15,8 +17,10 @@ import {
 
 import { AstesiaLogo } from '@/components/AstesiaLogo';
 import { ThemedText } from '@/components/themed-text';
+import { getPersonalSurfacePalette, type PersonalSurfacePalette } from '@/constants/personal-theme';
 import { PRIVACY_POLICY_CONTENT, PRIVACY_POLICY_TITLE } from '@/constants/privacy-policy';
 import { AppPalette, Fonts } from '@/constants/theme';
+import { useAppColorScheme } from '@/services/app-settings';
 import {
   getAiQuotaSummary,
   loadAuthSession,
@@ -39,6 +43,8 @@ const ARROW_ICON = require('@/assets/figma-icons/personal-user-panel/arrow-rise.
 
 export function PersonalUserPanel() {
   const router = useRouter();
+  const colorScheme = useAppColorScheme();
+  const panelTheme = getPersonalSurfacePalette(colorScheme);
   const [session, setSession] = useState<AuthSession | null>(null);
   const [quotaSummary, setQuotaSummary] = useState<AiQuotaSummary | null>(null);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
@@ -202,6 +208,21 @@ export function PersonalUserPanel() {
   // 说明: 未登录时不展示指标，已登录时透出计划与剩余额度
   const planLabel = `所属计划: ${sessionUser?.planName ?? '--'}`;
   const quotaLabel = `AI 剩余额度: ${getQuotaText(quotaSummary, isQuotaLoading)}`;
+  const cardSurfaceStyle = {
+    borderColor: panelTheme.cardBorder,
+    backgroundColor: panelTheme.cardBackground,
+    shadowColor: panelTheme.shadowColor,
+    shadowOpacity: panelTheme.cardShadowOpacity,
+  };
+  const modalSurfaceStyle = {
+    borderColor: panelTheme.cardBorder,
+    backgroundColor: panelTheme.modalBackground,
+  };
+  const inputSurfaceStyle = {
+    borderColor: panelTheme.inputBorder,
+    color: panelTheme.text,
+    backgroundColor: panelTheme.inputBackground,
+  };
 
   // [变更] 修改前: 登录 / 注册切换时仅重置验证码与密码，注册新增字段会残留在弹层里
   // [变更] 修改后: 统一在模式切换时重置验证码、密码、确认密码和显隐状态，登录态顺手清空注册用户名
@@ -397,20 +418,26 @@ export function PersonalUserPanel() {
            * 展示内容: 已登录用户的头像、昵称、所属计划、AI 剩余额度和账号管理入口
            * 数据来源: auth-session 中的本地会话与 AI 额度摘要接口
            */}
-          <View style={styles.card}>
+          <View style={[styles.card, cardSurfaceStyle]}>
             <View style={styles.headerRow}>
               {sessionUser.avatarUrl ? (
-                <Image source={{ uri: sessionUser.avatarUrl }} contentFit="cover" style={styles.avatarImage} />
+                <Image
+                  source={{ uri: sessionUser.avatarUrl }}
+                  contentFit="cover"
+                  style={[styles.avatarImage, { backgroundColor: panelTheme.avatarBackground }]}
+                />
               ) : (
-                <View style={styles.avatarFallback}>
-                  <ThemedText style={styles.avatarFallbackText}>{avatarFallbackText}</ThemedText>
+                <View style={[styles.avatarFallback, { backgroundColor: panelTheme.avatarBackground }]}>
+                  <ThemedText style={[styles.avatarFallbackText, { color: panelTheme.brandLight }]}>
+                    {avatarFallbackText}
+                  </ThemedText>
                 </View>
               )}
               <View style={styles.headerTextGroup}>
-                <ThemedText numberOfLines={1} style={styles.userNameText}>
+                <ThemedText numberOfLines={1} style={[styles.userNameText, { color: panelTheme.text }]}>
                   {sessionUser.name}
                 </ThemedText>
-                <ThemedText numberOfLines={1} style={styles.userSubtitleText}>
+                <ThemedText numberOfLines={1} style={[styles.userSubtitleText, { color: panelTheme.textMuted }]}>
                   {subtitleText}
                 </ThemedText>
               </View>
@@ -422,18 +449,18 @@ export function PersonalUserPanel() {
              * 数据来源: sessionUser.planName 与 quotaSummary
              */}
             <View style={styles.metricsRow}>
-              <ThemedText numberOfLines={1} style={styles.metricText}>
+              <ThemedText numberOfLines={1} style={[styles.metricText, { color: panelTheme.textMuted }]}>
                 {planLabel}
               </ThemedText>
               <View style={styles.quotaMetric}>
-                {isQuotaLoading ? <ActivityIndicator size="small" color="#111111" /> : null}
-                <ThemedText numberOfLines={1} style={styles.metricText}>
+                {isQuotaLoading ? <ActivityIndicator size="small" color={panelTheme.text} /> : null}
+                <ThemedText numberOfLines={1} style={[styles.metricText, { color: panelTheme.textMuted }]}>
                   {quotaLabel}
                 </ThemedText>
               </View>
             </View>
 
-            <View style={styles.divider} />
+            <View style={[styles.divider, { backgroundColor: panelTheme.divider }]} />
 
             {/*
              * 渲染位置: 用户信息卡底部操作区
@@ -442,10 +469,18 @@ export function PersonalUserPanel() {
              */}
             <Pressable accessibilityRole="button" style={styles.footerRow} onPress={handleManageAccount}>
               <View style={styles.footerLeft}>
-                <Image source={SETTINGS_ICON} contentFit="contain" style={styles.footerSettingsIcon} />
-                <ThemedText style={styles.footerText}>个人账号管理</ThemedText>
+                <Image
+                  source={SETTINGS_ICON}
+                  contentFit="contain"
+                  style={[styles.footerSettingsIcon, { tintColor: panelTheme.icon }]}
+                />
+                <ThemedText style={[styles.footerText, { color: panelTheme.textMuted }]}>个人账号管理</ThemedText>
               </View>
-              <Image source={ARROW_ICON} contentFit="contain" style={styles.footerArrowIcon} />
+              <Image
+                source={ARROW_ICON}
+                contentFit="contain"
+                style={[styles.footerArrowIcon, { tintColor: panelTheme.icon }]}
+              />
             </Pressable>
           </View>
         </>
@@ -459,7 +494,12 @@ export function PersonalUserPanel() {
           <Pressable
             accessibilityRole="button"
             disabled={isBootstrapping}
-            style={[styles.card, styles.loggedOutCard, isBootstrapping ? styles.buttonDisabled : null]}
+            style={[
+              styles.card,
+              cardSurfaceStyle,
+              styles.loggedOutCard,
+              isBootstrapping ? styles.buttonDisabled : null,
+            ]}
             onPress={() => openAuthModal('login')}>
             <View style={styles.loggedOutContent}>
               <View style={styles.loggedOutLogoWrap}>
@@ -470,14 +510,14 @@ export function PersonalUserPanel() {
                   numberOfLines={1}
                   adjustsFontSizeToFit
                   minimumFontScale={0.85}
-                  style={styles.loggedOutTitle}>
+                  style={[styles.loggedOutTitle, { color: panelTheme.text }]}>
                   登录Astesia
                 </ThemedText>
                 <ThemedText
                   numberOfLines={1}
                   adjustsFontSizeToFit
                   minimumFontScale={0.85}
-                  style={styles.loggedOutSubtitle}>
+                  style={[styles.loggedOutSubtitle, { color: panelTheme.textMuted }]}>
                   开启自己的本地生活管理
                 </ThemedText>
               </View>
@@ -491,14 +531,26 @@ export function PersonalUserPanel() {
         transparent
         visible={isAuthModalVisible}
         onRequestClose={closeAuthModal}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
+        <KeyboardAvoidingView
+          // [变更] 修改前: 登录注册底部弹层没有参与键盘布局，邮箱和密码字段可能被直接覆盖
+          // [变更] 修改后: 原生端按键盘高度缩短弹层，并允许较长的注册表单纵向滚动
+          // [原因] 小屏设备在注册模式下无法同时容纳完整表单与软键盘
+          behavior={Platform.select({ android: 'height', ios: 'padding' })}
+          style={[styles.modalBackdrop, { backgroundColor: panelTheme.modalBackdrop }]}>
+          <ScrollView
+            bounces={false}
+            contentContainerStyle={styles.authModalScrollContent}
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            style={styles.authModalScroll}>
+            <View style={[styles.modalCard, modalSurfaceStyle]}>
             <View style={styles.modalHeader}>
-              <ThemedText type="subtitle" style={styles.modalTitle}>
+              <ThemedText type="subtitle" style={[styles.modalTitle, { color: panelTheme.text }]}>
                 {authMode === 'register' ? '邮箱注册' : '邮箱登录'}
               </ThemedText>
               <Pressable accessibilityRole="button" hitSlop={8} onPress={closeAuthModal}>
-                <MaterialIcons name="close" size={24} color="#334155" />
+                <MaterialIcons name="close" size={24} color={panelTheme.icon} />
               </Pressable>
             </View>
 
@@ -506,11 +558,13 @@ export function PersonalUserPanel() {
               <AuthModeButton
                 active={authMode === 'login'}
                 label="登录"
+                theme={panelTheme}
                 onPress={() => switchAuthMode('login')}
               />
               <AuthModeButton
                 active={authMode === 'register'}
                 label="注册"
+                theme={panelTheme}
                 onPress={() => switchAuthMode('register')}
               />
             </View>
@@ -525,8 +579,8 @@ export function PersonalUserPanel() {
                 <TextInput
                   maxLength={24}
                   placeholder="请输入用户名"
-                  placeholderTextColor="#94A3B8"
-                  style={styles.input}
+                  placeholderTextColor={panelTheme.placeholder}
+                  style={[styles.input, inputSurfaceStyle]}
                   value={authDisplayName}
                   onChangeText={setAuthDisplayName}
                 />
@@ -536,8 +590,8 @@ export function PersonalUserPanel() {
                 autoCapitalize="none"
                 keyboardType="email-address"
                 placeholder="请输入邮箱"
-                placeholderTextColor="#94A3B8"
-                style={styles.input}
+                placeholderTextColor={panelTheme.placeholder}
+                style={[styles.input, inputSurfaceStyle]}
                 value={authEmail}
                 onChangeText={setAuthEmail}
               />
@@ -553,8 +607,8 @@ export function PersonalUserPanel() {
                     keyboardType="number-pad"
                     maxLength={6}
                     placeholder="请输入验证码"
-                    placeholderTextColor="#94A3B8"
-                    style={[styles.input, styles.verificationInput]}
+                    placeholderTextColor={panelTheme.placeholder}
+                    style={[styles.input, inputSurfaceStyle, styles.verificationInput]}
                     value={authVerificationCode}
                     onChangeText={setAuthVerificationCode}
                   />
@@ -573,6 +627,7 @@ export function PersonalUserPanel() {
               <PasswordInputField
                 isVisible={isPasswordVisible}
                 placeholder={authMode === 'register' ? '请设置登录密码' : '请输入登录密码'}
+                theme={panelTheme}
                 value={authPassword}
                 onChangeText={setAuthPassword}
                 onToggleVisibility={() => setIsPasswordVisible((currentValue) => !currentValue)}
@@ -582,6 +637,7 @@ export function PersonalUserPanel() {
                 <PasswordInputField
                   isVisible={isConfirmPasswordVisible}
                   placeholder="请再次输入登录密码"
+                  theme={panelTheme}
                   value={authConfirmPassword}
                   onChangeText={setAuthConfirmPassword}
                   onToggleVisibility={() => setIsConfirmPasswordVisible((currentValue) => !currentValue)}
@@ -589,7 +645,7 @@ export function PersonalUserPanel() {
               ) : null}
             </View>
 
-            <ThemedText style={styles.formHelpText}>
+            <ThemedText style={[styles.formHelpText, { color: panelTheme.textMuted }]}>
               {authMode === 'register'
                 ? '注册使用用户名 + 邮箱 + 验证码，完成后后续使用邮箱 + 密码登录。'
                 : '登录成功后会展示用户头像、所属计划和当前 AI 剩余额度。'}
@@ -608,16 +664,25 @@ export function PersonalUserPanel() {
                 hitSlop={8}
                 style={[
                   styles.privacyCheckbox,
-                  hasAcceptedPrivacyPolicy ? styles.privacyCheckboxChecked : null,
+                  {
+                    borderColor: panelTheme.inputBorder,
+                    backgroundColor: panelTheme.inputBackground,
+                  },
+                  hasAcceptedPrivacyPolicy
+                    ? {
+                        borderColor: panelTheme.brand,
+                        backgroundColor: panelTheme.brand,
+                      }
+                    : null,
                 ]}
                 onPress={() => setHasAcceptedPrivacyPolicy((currentValue) => !currentValue)}>
                 {hasAcceptedPrivacyPolicy ? <MaterialIcons name="check" size={15} color="#FFFFFF" /> : null}
               </Pressable>
-              <ThemedText style={styles.privacyAgreementText}>
+              <ThemedText style={[styles.privacyAgreementText, { color: panelTheme.textMuted }]}>
                 我已阅读并同意
                 <ThemedText
                   accessibilityRole="button"
-                  style={styles.privacyLinkText}
+                  style={[styles.privacyLinkText, { color: panelTheme.brandLight }]}
                   onPress={() => setIsPrivacyPolicyVisible(true)}>
                   《隐私政策》
                 </ThemedText>
@@ -629,6 +694,7 @@ export function PersonalUserPanel() {
               disabled={isSubmitting || isBootstrapping}
               style={[
                 styles.submitButton,
+                { backgroundColor: panelTheme.brand },
                 (isSubmitting || isBootstrapping || !hasAcceptedPrivacyPolicy) ? styles.buttonDisabled : null,
               ]}
               onPress={() => void handleSubmitAuth()}>
@@ -636,8 +702,9 @@ export function PersonalUserPanel() {
                 {isSubmitting ? '提交中...' : authMode === 'register' ? '确认注册' : '确认登录'}
               </ThemedText>
             </Pressable>
-          </View>
-        </View>
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal
@@ -645,14 +712,14 @@ export function PersonalUserPanel() {
         transparent
         visible={isPrivacyPolicyVisible}
         onRequestClose={closePrivacyPolicy}>
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.modalCard, styles.privacyPolicyCard]}>
+        <View style={[styles.modalBackdrop, { backgroundColor: panelTheme.modalBackdrop }]}>
+          <View style={[styles.modalCard, modalSurfaceStyle, styles.privacyPolicyCard]}>
             <View style={styles.modalHeader}>
-              <ThemedText type="subtitle" style={styles.modalTitle}>
+              <ThemedText type="subtitle" style={[styles.modalTitle, { color: panelTheme.text }]}>
                 {privacyPolicyTitle}
               </ThemedText>
               <Pressable accessibilityRole="button" hitSlop={8} onPress={closePrivacyPolicy}>
-                <MaterialIcons name="close" size={24} color="#334155" />
+                <MaterialIcons name="close" size={24} color={panelTheme.icon} />
               </Pressable>
             </View>
             {/*
@@ -661,9 +728,14 @@ export function PersonalUserPanel() {
              * 数据来源: /api/app/content 响应，接口失败时回退 constants/privacy-policy.ts
              */}
             <ScrollView style={styles.privacyPolicyScroll} contentContainerStyle={styles.privacyPolicyContent}>
-              <ThemedText style={styles.privacyPolicyText}>{privacyPolicyContent}</ThemedText>
+              <ThemedText style={[styles.privacyPolicyText, { color: panelTheme.textMuted }]}>
+                {privacyPolicyContent}
+              </ThemedText>
             </ScrollView>
-            <Pressable accessibilityRole="button" style={styles.submitButton} onPress={closePrivacyPolicy}>
+            <Pressable
+              accessibilityRole="button"
+              style={[styles.submitButton, { backgroundColor: panelTheme.brand }]}
+              onPress={closePrivacyPolicy}>
               <ThemedText style={styles.submitButtonText}>我知道了</ThemedText>
             </Pressable>
           </View>
@@ -676,18 +748,29 @@ export function PersonalUserPanel() {
 function AuthModeButton({
   active,
   label,
+  theme,
   onPress,
 }: {
   active: boolean;
   label: string;
+  theme: PersonalSurfacePalette;
   onPress: () => void;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
-      style={[styles.modeSwitchButton, active ? styles.modeSwitchButtonActive : null]}
+      style={[
+        styles.modeSwitchButton,
+        { backgroundColor: theme.softButtonBackground },
+        active ? { backgroundColor: theme.brand } : null,
+      ]}
       onPress={onPress}>
-      <ThemedText style={[styles.modeSwitchButtonText, active ? styles.modeSwitchButtonTextActive : null]}>
+      <ThemedText
+        style={[
+          styles.modeSwitchButtonText,
+          { color: theme.textMuted },
+          active ? styles.modeSwitchButtonTextActive : null,
+        ]}>
         {label}
       </ThemedText>
     </Pressable>
@@ -697,18 +780,27 @@ function AuthModeButton({
 function PasswordInputField({
   isVisible,
   placeholder,
+  theme,
   value,
   onChangeText,
   onToggleVisibility,
 }: {
   isVisible: boolean;
   placeholder: string;
+  theme: PersonalSurfacePalette;
   value: string;
   onChangeText: (value: string) => void;
   onToggleVisibility: () => void;
 }) {
   return (
-    <View style={styles.passwordInputRow}>
+    <View
+      style={[
+        styles.passwordInputRow,
+        {
+          borderColor: theme.inputBorder,
+          backgroundColor: theme.inputBackground,
+        },
+      ]}>
       {/*
        * 渲染位置: 登录 / 注册弹层的密码输入行
        * 展示内容: 密码输入框与显示 / 隐藏密码按钮
@@ -719,8 +811,8 @@ function PasswordInputField({
         autoCorrect={false}
         secureTextEntry={!isVisible}
         placeholder={placeholder}
-        placeholderTextColor="#94A3B8"
-        style={styles.passwordTextInput}
+        placeholderTextColor={theme.placeholder}
+        style={[styles.passwordTextInput, { color: theme.text }]}
         value={value}
         onChangeText={onChangeText}
       />
@@ -730,7 +822,7 @@ function PasswordInputField({
         hitSlop={8}
         style={styles.passwordVisibilityButton}
         onPress={onToggleVisibility}>
-        <MaterialIcons name={isVisible ? 'visibility-off' : 'visibility'} size={20} color="#64748B" />
+        <MaterialIcons name={isVisible ? 'visibility-off' : 'visibility'} size={20} color={theme.icon} />
       </Pressable>
     </View>
   );
@@ -949,6 +1041,13 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-end',
     backgroundColor: 'rgba(2, 2, 8, 0.74)',
+  },
+  authModalScroll: {
+    flex: 1,
+  },
+  authModalScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'flex-end',
   },
   modalCard: {
     borderTopLeftRadius: 28,

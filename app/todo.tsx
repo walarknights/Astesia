@@ -722,10 +722,10 @@ function TodoEditorSheet({
   return (
     <Modal animationType="slide" statusBarTranslucent transparent visible={visible} onRequestClose={onClose}>
       <KeyboardAvoidingView
-        // [变更] 修改前: Android 使用 height 避让，多行输入框聚焦时会频繁重算布局
-        // [变更] 修改后: 仅在 iOS 使用 padding 避让，Android 保持底部弹层稳定
-        // [原因] 修复编辑页面输入时反复快速上下移动的问题
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        // [变更] 修改前: Android 完全关闭键盘避让，待办输入区可能停留在软键盘后方
+        // [变更] 修改后: Android 使用 padding 整体抬升底部弹层，不改变多行输入框自身高度
+        // [原因] 在避免键盘遮挡的同时，保留此前修复输入框反复上下跳动的稳定性
+        behavior={Platform.OS === 'web' ? undefined : 'padding'}
         style={styles.sheetOverlay}>
         <Pressable style={styles.sheetBackdrop} onPress={onClose} />
         <View style={styles.editorSheet}>

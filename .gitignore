@@ -5,10 +5,15 @@ node_modules/
 
 # Expo
 .expo/
+.eas-home/
+.eas-config/
+.eas-cache/
+.eas-data/
 .deploy/
 dist/
 web-build/
 expo-env.d.ts
+builds/
 
 # Native
 .kotlin/

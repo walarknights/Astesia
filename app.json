@@ -25,7 +25,8 @@
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.POST_NOTIFICATIONS",
-        "android.permission.READ_MEDIA_IMAGES"
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.RECORD_AUDIO"
       ],
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO",
@@ -40,6 +41,7 @@
     },
     "plugins": [
       "expo-router",
+      "./plugins/with-astesia-native-location",
       [
         "expo-location",
         {
@@ -75,6 +77,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "16cae9a8-abdd-4cae-8b3b-ee8dc5b68d68"
+      }
+    },
+    "owner": "walark"
   }
 }

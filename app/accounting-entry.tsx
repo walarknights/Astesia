@@ -3,7 +3,9 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { type ComponentProps, type ReactNode, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   TextInput,
@@ -395,7 +397,12 @@ export default function AccountingEntryScreen() {
     <>
       <Stack.Screen options={{ headerShown: false }} />
       <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-        <View style={styles.screen}>
+        <KeyboardAvoidingView
+          // [变更] 修改前: 账单录入页依赖系统窗口缩放，页面底部备注输入框仍可能被键盘覆盖
+          // [变更] 修改后: 原生端主动缩短页面高度，并让表单滚动到当前聚焦字段
+          // [原因] 备注位于长表单底部，需要显式联动键盘与滚动区域
+          behavior={Platform.select({ android: 'height', ios: 'padding' })}
+          style={styles.screen}>
           <View style={styles.header}>
             <Pressable style={styles.iconButton} onPress={() => router.back()}>
               <MaterialIcons name="arrow-back" size={24} color={AppPalette.text} />
@@ -419,8 +426,10 @@ export default function AccountingEntryScreen() {
           </View>
 
           <ScrollView
-            showsVerticalScrollIndicator={false}
+            automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
             keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
             contentContainerStyle={styles.scrollContent}>
             <View style={styles.card}>
               <View style={styles.summaryCard}>
@@ -713,7 +722,7 @@ export default function AccountingEntryScreen() {
               </Pressable>
             </View>
           </SelectorModal>
-        </View>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </>
   );

@@ -7,7 +7,17 @@ import { Stack, useRouter } from 'expo-router';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { Image } from 'expo-image';
-import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Line, Rect } from 'react-native-svg';
 import { styles } from '@/styles/accountStyle';
@@ -1708,7 +1718,12 @@ export default function AccountingScreen() {
       </Modal>
 
       <Modal transparent visible={isBudgetModalVisible} animationType="fade">
-        <View style={styles.modalBackdrop}>
+        <KeyboardAvoidingView
+          // [变更] 修改前: 预算金额弹层保持屏幕居中，键盘出现后可能覆盖输入与保存操作
+          // [变更] 修改后: 原生端使用键盘避让容器重新计算弹层可用高度
+          // [原因] 金额输入和操作按钮需要始终处于键盘上方
+          behavior={Platform.select({ android: 'height', ios: 'padding' })}
+          style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <ThemedText style={styles.modalTitle}>设置本月预算</ThemedText>
             <ThemedText style={styles.modalDescription}>
@@ -1739,11 +1754,13 @@ export default function AccountingScreen() {
               </Pressable>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal transparent visible={isAssetModalVisible} animationType="fade" onRequestClose={closeAssetModal}>
-        <View style={styles.modalBackdrop}>
+        <KeyboardAvoidingView
+          behavior={Platform.select({ android: 'height', ios: 'padding' })}
+          style={styles.modalBackdrop}>
           <Pressable style={StyleSheet.absoluteFill} onPress={closeAssetModal} />
           {/*
            * 渲染位置: 资产页中部设置弹层
@@ -1780,7 +1797,7 @@ export default function AccountingScreen() {
               </Pressable>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal
@@ -1788,7 +1805,9 @@ export default function AccountingScreen() {
         visible={isAssetSearchModalVisible}
         animationType="fade"
         onRequestClose={closeAssetSearchModal}>
-        <View style={styles.assetSearchModalBackdrop}>
+        <KeyboardAvoidingView
+          behavior={Platform.select({ android: 'height', ios: 'padding' })}
+          style={styles.assetSearchModalBackdrop}>
           <Pressable style={StyleSheet.absoluteFill} onPress={closeAssetSearchModal} />
           {/*
            * 渲染位置: 资产页居中搜索弹层
@@ -1850,7 +1869,7 @@ export default function AccountingScreen() {
               )}
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal

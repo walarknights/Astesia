@@ -19,6 +19,10 @@ import { ThemedView } from '@/components/themed-view';
 import { AppPalette } from '@/constants/theme';
 import { setCachedWeatherDashboard } from '@/services/weather-dashboard-store';
 import {
+  isAndroidNativeLocationAvailable,
+  requestAndroidNativePosition,
+} from '@/services/android-native-location';
+import {
   type WeatherDashboard,
   type WeatherSnapshot,
   type WeatherType,
@@ -58,6 +62,8 @@ const PLACEHOLDER_DASHBOARD: WeatherDashboard = {
 const LOCATION_REQUEST_TIMEOUT_MS = 10000;
 const LAST_KNOWN_POSITION_MAX_AGE_MS = 30 * 60 * 1000;
 const LAST_KNOWN_POSITION_REQUIRED_ACCURACY_METERS = 20000;
+const ANDROID_NATIVE_LOCATION_TIMEOUT_MS = 15000;
+const ANDROID_NATIVE_LOCATION_REQUIRED_ACCURACY_METERS = 50000;
 const WEB_GEOLOCATION_PERMISSION_DENIED = 1;
 const WEB_GEOLOCATION_POSITION_UNAVAILABLE = 2;
 const WEB_GEOLOCATION_TIMEOUT = 3;
@@ -472,7 +478,7 @@ async function requestLocationWeather() {
 }
 
 /**
- * 读取当前设备坐标，Web 端绕过 expo-location 的无超时权限探测，原生端保留 Expo 权限链路。
+ * 读取当前设备坐标，Web 端使用浏览器 API，Android 端优先使用原生 LocationManager。
  *
  * @returns 可用于城市级天气查询的经纬度坐标
  * @example
@@ -487,15 +493,13 @@ async function requestDevicePosition(): Promise<DevicePosition> {
 }
 
 /**
- * 读取原生端坐标，先尝试实时定位，失败后使用最近一次定位作为城市天气兜底。
+ * 读取原生端坐标，Android 优先走系统 LocationManager，失败后回退 Expo 定位和最近一次定位。
  *
  * @returns 当前或最近一次可用的经纬度坐标
  * @example
  *   const position = await requestNativePosition()
  */
 async function requestNativePosition(): Promise<DevicePosition> {
-  await assertNativeLocationServicesEnabled();
-
   const permission = await Location.requestForegroundPermissionsAsync();
 
   if (!permission.granted) {
@@ -507,6 +511,24 @@ async function requestNativePosition(): Promise<DevicePosition> {
   }
 
   let currentPositionError: unknown = null;
+
+  if (Platform.OS === 'android') {
+    try {
+      const androidNativePosition = await requestAndroidLocationManagerPosition();
+
+      if (androidNativePosition) {
+        return androidNativePosition;
+      }
+    } catch (error) {
+      currentPositionError = error;
+
+      if (isAndroidNativeLocationHardError(error)) {
+        throw new Error(getNativeLocationErrorMessage(error));
+      }
+    }
+  }
+
+  await assertNativeLocationServicesEnabled();
 
   try {
     return await withLocationTimeout(
@@ -528,6 +550,28 @@ async function requestNativePosition(): Promise<DevicePosition> {
   }
 
   throw new Error(getNativeLocationErrorMessage(currentPositionError));
+}
+
+/**
+ * 调用 Android 原生定位桥，绕过 expo-location 在部分真机上的定位提供方等待问题。
+ *
+ * @returns Android 原生模块返回的坐标；模块不存在时返回 null 交给 Expo 兜底
+ * @example
+ *   const position = await requestAndroidLocationManagerPosition()
+ */
+async function requestAndroidLocationManagerPosition(): Promise<DevicePosition | null> {
+  if (!isAndroidNativeLocationAvailable()) {
+    return null;
+  }
+
+  // [变更] 修改前: Android 与 iOS 一起走 expo-location 的 getCurrentPositionAsync
+  // [变更] 修改后: Android 真机优先走系统 LocationManager，再保留 Expo 作为兜底
+  // [原因] 部分 Android 真机的 Expo/Fused provider 会持续等待，导致天气定位反复超时
+  return requestAndroidNativePosition({
+    timeoutMs: ANDROID_NATIVE_LOCATION_TIMEOUT_MS,
+    maxAgeMs: LAST_KNOWN_POSITION_MAX_AGE_MS,
+    requiredAccuracyMeters: ANDROID_NATIVE_LOCATION_REQUIRED_ACCURACY_METERS,
+  });
 }
 
 /**
@@ -647,8 +691,25 @@ async function withLocationTimeout<T>(operation: Promise<T>, timeoutMs: number, 
 }
 
 function getNativeLocationErrorMessage(error: unknown) {
+  const code = getNativeLocationErrorCode(error);
   const message = error instanceof Error ? error.message : '';
   const normalizedMessage = message.toLowerCase();
+
+  if (code === 'ERR_LOCATION_PERMISSION') {
+    return '未获得定位权限，请在系统设置中允许 Astesia 访问定位，或改用手动切换城市。';
+  }
+
+  if (
+    code === 'ERR_LOCATION_DISABLED' ||
+    code === 'ERR_LOCATION_PROVIDER_UNAVAILABLE' ||
+    code === 'ERR_LOCATION_MANAGER_UNAVAILABLE'
+  ) {
+    return '系统定位服务不可用，请打开手机定位开关并检查网络定位服务，或改用手动切换城市。';
+  }
+
+  if (code === 'ERR_LOCATION_TIMEOUT') {
+    return '定位请求超时，请到开阔区域重试，或改用手动切换城市。';
+  }
 
   if (message.includes('定位请求超时') || normalizedMessage.includes('timeout')) {
     return '定位请求超时，请到开阔区域重试，或改用手动切换城市。';
@@ -672,6 +733,26 @@ function getNativeLocationErrorMessage(error: unknown) {
   }
 
   return '无法读取当前位置，请检查定位权限、系统定位开关和网络状态，或改用手动切换城市。';
+}
+
+function isAndroidNativeLocationHardError(error: unknown) {
+  const code = getNativeLocationErrorCode(error);
+
+  return (
+    code === 'ERR_LOCATION_PERMISSION' ||
+    code === 'ERR_LOCATION_DISABLED' ||
+    code === 'ERR_LOCATION_PROVIDER_UNAVAILABLE' ||
+    code === 'ERR_LOCATION_MANAGER_UNAVAILABLE'
+  );
+}
+
+function getNativeLocationErrorCode(error: unknown) {
+  if (!error || typeof error !== 'object' || !('code' in error)) {
+    return null;
+  }
+
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : null;
 }
 
 function getWebLocationErrorMessage(error: { code?: number; message?: string }) {

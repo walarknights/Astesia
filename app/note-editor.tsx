@@ -4,7 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -33,6 +33,7 @@ import {
 import { getPersistentWebImageUri } from '@/services/web-image';
 
 const EDITOR_PLACEHOLDER = '开始写下今天的想法...';
+const EDITOR_CARET_VISIBLE_OFFSET = 140;
 const IMAGE_MIME_TYPE_BY_EXTENSION: Record<string, string> = {
   gif: 'image/gif',
   heic: 'image/heic',
@@ -52,6 +53,10 @@ export default function NoteEditorScreen() {
   const [insertedImageToken, setInsertedImageToken] = useState('');
   const [isLoading, setIsLoading] = useState(Boolean(editingNoteId));
   const [isSaving, setIsSaving] = useState(false);
+  const editorScrollRef = useRef<ScrollView>(null);
+  const editorCardTopRef = useRef(0);
+  const editorFrameTopRef = useRef(0);
+  const lastEditorScrollTargetRef = useRef(0);
 
   const updatedAtLabel = useMemo(() => formatDateTime(note.updatedAt), [note.updatedAt]);
   const imageCount = useMemo(() => getNoteImageCount(note), [note]);
@@ -114,6 +119,30 @@ export default function NoteEditorScreen() {
       ...currentNote,
       contentHtml,
     }));
+  }, []);
+
+  const handleEditorCaretPositionChange = useCallback((caretOffsetY: number) => {
+    if (Platform.OS === 'web') {
+      return;
+    }
+
+    const targetScrollY = Math.max(
+      0,
+      editorCardTopRef.current
+        + editorFrameTopRef.current
+        + caretOffsetY
+        - EDITOR_CARET_VISIBLE_OFFSET
+    );
+
+    if (Math.abs(targetScrollY - lastEditorScrollTargetRef.current) < 24) {
+      return;
+    }
+
+    lastEditorScrollTargetRef.current = targetScrollY;
+
+    requestAnimationFrame(() => {
+      editorScrollRef.current?.scrollTo({ y: targetScrollY, animated: true });
+    });
   }, []);
 
   const handlePickImage = async () => {
@@ -205,7 +234,10 @@ export default function NoteEditorScreen() {
         style={styles.gradientBackground}>
         <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            // [变更] 修改前: Android 不启用键盘避让，标题与富文本正文可能停留在软键盘后方
+            // [变更] 修改后: Android 缩短编辑区高度，外层滚动容器按正文光标位置继续滚动
+            // [原因] 富文本编辑器由 WebView 承载，不能只依赖系统自动平移整个页面
+            behavior={Platform.select({ android: 'height', ios: 'padding' })}
             style={styles.keyboardView}>
             <View style={styles.header}>
               <Pressable accessibilityRole="button" style={styles.iconButton} onPress={() => router.back()}>
@@ -227,6 +259,9 @@ export default function NoteEditorScreen() {
             </View>
 
             <ScrollView
+              ref={editorScrollRef}
+              automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.scrollContent}>
@@ -243,7 +278,11 @@ export default function NoteEditorScreen() {
                 style={styles.titleInput}
               />
 
-              <View style={styles.editorCard}>
+              <View
+                onLayout={({ nativeEvent }) => {
+                  editorCardTopRef.current = nativeEvent.layout.y;
+                }}
+                style={styles.editorCard}>
                 <View style={styles.editorHeaderRow}>
                   <View>
                     <ThemedText style={styles.editorTitle}>富文本编辑器</ThemedText>
@@ -267,7 +306,11 @@ export default function NoteEditorScreen() {
                  * 展示内容: 平台分流后的富文本编辑器；原生端使用稳定 WebView，Web 端使用 Tiptap
                  * 数据来源: note.contentHtml、insertedImageUri 和编辑器内部编辑状态
                  */}
-                <View style={styles.richEditorFrame}>
+                <View
+                  onLayout={({ nativeEvent }) => {
+                    editorFrameTopRef.current = nativeEvent.layout.y;
+                  }}
+                  style={styles.richEditorFrame}>
                   {isLoading ? (
                     <View style={styles.editorLoadingState}>
                       <ThemedText style={styles.editorLoadingText}>正在加载编辑器内容...</ThemedText>
@@ -279,6 +322,7 @@ export default function NoteEditorScreen() {
                       insertedImageUri={insertedImageUri}
                       insertedImageToken={insertedImageToken}
                       placeholder={EDITOR_PLACEHOLDER}
+                      onCaretPositionChange={handleEditorCaretPositionChange}
                       onChangeHtml={handleChangeHtml}
                     />
                   )}

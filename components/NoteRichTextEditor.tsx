@@ -9,12 +9,14 @@ type NoteRichTextEditorProps = {
   insertedImageUri?: string;
   insertedImageToken?: string;
   placeholder?: string;
+  onCaretPositionChange?: (offsetY: number) => void;
   onChangeHtml?: (html: string) => Promise<void>;
 };
 
 type EditorMessage =
   | { type: 'ready' }
   | { type: 'height'; height?: unknown }
+  | { type: 'focus'; y?: unknown }
   | { type: 'change'; html?: unknown };
 
 const EMPTY_HTML = '<p></p>';
@@ -25,6 +27,7 @@ export default function NoteRichTextEditor({
   insertedImageUri,
   insertedImageToken,
   placeholder = '开始写下今天的想法...',
+  onCaretPositionChange,
   onChangeHtml,
 }: NoteRichTextEditorProps) {
   const [webView, setWebView] = useState<WebView | null>(null);
@@ -70,10 +73,20 @@ export default function NoteRichTextEditor({
       return;
     }
 
+    if (message.type === 'focus') {
+      const nextCaretPosition = Number(message.y);
+
+      if (Number.isFinite(nextCaretPosition) && nextCaretPosition >= 0) {
+        onCaretPositionChange?.(nextCaretPosition);
+      }
+
+      return;
+    }
+
     if (message.type === 'change' && typeof message.html === 'string') {
       void onChangeHtml?.(message.html);
     }
-  }, [onChangeHtml]);
+  }, [onCaretPositionChange, onChangeHtml]);
 
   useEffect(() => {
     if (!webView || !isEditorReady || !insertedImageUri || !insertedImageToken) {
@@ -121,7 +134,12 @@ function parseEditorMessage(value: string): EditorMessage | null {
   try {
     const parsedValue = JSON.parse(value) as Partial<EditorMessage>;
 
-    if (parsedValue.type === 'ready' || parsedValue.type === 'height' || parsedValue.type === 'change') {
+    if (
+      parsedValue.type === 'ready'
+      || parsedValue.type === 'height'
+      || parsedValue.type === 'focus'
+      || parsedValue.type === 'change'
+    ) {
       return parsedValue as EditorMessage;
     }
   } catch {
@@ -302,6 +320,7 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
     const editor = document.getElementById('editor');
     let lastHtml = '';
     let isComposing = false;
+    let caretPositionAnimationFrame = 0;
 
     function postMessage(payload) {
       window.ReactNativeWebView && window.ReactNativeWebView.postMessage(JSON.stringify(payload));
@@ -325,6 +344,38 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
       postMessage({ type: 'height', height });
     }
 
+    function emitCaretPosition() {
+      caretPositionAnimationFrame = 0;
+
+      if (document.activeElement !== editor) {
+        return;
+      }
+
+      const selection = window.getSelection();
+
+      if (!selection || selection.rangeCount === 0 || !editor.contains(selection.anchorNode)) {
+        return;
+      }
+
+      const range = selection.getRangeAt(0);
+      const rangeRects = range.getClientRects();
+      const caretRect = rangeRects.length > 0
+        ? rangeRects[rangeRects.length - 1]
+        : range.getBoundingClientRect();
+      const editorRect = editor.getBoundingClientRect();
+      const caretBottom = caretRect.bottom > 0 ? caretRect.bottom : editorRect.top + 24;
+
+      postMessage({ type: 'focus', y: Math.round(caretBottom + window.scrollY) });
+    }
+
+    function scheduleCaretPosition() {
+      if (caretPositionAnimationFrame) {
+        cancelAnimationFrame(caretPositionAnimationFrame);
+      }
+
+      caretPositionAnimationFrame = requestAnimationFrame(emitCaretPosition);
+    }
+
     function emitChange() {
       if (isComposing) {
         return;
@@ -338,6 +389,7 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
       }
 
       requestAnimationFrame(emitHeight);
+      scheduleCaretPosition();
     }
 
     function focusEditor() {
@@ -425,10 +477,15 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
     // [原因] 让中文输入法保留拼音候选态，避免编辑器把组合输入当成普通英文字母
     editor.addEventListener('compositionstart', handleCompositionStart);
     editor.addEventListener('compositionend', handleCompositionEnd);
+    editor.addEventListener('focus', scheduleCaretPosition);
     editor.addEventListener('input', emitChange);
     editor.addEventListener('keyup', emitChange);
-    editor.addEventListener('mouseup', emitHeight);
-    window.addEventListener('resize', emitHeight);
+    editor.addEventListener('mouseup', scheduleCaretPosition);
+    document.addEventListener('selectionchange', scheduleCaretPosition);
+    window.addEventListener('resize', () => {
+      emitHeight();
+      scheduleCaretPosition();
+    });
     document.querySelectorAll('img').forEach((image) => {
       image.addEventListener('load', emitHeight);
     });

@@ -14,6 +14,7 @@ type TiptapRichTextEditorProps = {
   insertedImageUri?: string;
   insertedImageToken?: string;
   placeholder?: string;
+  onCaretPositionChange?: (offsetY: number) => void;
   onChangeHtml?: (html: string) => Promise<void>;
   dom?: import('expo/dom').DOMProps;
 };

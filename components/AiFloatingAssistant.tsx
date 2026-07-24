@@ -1180,7 +1180,10 @@ export function AiFloatingAssistant() {
         <View style={styles.modalRoot}>
           <Pressable accessibilityLabel="关闭 AI 助手遮罩" style={styles.backdrop} onPress={() => closeDrawer()} />
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            // [变更] 修改前: AI 抽屉仅在 iOS 避让键盘，Android 底部输入框可能被覆盖
+            // [变更] 修改后: Android 同步缩短抽屉高度，让消息区为底部输入框释放可视空间
+            // [原因] AI 助手是全局入口，也需要覆盖所有页面上的键盘输入场景
+            behavior={Platform.select({ android: 'height', ios: 'padding' })}
             pointerEvents="box-none"
             style={styles.keyboardAvoider}>
             <Animated.View style={drawerStyle}>
@@ -1708,7 +1711,7 @@ export function AiFloatingAssistant() {
             style={StyleSheet.absoluteFill}
           />
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            behavior={Platform.OS === 'web' ? undefined : 'padding'}
             style={styles.conversationActionKeyboardAvoider}>
             <View style={styles.conversationActionSheet}>
               {/*
