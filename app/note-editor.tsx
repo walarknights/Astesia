@@ -19,7 +19,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import NoteRichTextEditor from '@/components/NoteRichTextEditor';
 import { ThemedText } from '@/components/themed-text';
-import { AppPalette } from '@/constants/theme';
+import { getProductivityPalette, type ProductivityPalette } from '@/constants/productivity-theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { clearActiveNoteEditorDraft, setActiveNoteEditorDraft } from '@/services/note-editor-draft';
 import { sanitizeNoteContentHtml } from '@/services/note-html';
 import {
@@ -46,6 +47,9 @@ const IMAGE_MIME_TYPE_BY_EXTENSION: Record<string, string> = {
 
 export default function NoteEditorScreen() {
   const router = useRouter();
+  const colorScheme = useColorScheme();
+  const palette = getProductivityPalette(colorScheme);
+  const styles = useMemo(() => createStyles(palette), [palette]);
   const params = useLocalSearchParams<{ noteId?: string }>();
   const editingNoteId = typeof params.noteId === 'string' ? params.noteId : '';
   const [note, setNote] = useState<NoteRecord>(() => createEmptyNote());
@@ -227,9 +231,12 @@ export default function NoteEditorScreen() {
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <StatusBar style="light" backgroundColor={AppPalette.background} />
+      <StatusBar
+        style={colorScheme === 'light' ? 'dark' : 'light'}
+        backgroundColor={palette.background}
+      />
       <LinearGradient
-        colors={['#1E1E3A', '#171726', AppPalette.background]}
+        colors={[palette.gradientStart, palette.gradientMiddle, palette.gradientEnd]}
         locations={[0, 0.52, 1]}
         style={styles.gradientBackground}>
         <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
@@ -241,7 +248,7 @@ export default function NoteEditorScreen() {
             style={styles.keyboardView}>
             <View style={styles.header}>
               <Pressable accessibilityRole="button" style={styles.iconButton} onPress={() => router.back()}>
-                <MaterialIcons name="arrow-back" size={24} color={AppPalette.text} />
+                <MaterialIcons name="arrow-back" size={24} color={palette.text} />
               </Pressable>
               <View style={styles.headerTextGroup}>
                 <ThemedText style={styles.headerTitle}>编写笔记</ThemedText>
@@ -274,8 +281,9 @@ export default function NoteEditorScreen() {
                 value={note.title}
                 onChangeText={(nextTitle) => setNote((currentNote) => ({ ...currentNote, title: nextTitle }))}
                 placeholder="笔记标题"
-                placeholderTextColor={AppPalette.textSubtle}
+                placeholderTextColor={palette.textSubtle}
                 style={styles.titleInput}
+                underlineColorAndroid="transparent"
               />
 
               <View
@@ -294,7 +302,7 @@ export default function NoteEditorScreen() {
                     accessibilityRole="button"
                     onPress={() => void handlePickImage()}
                     style={styles.insertImageButton}>
-                    <MaterialIcons name="image" size={18} color={AppPalette.brandLight} />
+                    <MaterialIcons name="image" size={18} color={palette.brandLight} />
                     <ThemedText style={styles.insertImageText}>
                       {imageCount > 0 ? `插图 ${imageCount}` : '插图'}
                     </ThemedText>
@@ -322,6 +330,7 @@ export default function NoteEditorScreen() {
                       insertedImageUri={insertedImageUri}
                       insertedImageToken={insertedImageToken}
                       placeholder={EDITOR_PLACEHOLDER}
+                      colorScheme={colorScheme}
                       onCaretPositionChange={handleEditorCaretPositionChange}
                       onChangeHtml={handleChangeHtml}
                     />
@@ -433,13 +442,14 @@ async function normalizeEditorImageSources(contentHtml: string) {
   return normalizedHtml;
 }
 
-const styles = StyleSheet.create({
-  // [变更] 修改前: 编辑器页面使用浅色渐变与白色输入卡片
-  // [变更] 修改后: 改为深色渐变、玻璃卡片和靛青操作按钮
-  // [原因] 编辑体验延续 App 新主题，并保持原有输入与保存逻辑
+function createStyles(palette: ProductivityPalette) {
+  return StyleSheet.create({
+  // [变更] 修改前: 编辑器页面固定使用深色渐变、文字与卡片颜色
+  // [变更] 修改后: 背景、输入区和正文卡片随当前应用主题切换
+  // [原因] 保持笔记列表与编辑体验在浅色模式下视觉一致
   gradientBackground: {
     flex: 1,
-    backgroundColor: AppPalette.background,
+    backgroundColor: palette.background,
   },
   safeArea: {
     flex: 1,
@@ -461,20 +471,20 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: AppPalette.surfaceSoft,
+    backgroundColor: palette.surfaceSoft,
   },
   headerTextGroup: {
     flex: 1,
   },
   headerTitle: {
-    color: AppPalette.text,
+    color: palette.text,
     fontSize: 24,
     lineHeight: 30,
     fontWeight: '700',
   },
   headerSubtitle: {
     marginTop: 2,
-    color: AppPalette.brandLight,
+    color: palette.brandLight,
     fontSize: 12,
     lineHeight: 16,
   },
@@ -484,7 +494,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: AppPalette.brand,
+    backgroundColor: palette.brand,
   },
   disabledButton: {
     opacity: 0.58,
@@ -505,28 +515,25 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     paddingHorizontal: 20,
     paddingVertical: 16,
-    borderWidth: 1,
-    borderColor: AppPalette.border,
-    backgroundColor: AppPalette.surfaceSoft,
-    color: AppPalette.text,
+    // [变更] 修改前: 标题输入框使用浅色描边、白色阴影和 elevation
+    // [变更] 修改后: 去掉外框与高光，只保留当前主题的纯色输入表面
+    // [原因] 消除深色页中明显的浅白色边框，同时适配浅色模式
+    borderWidth: 0,
+    backgroundColor: palette.surfaceSoft,
+    color: palette.text,
     fontSize: 28,
     lineHeight: 34,
     fontWeight: '700',
-    shadowColor: '#FFFFFF',
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 2,
   },
   editorCard: {
     marginTop: 16,
     borderRadius: 28,
     padding: 14,
     borderWidth: 1,
-    borderColor: AppPalette.border,
-    backgroundColor: AppPalette.surfaceSoft,
-    shadowColor: AppPalette.shadow,
-    shadowOpacity: 0.12,
+    borderColor: palette.border,
+    backgroundColor: palette.surfaceSoft,
+    shadowColor: palette.shadow,
+    shadowOpacity: palette.shadowOpacity,
     shadowRadius: 20,
     shadowOffset: { width: 0, height: 10 },
     elevation: 3,
@@ -539,14 +546,14 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   editorTitle: {
-    color: AppPalette.text,
+    color: palette.text,
     fontSize: 18,
     lineHeight: 24,
     fontWeight: '700',
   },
   editorMeta: {
     marginTop: 3,
-    color: AppPalette.textMuted,
+    color: palette.textMuted,
     fontSize: 12,
     lineHeight: 17,
   },
@@ -557,10 +564,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 9,
-    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    backgroundColor: palette.brandSoft,
   },
   insertImageText: {
-    color: AppPalette.brandLight,
+    color: palette.brandLight,
     fontSize: 14,
     lineHeight: 18,
     fontWeight: '700',
@@ -569,9 +576,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     minHeight: 560,
     borderWidth: 1,
-    borderColor: AppPalette.borderStrong,
+    borderColor: palette.borderStrong,
     borderRadius: 24,
-    backgroundColor: AppPalette.surface,
+    backgroundColor: palette.surface,
   },
   editorLoadingState: {
     minHeight: 560,
@@ -580,9 +587,10 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   editorLoadingText: {
-    color: AppPalette.brandLight,
+    color: palette.brandLight,
     fontSize: 15,
     lineHeight: 22,
     fontWeight: '700',
   },
 });
+}

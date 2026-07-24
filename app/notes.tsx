@@ -2,16 +2,35 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useFocusEffect } from '@react-navigation/native';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Easing, Pressable, ScrollView, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
-import { AppPalette } from '@/constants/theme';
+import {
+  getProductivityPalette,
+  PRODUCTIVITY_PALETTE,
+  type ProductivityPalette,
+} from '@/constants/productivity-theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { getNoteImageCount, getNotePlainText, loadNotes, type NoteRecord } from '@/services/notes-storage';
 
 const NOTE_PREVIEW_CONTENT_LIMIT = 15;
 const NOTE_TAB_POP_ANIMATION_MS = 680;
+
+type NotesThemeContextValue = {
+  palette: ProductivityPalette;
+  styles: ReturnType<typeof createStyles>;
+};
+
+const NotesThemeContext = createContext<NotesThemeContextValue>({
+  palette: PRODUCTIVITY_PALETTE.dark,
+  styles: createStyles(PRODUCTIVITY_PALETTE.dark),
+});
+
+function useNotesTheme() {
+  return useContext(NotesThemeContext);
+}
 
 function getNotePreviewContent(content: string) {
   const normalizedContent = content.trim();
@@ -27,6 +46,9 @@ function getNotePreviewContent(content: string) {
 
 export default function NotesScreen() {
   const router = useRouter();
+  const colorScheme = useColorScheme();
+  const palette = getProductivityPalette(colorScheme);
+  const styles = useMemo(() => createStyles(palette), [palette]);
   const [notes, setNotes] = useState<NoteRecord[]>([]);
   const [isLoadingNotes, setIsLoadingNotes] = useState(true);
 
@@ -59,47 +81,57 @@ export default function NotesScreen() {
   );
 
   return (
-    <>
-      <Stack.Screen options={{ headerShown: false }} />
-      <StatusBar style="light" backgroundColor={AppPalette.background} />
-      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-        <View style={styles.panelRoot}>
-          {/*
-           * 渲染位置: 笔记页顶部标题区
-           * 展示内容: Astesia 小标题、笔记标题和右侧新建按钮
-           * 数据来源: router.push('/note-editor') 导航回调
-           */}
-          <View style={styles.header}>
-            <View>
-              <ThemedText style={styles.eyebrow}>Astesia</ThemedText>
-              <ThemedText type="title" style={styles.title}>笔记</ThemedText>
+    <NotesThemeContext.Provider value={{ palette, styles }}>
+      {/*
+       * 渲染位置: 笔记功能整页
+       * 展示内容: 随应用设置切换的页面标题、笔记列表和空状态
+       * 数据来源: useColorScheme() 与 loadNotes() 本地记录
+       */}
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <StatusBar
+          style={colorScheme === 'light' ? 'dark' : 'light'}
+          backgroundColor={palette.background}
+        />
+        <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+          <View style={styles.panelRoot}>
+            {/*
+             * 渲染位置: 笔记页顶部标题区
+             * 展示内容: Astesia 小标题、笔记标题和右侧新建按钮
+             * 数据来源: router.push('/note-editor') 导航回调
+             */}
+            <View style={styles.header}>
+              <View>
+                <ThemedText style={styles.eyebrow}>Astesia</ThemedText>
+                <ThemedText type="title" style={styles.title}>笔记</ThemedText>
+              </View>
+              <Pressable accessibilityRole="button" style={styles.addButton} onPress={() => router.push('/note-editor')}>
+                <MaterialIcons name="add" size={28} color="#FFFFFF" />
+              </Pressable>
             </View>
-            <Pressable accessibilityRole="button" style={styles.addButton} onPress={() => router.push('/note-editor')}>
-              <MaterialIcons name="add" size={28} color="#FFFFFF" />
-            </Pressable>
-          </View>
 
-          {isLoadingNotes ? (
-            <View style={styles.loadingCard}>
-              <ActivityIndicator color={AppPalette.brandLight} />
-              <ThemedText style={styles.loadingText}>正在读取笔记...</ThemedText>
-            </View>
-          ) : (
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.scrollContent}>
-              <NotesTabAnimatedPanel>
-                <NotesPanel
-                  notes={notes}
-                  onPressNote={(noteId) => router.push({ pathname: '/note-editor', params: { noteId } })}
-                  onPressCreate={() => router.push('/note-editor')}
-                />
-              </NotesTabAnimatedPanel>
-            </ScrollView>
-          )}
-        </View>
-      </SafeAreaView>
-    </>
+            {isLoadingNotes ? (
+              <View style={styles.loadingCard}>
+                <ActivityIndicator color={palette.brandLight} />
+                <ThemedText style={styles.loadingText}>正在读取笔记...</ThemedText>
+              </View>
+            ) : (
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.scrollContent}>
+                <NotesTabAnimatedPanel>
+                  <NotesPanel
+                    notes={notes}
+                    onPressNote={(noteId) => router.push({ pathname: '/note-editor', params: { noteId } })}
+                    onPressCreate={() => router.push('/note-editor')}
+                  />
+                </NotesTabAnimatedPanel>
+              </ScrollView>
+            )}
+          </View>
+        </SafeAreaView>
+      </>
+    </NotesThemeContext.Provider>
   );
 }
 
@@ -112,10 +144,12 @@ function NotesPanel({
   onPressNote: (noteId: string) => void;
   onPressCreate: () => void;
 }) {
+  const { palette, styles } = useNotesTheme();
+
   if (notes.length === 0) {
     return (
       <View style={styles.emptyCard}>
-        <MaterialIcons name="edit-note" size={48} color={AppPalette.brandLight} />
+        <MaterialIcons name="edit-note" size={48} color={palette.brandLight} />
         <ThemedText style={styles.emptyTitle}>写下第一条笔记</ThemedText>
         <ThemedText style={styles.emptyDescription}>
           支持正文文本和相册图片，保存后会回到这里形成卡片预览。
@@ -154,6 +188,7 @@ function NotePreviewCard({
   style?: StyleProp<ViewStyle>;
   onPress: () => void;
 }) {
+  const { palette, styles } = useNotesTheme();
   const previewContent = getNotePreviewContent(getNotePlainText(note) || '图片笔记');
   const imageCount = getNoteImageCount(note);
 
@@ -167,7 +202,7 @@ function NotePreviewCard({
       </ThemedText>
       {imageCount > 0 ? (
         <View style={styles.imageCountBadge}>
-          <MaterialIcons name="image" size={14} color={AppPalette.brandLight} />
+          <MaterialIcons name="image" size={14} color={palette.brandLight} />
           <ThemedText style={styles.imageCountText}>{imageCount}</ThemedText>
         </View>
       ) : null}
@@ -176,6 +211,7 @@ function NotePreviewCard({
 }
 
 function NotesTabAnimatedPanel({ children }: { children: React.ReactNode }) {
+  const { styles } = useNotesTheme();
   const enterProgress = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -219,13 +255,14 @@ function NotesTabAnimatedPanel({ children }: { children: React.ReactNode }) {
   );
 }
 
-const styles = StyleSheet.create({
-  // [变更] 修改前: 笔记页使用返回按钮、居中标题和独立滚动间距
-  // [变更] 修改后: 改为待办页同款顶部标题区、右侧加号和内容滚动区
-  // [原因] 让笔记页与待办页保持一致的页面排布
+function createStyles(palette: ProductivityPalette) {
+  return StyleSheet.create({
+  // [变更] 修改前: 笔记页固定使用深色 AppPalette
+  // [变更] 修改后: 页面、卡片和文字颜色由当前生产力页面色板生成
+  // [原因] 浅色模式下需要完整切换背景与内容对比度
   safeArea: {
     flex: 1,
-    backgroundColor: AppPalette.background,
+    backgroundColor: palette.background,
   },
   panelRoot: {
     flex: 1,
@@ -239,13 +276,13 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
   },
   eyebrow: {
-    color: AppPalette.textMuted,
+    color: palette.textMuted,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '600',
   },
   title: {
-    color: AppPalette.text,
+    color: palette.text,
     fontSize: 32,
     lineHeight: 38,
   },
@@ -255,8 +292,8 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: AppPalette.brand,
-    shadowColor: AppPalette.brandLight,
+    backgroundColor: palette.brand,
+    shadowColor: palette.brandLight,
     shadowOpacity: 0.25,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 8 },
@@ -290,7 +327,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   loadingText: {
-    color: AppPalette.textMuted,
+    color: palette.textMuted,
   },
   emptyCard: {
     // [变更] 修改前: 空笔记卡片保留玻璃底色、描边和暗色投影
@@ -303,13 +340,13 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   emptyTitle: {
-    color: AppPalette.text,
+    color: palette.text,
     fontSize: 22,
     lineHeight: 28,
     fontWeight: '700',
   },
   emptyDescription: {
-    color: AppPalette.textMuted,
+    color: palette.textMuted,
     fontSize: 15,
     lineHeight: 22,
     textAlign: 'center',
@@ -319,7 +356,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 22,
     paddingVertical: 12,
-    backgroundColor: AppPalette.brand,
+    backgroundColor: palette.brand,
   },
   emptyButtonText: {
     color: '#FFFFFF',
@@ -335,10 +372,10 @@ const styles = StyleSheet.create({
     paddingRight: 18,
     paddingBottom: 30,
     paddingLeft: 18,
-    backgroundColor: AppPalette.surfaceSoft,
+    backgroundColor: palette.surfaceSoft,
   },
   noteCardTitle: {
-    color: AppPalette.text,
+    color: palette.text,
     fontSize: 24,
     lineHeight: 29,
     fontWeight: '600',
@@ -346,7 +383,7 @@ const styles = StyleSheet.create({
   noteCardContent: {
     width: '100%',
     marginTop: 18,
-    color: AppPalette.textMuted,
+    color: palette.textMuted,
     fontSize: 20,
     lineHeight: 24,
     fontWeight: '200',
@@ -361,12 +398,13 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 5,
-    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    backgroundColor: palette.brandSoft,
   },
   imageCountText: {
-    color: AppPalette.brandLight,
+    color: palette.brandLight,
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '700',
   },
 });
+}

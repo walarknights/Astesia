@@ -2,9 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView, type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
 
+import {
+  getProductivityPalette,
+  type ProductivityPalette,
+  type ProductivityThemeKey,
+} from '@/constants/productivity-theme';
 import { sanitizeNoteContentHtml } from '@/services/note-html';
 
 type NoteRichTextEditorProps = {
+  colorScheme?: ProductivityThemeKey;
   initialHtml: string;
   insertedImageUri?: string;
   insertedImageToken?: string;
@@ -23,6 +29,7 @@ const EMPTY_HTML = '<p></p>';
 const MIN_EDITOR_HEIGHT = 560;
 
 export default function NoteRichTextEditor({
+  colorScheme = 'dark',
   initialHtml,
   insertedImageUri,
   insertedImageToken,
@@ -30,6 +37,7 @@ export default function NoteRichTextEditor({
   onCaretPositionChange,
   onChangeHtml,
 }: NoteRichTextEditorProps) {
+  const palette = getProductivityPalette(colorScheme);
   const [webView, setWebView] = useState<WebView | null>(null);
   const [isEditorReady, setIsEditorReady] = useState(false);
   const [editorHeight, setEditorHeight] = useState(MIN_EDITOR_HEIGHT);
@@ -41,7 +49,11 @@ export default function NoteRichTextEditor({
     // [变更] 修改前: initialHtml 原样进入 WebView 后由 innerHTML 渲染
     // [变更] 修改后: WebView 文档生成前先执行笔记 HTML 白名单清洗
     // [原因] 历史缓存或导入文件可能包含脚本、事件属性和远程资源
-    html: buildEditorDocument(sanitizeNoteContentHtml(initialHtml || EMPTY_HTML), placeholder),
+    html: buildEditorDocument(
+      sanitizeNoteContentHtml(initialHtml || EMPTY_HTML),
+      placeholder,
+      palette
+    ),
   }));
 
   const handleEditorRef = useCallback((nextWebView: WebView | null) => {
@@ -107,7 +119,7 @@ export default function NoteRichTextEditor({
   }, [insertedImageToken, insertedImageUri, isEditorReady, lastInsertedImageToken, webView]);
 
   return (
-    <View style={[styles.container, { height: editorHeight }]}>
+    <View style={[styles.container, { height: editorHeight, backgroundColor: palette.surface }]}>
       {/*
        * 渲染位置: 原生笔记编辑页富文本卡片内
        * 展示内容: WebView 承载的富文本工具栏、正文编辑区和插入图片结果
@@ -123,7 +135,7 @@ export default function NoteRichTextEditor({
         onShouldStartLoadWithRequest={allowEditorNavigation}
         scrollEnabled={false}
         source={editorSource}
-        style={styles.webView}
+        style={[styles.webView, { backgroundColor: palette.surface }]}
         onMessage={handleMessage}
       />
     </View>
@@ -153,7 +165,11 @@ function serializeForInlineScript(value: string) {
   return JSON.stringify(value).replace(/</g, '\\u003C');
 }
 
-function buildEditorDocument(initialHtml: string, placeholder: string) {
+function buildEditorDocument(
+  initialHtml: string,
+  placeholder: string,
+  palette: ProductivityPalette
+) {
   const serializedInitialHtml = serializeForInlineScript(initialHtml);
   const serializedPlaceholder = serializeForInlineScript(placeholder);
 
@@ -177,14 +193,14 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
       margin: 0;
       min-height: 100%;
       overflow: hidden;
-      color: #f8fafc;
-      background: #171726;
+      color: ${palette.text};
+      background: ${palette.surface};
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     }
 
     .editor-shell {
       min-height: ${MIN_EDITOR_HEIGHT}px;
-      background: #171726;
+      background: ${palette.surface};
     }
 
     .toolbar {
@@ -195,18 +211,18 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
       flex-wrap: wrap;
       gap: 8px;
       padding: 12px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.09);
-      background: rgba(30, 30, 46, 0.96);
+      border-bottom: 1px solid ${palette.divider};
+      background: ${palette.toolbarBackground};
       backdrop-filter: blur(14px);
     }
 
     .toolbar-button {
       min-height: 34px;
-      border: 1px solid rgba(129, 140, 248, 0.34);
+      border: 1px solid ${palette.brandBorder};
       border-radius: 999px;
       padding: 7px 12px;
-      color: #818cf8;
-      background: rgba(99, 102, 241, 0.18);
+      color: ${palette.brandLight};
+      background: ${palette.brandSoft};
       font-size: 13px;
       font-weight: 700;
     }
@@ -214,14 +230,14 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
     .toolbar-divider {
       width: 1px;
       min-height: 30px;
-      background: rgba(255, 255, 255, 0.09);
+      background: ${palette.divider};
     }
 
     #editor {
       min-height: 420px;
       padding: 18px;
       outline: none;
-      color: #f8fafc;
+      color: ${palette.text};
       font-size: 18px;
       line-height: 1.72;
       word-break: break-word;
@@ -231,7 +247,7 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
 
     #editor:empty::before {
       content: attr(data-placeholder);
-      color: #64748b;
+      color: ${palette.textSubtle};
       pointer-events: none;
     }
 
@@ -243,7 +259,7 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
     #editor h2,
     #editor h3 {
       margin: 20px 0 12px;
-      color: #f8fafc;
+      color: ${palette.text};
       line-height: 1.25;
     }
 
@@ -270,8 +286,8 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
       border-left: 4px solid #c4b5fd;
       padding: 8px 14px;
       border-radius: 10px;
-      color: #94a3b8;
-      background: rgba(255, 255, 255, 0.05);
+      color: ${palette.textMuted};
+      background: ${palette.blockquoteBackground};
     }
 
     #editor img {
@@ -505,15 +521,10 @@ function buildEditorDocument(initialHtml: string, placeholder: string) {
 }
 
 const styles = StyleSheet.create({
-  // [变更] 修改前: 原生富文本 WebView 使用白色底
-  // [变更] 修改后: 使用与编辑器卡片一致的深色表面
-  // [原因] 避免正文区域在深色主题中产生突兀的白色块
   container: {
     overflow: 'hidden',
-    backgroundColor: '#171726',
   },
   webView: {
     flex: 1,
-    backgroundColor: '#171726',
   },
 });

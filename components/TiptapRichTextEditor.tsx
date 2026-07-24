@@ -7,9 +7,15 @@ import { EditorContent, type Editor, useEditor } from '@tiptap/react';
 import TiptapStarterKit from '@tiptap/starter-kit';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import {
+  getProductivityPalette,
+  type ProductivityPalette,
+  type ProductivityThemeKey,
+} from '@/constants/productivity-theme';
 import { sanitizeNoteContentHtml } from '@/services/note-html';
 
 type TiptapRichTextEditorProps = {
+  colorScheme?: ProductivityThemeKey;
   initialHtml: string;
   insertedImageUri?: string;
   insertedImageToken?: string;
@@ -50,12 +56,15 @@ const DEFAULT_TOOLBAR_STATE: ToolbarState = {
 };
 
 export default function TiptapRichTextEditor({
+  colorScheme = 'dark',
   initialHtml,
   insertedImageUri,
   insertedImageToken,
   placeholder = '开始写下今天的想法...',
   onChangeHtml,
 }: TiptapRichTextEditorProps) {
+  const palette = getProductivityPalette(colorScheme);
+  const editorStyles = useMemo(() => createEditorStyles(palette), [palette]);
   const [lastInsertedImageToken, setLastInsertedImageToken] = useState('');
   const [toolbarState, setToolbarState] = useState<ToolbarState>(DEFAULT_TOOLBAR_STATE);
   const sanitizedInitialHtml = useMemo(
@@ -251,7 +260,8 @@ function setHeadingLevel(editor: Editor, level: HeadingLevel) {
   editor.chain().focus().setHeading({ level }).run();
 }
 
-const editorStyles = `
+function createEditorStyles(palette: ProductivityPalette) {
+  return `
   * {
     box-sizing: border-box;
   }
@@ -265,8 +275,8 @@ const editorStyles = `
   .editor-shell {
     min-height: 100vh;
     padding: 0;
-    color: #f8fafc;
-    background: #171726;
+    color: ${palette.text};
+    background: ${palette.surface};
   }
 
   .toolbar {
@@ -277,18 +287,18 @@ const editorStyles = `
     flex-wrap: wrap;
     gap: 8px;
     padding: 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.09);
-    background: rgba(30, 30, 46, 0.96);
+    border-bottom: 1px solid ${palette.divider};
+    background: ${palette.toolbarBackground};
     backdrop-filter: blur(14px);
   }
 
   .toolbar-button {
     min-height: 34px;
-    border: 1px solid rgba(129, 140, 248, 0.34);
+    border: 1px solid ${palette.brandBorder};
     border-radius: 999px;
     padding: 7px 12px;
-    color: #818cf8;
-    background: rgba(99, 102, 241, 0.18);
+    color: ${palette.brandLight};
+    background: ${palette.brandSoft};
     font-size: 13px;
     font-weight: 700;
   }
@@ -298,22 +308,22 @@ const editorStyles = `
   }
 
   .toolbar-button-active {
-    border-color: #818cf8;
+    border-color: ${palette.brandLight};
     color: #ffffff;
-    background: #6366f1;
+    background: ${palette.brand};
   }
 
   .toolbar-divider {
     width: 1px;
     min-height: 30px;
-    background: rgba(255, 255, 255, 0.09);
+    background: ${palette.divider};
   }
 
   .note-editor-content {
     min-height: 420px;
     padding: 18px;
     outline: none;
-    color: #f8fafc;
+    color: ${palette.text};
     font-size: 18px;
     line-height: 1.72;
   }
@@ -326,7 +336,7 @@ const editorStyles = `
   .note-editor-content h2,
   .note-editor-content h3 {
     margin: 20px 0 12px;
-    color: #f8fafc;
+    color: ${palette.text};
     line-height: 1.25;
   }
 
@@ -353,8 +363,8 @@ const editorStyles = `
     border-left: 4px solid #c4b5fd;
     padding: 8px 14px;
     border-radius: 10px;
-    color: #94a3b8;
-    background: rgba(255, 255, 255, 0.05);
+    color: ${palette.textMuted};
+    background: ${palette.blockquoteBackground};
   }
 
   .note-editor-content img {
@@ -369,7 +379,8 @@ const editorStyles = `
     content: attr(data-placeholder);
     float: left;
     height: 0;
-    color: #64748b;
+    color: ${palette.textSubtle};
     pointer-events: none;
   }
 `;
+}

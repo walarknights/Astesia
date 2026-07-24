@@ -1,7 +1,16 @@
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import * as Notifications from 'expo-notifications';
 import { Stack } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { StatusBar } from 'expo-status-bar';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -23,7 +32,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
-import { AppPalette } from '@/constants/theme';
+import {
+  getProductivityPalette,
+  PRODUCTIVITY_PALETTE,
+  type ProductivityPalette,
+} from '@/constants/productivity-theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
   createEmptyTodo,
   loadTodos,
@@ -84,11 +98,34 @@ type DatePickerDay = {
   isCurrentMonth: boolean;
 };
 
+type TodoThemeContextValue = {
+  palette: ProductivityPalette;
+  styles: ReturnType<typeof createStyles>;
+};
+
+const TodoThemeContext = createContext<TodoThemeContextValue>({
+  palette: PRODUCTIVITY_PALETTE.dark,
+  styles: createStyles(PRODUCTIVITY_PALETTE.dark),
+});
+
+function useTodoTheme() {
+  return useContext(TodoThemeContext);
+}
+
 export default function TodoScreen() {
+  const colorScheme = useColorScheme();
+  const palette = getProductivityPalette(colorScheme);
+
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
-      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+      <StatusBar
+        style={colorScheme === 'light' ? 'dark' : 'light'}
+        backgroundColor={palette.background}
+      />
+      <SafeAreaView
+        style={{ flex: 1, backgroundColor: palette.background }}
+        edges={['top', 'bottom']}>
         <TodoPanel />
       </SafeAreaView>
     </>
@@ -96,6 +133,25 @@ export default function TodoScreen() {
 }
 
 export function TodoPanel({ createRequestKey = 0, embedded = false }: TodoPanelProps) {
+  const colorScheme = useColorScheme();
+  const palette = getProductivityPalette(colorScheme);
+  const styles = useMemo(() => createStyles(palette), [palette]);
+  const contextValue = useMemo(() => ({ palette, styles }), [palette, styles]);
+
+  return (
+    <TodoThemeContext.Provider value={contextValue}>
+      {/*
+       * 渲染位置: 待办功能页面及其底部弹层
+       * 展示内容: 随应用主题切换的待办列表、编辑器与提醒设置
+       * 数据来源: useColorScheme() 与 TodoPanelProps
+       */}
+      <TodoPanelContent createRequestKey={createRequestKey} embedded={embedded} />
+    </TodoThemeContext.Provider>
+  );
+}
+
+function TodoPanelContent({ createRequestKey = 0, embedded = false }: TodoPanelProps) {
+  const { palette, styles } = useTodoTheme();
   const [todos, setTodos] = useState<TodoRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [draftTodo, setDraftTodo] = useState<TodoRecord | null>(null);
@@ -347,7 +403,7 @@ export function TodoPanel({ createRequestKey = 0, embedded = false }: TodoPanelP
 
         {isLoading ? (
           <View style={styles.loadingCard}>
-            <ActivityIndicator color={AppPalette.brandLight} />
+            <ActivityIndicator color={palette.brandLight} />
             <ThemedText style={styles.loadingText}>正在读取待办...</ThemedText>
           </View>
         ) : (
@@ -447,6 +503,7 @@ function TodoItem({
   onOpenActions: () => void;
   onToggleComplete: () => void;
 }) {
+  const { palette, styles } = useTodoTheme();
   const completed = Boolean(todo.completedAt);
   const shownCompleted = visualCompleted ?? completed;
   const [titleWidth, setTitleWidth] = useState(0);
@@ -529,7 +586,7 @@ function TodoItem({
             </View>
             {todo.reminderAt ? (
               <View style={styles.reminderRow}>
-                <MaterialIcons name="notifications-none" size={16} color={AppPalette.textMuted} />
+                <MaterialIcons name="notifications-none" size={16} color={palette.textMuted} />
                 <ThemedText style={styles.reminderText}>{formatReminderLabel(todo)}</ThemedText>
               </View>
             ) : null}
@@ -540,7 +597,7 @@ function TodoItem({
             hitSlop={8}
             style={styles.moreButton}
             onPress={onOpenActions}>
-            <MaterialIcons name="more-horiz" size={20} color={AppPalette.textMuted} />
+            <MaterialIcons name="more-horiz" size={20} color={palette.textMuted} />
           </Pressable>
         </Pressable>
       </Animated.View>
@@ -602,6 +659,7 @@ function TodoItem({
 }
 
 function EmptyTodoCard({ onCreate }: { onCreate: () => void }) {
+  const { styles } = useTodoTheme();
   const popProgress = useRef(new Animated.Value(0)).current;
   const scale = popProgress.interpolate({
     inputRange: [0, 1],
@@ -661,6 +719,8 @@ function TodoActionsSheet({
   onDelete: (todo: TodoRecord) => void;
   onEdit: (todo: TodoRecord) => void;
 }) {
+  const { palette, styles } = useTodoTheme();
+
   return (
     <Modal animationType="fade" statusBarTranslucent transparent visible={visible} onRequestClose={onClose}>
       <View style={styles.sheetOverlay}>
@@ -681,7 +741,7 @@ function TodoActionsSheet({
                 onEdit(todo);
               }
             }}>
-            <MaterialIcons name="edit" size={20} color={AppPalette.brandLight} />
+            <MaterialIcons name="edit" size={20} color={palette.brandLight} />
             <ThemedText style={styles.actionSheetButtonText}>编辑待办</ThemedText>
           </Pressable>
           <Pressable
@@ -719,6 +779,8 @@ function TodoEditorSheet({
   onOpenReminder: () => void;
   onSave: () => void;
 }) {
+  const { palette, styles } = useTodoTheme();
+
   return (
     <Modal animationType="slide" statusBarTranslucent transparent visible={visible} onRequestClose={onClose}>
       <KeyboardAvoidingView
@@ -745,7 +807,7 @@ function TodoEditorSheet({
             autoFocus
             multiline
             placeholder="要做些什么？"
-            placeholderTextColor="#94A3B8"
+            placeholderTextColor={palette.textSubtle}
             scrollEnabled={false}
             style={styles.todoInput}
             value={draftTodo?.title ?? ''}
@@ -753,7 +815,7 @@ function TodoEditorSheet({
           />
           <Pressable style={styles.reminderButton} onPress={onOpenReminder}>
             <View style={styles.reminderButtonIcon}>
-              <MaterialIcons name="schedule" size={20} color={AppPalette.brandLight} />
+              <MaterialIcons name="schedule" size={20} color={palette.brandLight} />
             </View>
             <View style={styles.reminderButtonTextGroup}>
               <ThemedText style={styles.reminderButtonTitle}>提醒时间</ThemedText>
@@ -761,7 +823,7 @@ function TodoEditorSheet({
                 {draftTodo?.reminderAt ? formatReminderLabel(draftTodo) : '未设置'}
               </ThemedText>
             </View>
-            <MaterialIcons name="keyboard-arrow-right" size={24} color={AppPalette.textMuted} />
+            <MaterialIcons name="keyboard-arrow-right" size={24} color={palette.textMuted} />
           </Pressable>
         </View>
       </KeyboardAvoidingView>
@@ -792,6 +854,7 @@ function ReminderSheet({
   onClose: () => void;
   onSave: () => void;
 }) {
+  const { palette, styles } = useTodoTheme();
   const selectedDate = useMemo(
     () => parseDateInput(dateInput) ?? getNextReminderDate(),
     [dateInput]
@@ -848,11 +911,11 @@ function ReminderSheet({
               <View style={styles.datePickerContent}>
                 <View style={styles.datePickerHeader}>
                   <Pressable style={styles.datePickerMonthButton} onPress={() => handleChangeDatePickerMonth(-1)}>
-                    <MaterialIcons name="chevron-left" size={22} color={AppPalette.brandLight} />
+                    <MaterialIcons name="chevron-left" size={22} color={palette.brandLight} />
                   </Pressable>
                   <ThemedText style={styles.datePickerMonthText}>{datePickerMonthLabel}</ThemedText>
                   <Pressable style={styles.datePickerMonthButton} onPress={() => handleChangeDatePickerMonth(1)}>
-                    <MaterialIcons name="chevron-right" size={22} color={AppPalette.brandLight} />
+                    <MaterialIcons name="chevron-right" size={22} color={palette.brandLight} />
                   </Pressable>
                 </View>
                 <View style={styles.weekdayRow}>
@@ -957,6 +1020,7 @@ function TimeWheelPicker({
   selectedValue: number;
   onChange: (value: number) => void;
 }) {
+  const { styles } = useTodoTheme();
   const scrollRef = useRef<ScrollView>(null);
   const centerPadding = ((TIME_PICKER_VISIBLE_ROWS - 1) / 2) * TIME_PICKER_ITEM_HEIGHT;
   const selectedIndex = Math.max(
@@ -1043,6 +1107,8 @@ function OptionChip({
   label: string;
   onPress: () => void;
 }) {
+  const { styles } = useTodoTheme();
+
   return (
     <Pressable style={[styles.optionChip, active ? styles.optionChipActive : null]} onPress={onPress}>
       <ThemedText style={[styles.optionChipText, active ? styles.optionChipTextActive : null]}>
@@ -1315,13 +1381,14 @@ function padNumber(value: number) {
   return value.toString().padStart(2, '0');
 }
 
-const styles = StyleSheet.create({
-  // [变更] 修改前: 待办页使用浅灰底、白卡片和亮蓝交互态
-  // [变更] 修改后: 使用深色玻璃卡片、靛青交互态和低饱和辅助文字
-  // [原因] 对齐推广页视觉，同时保留完成、提醒和危险操作的状态区分
+function createStyles(palette: ProductivityPalette) {
+  return StyleSheet.create({
+  // [变更] 修改前: 待办页、列表卡片及弹层固定使用深色 AppPalette
+  // [变更] 修改后: 所有表面与文字颜色由当前生产力页面色板生成
+  // [原因] 浅色模式下待办主页面和编辑流程都需要保持明亮可读
   safeArea: {
     flex: 1,
-    backgroundColor: AppPalette.background,
+    backgroundColor: palette.background,
   },
   panelRoot: {
     flex: 1,
@@ -1338,13 +1405,13 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
   },
   eyebrow: {
-    color: AppPalette.textMuted,
+    color: palette.textMuted,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '600',
   },
   title: {
-    color: AppPalette.text,
+    color: palette.text,
     fontSize: 32,
     lineHeight: 38,
   },
@@ -1354,8 +1421,8 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: AppPalette.brand,
-    shadowColor: AppPalette.brandLight,
+    backgroundColor: palette.brand,
+    shadowColor: palette.brandLight,
     shadowOpacity: 0.25,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 8 },
@@ -1375,7 +1442,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   loadingText: {
-    color: AppPalette.textMuted,
+    color: palette.textMuted,
   },
   emptyCard: {
     // [变更] 修改前: 待办空状态卡片保留玻璃底色、描边和暗色投影
@@ -1388,13 +1455,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   emptyTitle: {
-    color: AppPalette.text,
+    color: palette.text,
     fontSize: 22,
     lineHeight: 28,
     fontWeight: '700',
   },
   emptyDescription: {
-    color: AppPalette.textMuted,
+    color: palette.textMuted,
     fontSize: 15,
     lineHeight: 22,
     textAlign: 'center',
@@ -1404,7 +1471,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 22,
     paddingVertical: 12,
-    backgroundColor: AppPalette.brand,
+    backgroundColor: palette.brand,
   },
   primaryButtonText: {
     color: '#FFFFFF',
@@ -1416,7 +1483,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   sectionTitle: {
-    color: AppPalette.textMuted,
+    color: palette.textMuted,
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '700',
@@ -1437,7 +1504,7 @@ const styles = StyleSheet.create({
     gap: 12,
     borderRadius: 22,
     padding: 16,
-    backgroundColor: AppPalette.surfaceSoft,
+    backgroundColor: palette.surfaceSoft,
   },
   todoCardCompleted: {
     opacity: 0.72,
@@ -1447,7 +1514,7 @@ const styles = StyleSheet.create({
     height: 26,
     borderRadius: 13,
     borderWidth: 2,
-    borderColor: AppPalette.textSubtle,
+    borderColor: palette.textSubtle,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1464,13 +1531,13 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
   },
   todoTitle: {
-    color: AppPalette.text,
+    color: palette.text,
     fontSize: 17,
     lineHeight: 23,
     fontWeight: '700',
   },
   todoTitleDone: {
-    color: AppPalette.textSubtle,
+    color: palette.textSubtle,
   },
   todoTitleStrikeLine: {
     position: 'absolute',
@@ -1478,7 +1545,7 @@ const styles = StyleSheet.create({
     top: 11,
     height: 2,
     borderRadius: 1,
-    backgroundColor: AppPalette.textSubtle,
+    backgroundColor: palette.textSubtle,
   },
   crushShardLayer: {
     ...StyleSheet.absoluteFillObject,
@@ -1487,8 +1554,8 @@ const styles = StyleSheet.create({
   crushShard: {
     position: 'absolute',
     borderRadius: 9,
-    backgroundColor: AppPalette.surfaceElevated,
-    shadowColor: '#0F172A',
+    backgroundColor: palette.surfaceElevated,
+    shadowColor: palette.shadow,
     shadowOpacity: 0.12,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 5 },
@@ -1508,7 +1575,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   reminderText: {
-    color: AppPalette.textMuted,
+    color: palette.textMuted,
     fontSize: 13,
     lineHeight: 18,
   },
@@ -1518,7 +1585,7 @@ const styles = StyleSheet.create({
   },
   sheetBackdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(2, 2, 8, 0.74)',
+    backgroundColor: palette.overlay,
   },
   actionSheet: {
     borderTopLeftRadius: 30,
@@ -1528,8 +1595,8 @@ const styles = StyleSheet.create({
     paddingBottom: 26,
     gap: 12,
     borderWidth: 1,
-    borderColor: AppPalette.border,
-    backgroundColor: AppPalette.surfaceElevated,
+    borderColor: palette.border,
+    backgroundColor: palette.surfaceElevated,
   },
   editorSheet: {
     borderTopLeftRadius: 30,
@@ -1539,8 +1606,8 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
     gap: 16,
     borderWidth: 1,
-    borderColor: AppPalette.border,
-    backgroundColor: AppPalette.surfaceElevated,
+    borderColor: palette.border,
+    backgroundColor: palette.surfaceElevated,
   },
   reminderSheet: {
     borderTopLeftRadius: 30,
@@ -1551,8 +1618,8 @@ const styles = StyleSheet.create({
     paddingBottom: 26,
     gap: 18,
     borderWidth: 1,
-    borderColor: AppPalette.border,
-    backgroundColor: AppPalette.surfaceElevated,
+    borderColor: palette.border,
+    backgroundColor: palette.surfaceElevated,
   },
   reminderSheetScrollContent: {
     gap: 18,
@@ -1563,7 +1630,7 @@ const styles = StyleSheet.create({
     width: 44,
     height: 5,
     borderRadius: 999,
-    backgroundColor: AppPalette.textSubtle,
+    backgroundColor: palette.textSubtle,
   },
   sheetHeader: {
     flexDirection: 'row',
@@ -1571,13 +1638,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   sheetTitle: {
-    color: AppPalette.text,
+    color: palette.text,
     fontSize: 20,
     lineHeight: 26,
     fontWeight: '800',
   },
   actionSheetTitle: {
-    color: AppPalette.text,
+    color: palette.text,
     fontSize: 18,
     lineHeight: 24,
     fontWeight: '800',
@@ -1589,10 +1656,10 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    backgroundColor: AppPalette.surfaceSoft,
+    backgroundColor: palette.surfaceSoft,
   },
   actionSheetButtonText: {
-    color: AppPalette.text,
+    color: palette.text,
     fontSize: 16,
     lineHeight: 20,
     fontWeight: '700',
@@ -1605,10 +1672,10 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingVertical: 15,
     alignItems: 'center',
-    backgroundColor: 'rgba(99, 102, 241, 0.16)',
+    backgroundColor: palette.brandSoft,
   },
   actionSheetCancelText: {
-    color: AppPalette.brandLight,
+    color: palette.brandLight,
     fontSize: 16,
     lineHeight: 20,
     fontWeight: '800',
@@ -1617,10 +1684,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 16,
     paddingVertical: 8,
-    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    backgroundColor: palette.brandSoft,
   },
   saveButtonText: {
-    color: AppPalette.brandLight,
+    color: palette.brandLight,
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '800',
@@ -1629,10 +1696,10 @@ const styles = StyleSheet.create({
     minHeight: 110,
     borderRadius: 22,
     padding: 18,
-    color: AppPalette.text,
+    color: palette.text,
     fontSize: 20,
     lineHeight: 28,
-    backgroundColor: AppPalette.surfaceSoft,
+    backgroundColor: palette.surfaceSoft,
     textAlignVertical: 'top',
   },
   reminderButton: {
@@ -1641,7 +1708,7 @@ const styles = StyleSheet.create({
     gap: 12,
     borderRadius: 20,
     padding: 14,
-    backgroundColor: AppPalette.surfaceSoft,
+    backgroundColor: palette.surfaceSoft,
   },
   reminderButtonIcon: {
     width: 38,
@@ -1649,20 +1716,20 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    backgroundColor: palette.brandSoft,
   },
   reminderButtonTextGroup: {
     flex: 1,
     gap: 2,
   },
   reminderButtonTitle: {
-    color: AppPalette.text,
+    color: palette.text,
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '700',
   },
   reminderButtonDescription: {
-    color: AppPalette.textMuted,
+    color: palette.textMuted,
     fontSize: 13,
     lineHeight: 18,
   },
@@ -1670,7 +1737,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   optionLabel: {
-    color: AppPalette.textMuted,
+    color: palette.textMuted,
     fontSize: 14,
     lineHeight: 18,
     fontWeight: '700',
@@ -1678,7 +1745,7 @@ const styles = StyleSheet.create({
   datePickerContent: {
     borderRadius: 20,
     padding: 12,
-    backgroundColor: AppPalette.surfaceSoft,
+    backgroundColor: palette.surfaceSoft,
     gap: 10,
   },
   datePickerHeader: {
@@ -1692,10 +1759,10 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    backgroundColor: palette.brandSoft,
   },
   datePickerMonthText: {
-    color: AppPalette.text,
+    color: palette.text,
     fontSize: 16,
     lineHeight: 22,
     fontWeight: '800',
@@ -1705,7 +1772,7 @@ const styles = StyleSheet.create({
   },
   weekdayText: {
     flex: 1,
-    color: '#94A3B8',
+    color: palette.textMuted,
     fontSize: 12,
     lineHeight: 16,
     textAlign: 'center',
@@ -1727,16 +1794,16 @@ const styles = StyleSheet.create({
     opacity: 0.35,
   },
   dateGridItemActive: {
-    backgroundColor: AppPalette.brand,
+    backgroundColor: palette.brand,
   },
   dateGridItemText: {
-    color: AppPalette.text,
+    color: palette.text,
     fontSize: 14,
     lineHeight: 18,
     fontWeight: '700',
   },
   dateGridItemTextMuted: {
-    color: '#94A3B8',
+    color: palette.textMuted,
   },
   dateGridItemTextActive: {
     color: '#FFFFFF',
@@ -1744,7 +1811,7 @@ const styles = StyleSheet.create({
   timePickerCard: {
     borderRadius: 20,
     padding: 14,
-    backgroundColor: AppPalette.surfaceSoft,
+    backgroundColor: palette.surfaceSoft,
     gap: 12,
   },
   timePreviewBadge: {
@@ -1752,16 +1819,16 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 14,
     paddingVertical: 8,
-    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    backgroundColor: palette.brandSoft,
   },
   timePreviewText: {
-    color: AppPalette.brandLight,
+    color: palette.brandLight,
     fontSize: 18,
     lineHeight: 22,
     fontWeight: '800',
   },
   timePickerSubTitle: {
-    color: AppPalette.textMuted,
+    color: palette.textMuted,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '700',
@@ -1778,7 +1845,7 @@ const styles = StyleSheet.create({
   },
   timeWheelDivider: {
     marginTop: 20,
-    color: '#94A3B8',
+    color: palette.textMuted,
     fontSize: 28,
     lineHeight: 32,
     fontWeight: '700',
@@ -1788,7 +1855,7 @@ const styles = StyleSheet.create({
     height: TIME_PICKER_ITEM_HEIGHT * TIME_PICKER_VISIBLE_ROWS,
     overflow: 'hidden',
     borderRadius: 18,
-    backgroundColor: AppPalette.surface,
+    backgroundColor: palette.surface,
   },
   timeWheelSelectionFrame: {
     position: 'absolute',
@@ -1797,7 +1864,7 @@ const styles = StyleSheet.create({
     right: 8,
     height: TIME_PICKER_ITEM_HEIGHT,
     borderRadius: 14,
-    backgroundColor: 'rgba(99, 102, 241, 0.18)',
+    backgroundColor: palette.brandSoft,
   },
   timeWheelContent: {
     paddingHorizontal: 8,
@@ -1808,13 +1875,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   timeWheelItemText: {
-    color: AppPalette.textMuted,
+    color: palette.textMuted,
     fontSize: 18,
     lineHeight: 22,
     fontWeight: '700',
   },
   timeWheelItemTextActive: {
-    color: AppPalette.brandLight,
+    color: palette.brandLight,
   },
   chipRow: {
     flexDirection: 'row',
@@ -1825,13 +1892,13 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: AppPalette.surfaceSoft,
+    backgroundColor: palette.surfaceSoft,
   },
   optionChipActive: {
-    backgroundColor: AppPalette.brand,
+    backgroundColor: palette.brand,
   },
   optionChipText: {
-    color: AppPalette.textMuted,
+    color: palette.textMuted,
     fontSize: 14,
     lineHeight: 18,
     fontWeight: '700',
@@ -1843,11 +1910,11 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    color: AppPalette.text,
+    color: palette.text,
     fontSize: 18,
     lineHeight: 24,
     fontWeight: '700',
-    backgroundColor: AppPalette.surfaceSoft,
+    backgroundColor: palette.surfaceSoft,
   },
   sheetActionRow: {
     flexDirection: 'row',
@@ -1859,10 +1926,10 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingVertical: 15,
     alignItems: 'center',
-    backgroundColor: AppPalette.surfaceSoft,
+    backgroundColor: palette.surfaceSoft,
   },
   clearButtonText: {
-    color: AppPalette.textMuted,
+    color: palette.textMuted,
     fontSize: 16,
     lineHeight: 20,
     fontWeight: '800',
@@ -1872,7 +1939,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingVertical: 15,
     alignItems: 'center',
-    backgroundColor: AppPalette.brand,
+    backgroundColor: palette.brand,
   },
   confirmButtonText: {
     color: '#FFFFFF',
@@ -1881,3 +1948,4 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 });
+}
