@@ -265,6 +265,28 @@ function addDays(date: Date, days: number) {
   return nextDate;
 }
 
+function getDaysInMonth(year: number, month: number) {
+  return new Date(year, month + 1, 0).getDate();
+}
+
+/**
+ * 按自然月偏移生成日期，目标月份天数不足时回落到月末。
+ *
+ * @param {Date} date - 参考日期
+ * @param {number} monthOffset - 相对月份偏移，负数表示向前
+ * @returns {Date} 保留自然月语义且不会自动进位的日期
+ * @example
+ *   formatDateKey(addCalendarMonthsClamped(new Date(2026, 2, 31), -1)) // => '2026-02-28'
+ */
+function addCalendarMonthsClamped(date: Date, monthOffset: number) {
+  const targetMonthIndex = date.getFullYear() * 12 + date.getMonth() + monthOffset;
+  const targetYear = Math.floor(targetMonthIndex / 12);
+  const targetMonth = targetMonthIndex - targetYear * 12;
+  const targetDay = Math.min(date.getDate(), getDaysInMonth(targetYear, targetMonth));
+
+  return new Date(targetYear, targetMonth, targetDay);
+}
+
 /**
  * 根据扇形图筛选维度计算滚动时间区间。
  *
@@ -286,20 +308,20 @@ function getBillCompositionDateRange(range: BillCompositionRange, referenceDate:
   }
 
   if (range === 'month') {
-    const monthStart = new Date(todayStart);
-
-    monthStart.setMonth(monthStart.getMonth() - 1);
     return {
-      start: monthStart,
+      // [变更] 修改前: 使用 setMonth 直接回退月份
+      // [变更] 修改后: 按自然月回退并在月末场景 clamp 到目标月最后一天
+      // [原因] 避免 3 月 31 日回退一月被 Date 自动进位，导致统计窗口截短
+      start: addCalendarMonthsClamped(todayStart, -1),
       end: tomorrowStart,
     };
   }
 
-  const yearStart = new Date(todayStart);
-
-  yearStart.setFullYear(yearStart.getFullYear() - 1);
   return {
-    start: yearStart,
+    // [变更] 修改前: 使用 setFullYear 直接回退年份
+    // [变更] 修改后: 复用自然月 clamp 逻辑回退 12 个月
+    // [原因] 避免闰日回退一年被 Date 自动进位到 3 月 1 日
+    start: addCalendarMonthsClamped(todayStart, -12),
     end: tomorrowStart,
   };
 }
