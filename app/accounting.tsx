@@ -16,7 +16,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Svg, { Line, Rect } from 'react-native-svg';
+import Svg, { Circle, Line, Path, Rect } from 'react-native-svg';
 import { getProductivityPalette } from '@/constants/productivity-theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { createAccountingStyles } from '@/styles/accountStyle';
@@ -49,6 +49,19 @@ const MONTH_OPTIONS = Array.from({ length: 12 }, (_item, index) => index + 1);
 const ASSET_RANGE_OPTIONS = ['近7日', '近一个月', '近1年'] as const;
 const STOCK_CHART_WIDTH = 300;
 const STOCK_CHART_HEIGHT = 132;
+const PIE_CHART_SIZE = 136;
+const PIE_CHART_CENTER = PIE_CHART_SIZE / 2;
+const PIE_CHART_RADIUS = 58;
+const BILL_COMPOSITION_COLORS = [
+  '#3370FF',
+  '#16D6B0',
+  '#F59E0B',
+  '#EF4444',
+  '#8B5CF6',
+  '#06B6D4',
+  '#F97316',
+  '#84CC16',
+] as const;
 
 const SECURITY_OPTIONS: SecurityTrendResult[] = [
   {
@@ -106,6 +119,16 @@ const SECURITY_OPTIONS: SecurityTrendResult[] = [
 
 type AccountingTab = 'bill' | 'asset';
 type BillQueryScope = 'month' | 'year';
+type BillCompositionRange = 'yesterday' | 'month' | 'year';
+
+const BILL_COMPOSITION_RANGE_OPTIONS: readonly {
+  value: BillCompositionRange;
+  label: string;
+}[] = [
+  { value: 'yesterday', label: '昨日' },
+  { value: 'month', label: '近一月' },
+  { value: 'year', label: '近一年' },
+];
 
 type TransactionGroup = {
   dateKey: string;
@@ -124,6 +147,27 @@ type TransactionGroup = {
 type EntryActionTarget = {
   id: string;
   title: string;
+};
+
+type BillCompositionBucket = {
+  id: string;
+  label: string;
+  amount: number;
+  percent: number;
+  color: string;
+};
+
+type BillCompositionSection = {
+  incomeExpenseType: AccountingEntryRecord['incomeExpenseType'];
+  title: string;
+  total: number;
+  buckets: BillCompositionBucket[];
+};
+
+type PieSegment = BillCompositionBucket & {
+  startAngle: number;
+  endAngle: number;
+  isFullCircle: boolean;
 };
 
 function getValidDate(input: string) {
@@ -210,6 +254,56 @@ function isDateInRange(date: Date, start: Date, end: Date) {
   return timestamp >= start.getTime() && timestamp < end.getTime();
 }
 
+function getStartOfDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDays(date: Date, days: number) {
+  const nextDate = new Date(date);
+
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate;
+}
+
+/**
+ * 根据扇形图筛选维度计算滚动时间区间。
+ *
+ * @param {BillCompositionRange} range - 用户选择的统计维度
+ * @param {Date} referenceDate - 打开统计弹层时的参考日期
+ * @returns {{ start: Date; end: Date }} 左闭右开的账单筛选时间范围
+ * @example
+ *   getBillCompositionDateRange('yesterday', new Date('2026-07-24'))
+ */
+function getBillCompositionDateRange(range: BillCompositionRange, referenceDate: Date) {
+  const todayStart = getStartOfDay(referenceDate);
+  const tomorrowStart = addDays(todayStart, 1);
+
+  if (range === 'yesterday') {
+    return {
+      start: addDays(todayStart, -1),
+      end: todayStart,
+    };
+  }
+
+  if (range === 'month') {
+    const monthStart = new Date(todayStart);
+
+    monthStart.setMonth(monthStart.getMonth() - 1);
+    return {
+      start: monthStart,
+      end: tomorrowStart,
+    };
+  }
+
+  const yearStart = new Date(todayStart);
+
+  yearStart.setFullYear(yearStart.getFullYear() - 1);
+  return {
+    start: yearStart,
+    end: tomorrowStart,
+  };
+}
+
 function getRemainingDaysInMonth(date: Date) {
   const today = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const nextMonth = new Date(date.getFullYear(), date.getMonth() + 1, 1);
@@ -267,6 +361,154 @@ function calculateRangeBalance(sourceEntries: AccountingEntryRecord[], start: Da
     const amount = Number(entry.amount) || 0;
     return entry.incomeExpenseType === '收入' ? total + amount : total - amount;
   }, 0);
+}
+
+/**
+ * 生成单个收支类型的分类组成数据。
+ *
+ * @param {AccountingEntryRecord[]} sourceEntries - 本地账单记录列表
+ * @param {AccountingEntryRecord['incomeExpenseType']} incomeExpenseType - 支出或收入
+ * @param {Date} start - 统计开始时间，包含
+ * @param {Date} end - 统计结束时间，不包含
+ * @returns {{ total: number; buckets: BillCompositionBucket[] }} 扇形图总额和分类占比
+ * @example
+ *   buildBillCompositionBuckets(entries, '支出', start, end)
+ */
+function buildBillCompositionBuckets(
+  sourceEntries: AccountingEntryRecord[],
+  incomeExpenseType: AccountingEntryRecord['incomeExpenseType'],
+  start: Date,
+  end: Date
+) {
+  const categoryAmountMap = new Map<string, number>();
+
+  // 格式化: 账单记录 → 按收支类型和时间区间过滤后按 billType 汇总 → 分类金额映射
+  // 说明: 扇形图使用同一份账单数据分别展示支出与入账组成
+  sourceEntries.forEach((entry) => {
+    const parsedDate = parseEntryDate(entry);
+    const amount = Number(entry.amount) || 0;
+
+    if (
+      entry.incomeExpenseType !== incomeExpenseType ||
+      amount <= 0 ||
+      !isDateInRange(parsedDate, start, end)
+    ) {
+      return;
+    }
+
+    const categoryName = entry.billType.trim() || '未分类';
+    categoryAmountMap.set(categoryName, (categoryAmountMap.get(categoryName) ?? 0) + amount);
+  });
+
+  const total = Array.from(categoryAmountMap.values()).reduce((sum, amount) => sum + amount, 0);
+  const buckets = Array.from(categoryAmountMap.entries())
+    .sort((left, right) => right[1] - left[1])
+    .map(([label, amount], index) => ({
+      id: `${incomeExpenseType}-${label}`,
+      label,
+      amount,
+      percent: total > 0 ? amount / total : 0,
+      color: BILL_COMPOSITION_COLORS[index % BILL_COMPOSITION_COLORS.length],
+    }));
+
+  return { total, buckets };
+}
+
+/**
+ * 生成支出和入账两组扇形统计数据。
+ *
+ * @param {AccountingEntryRecord[]} sourceEntries - 本地账单记录列表
+ * @param {Date} start - 统计开始时间，包含
+ * @param {Date} end - 统计结束时间，不包含
+ * @returns {BillCompositionSection[]} 支出和入账的分类组成
+ * @example
+ *   buildBillCompositionSections(entries, start, end)
+ */
+function buildBillCompositionSections(
+  sourceEntries: AccountingEntryRecord[],
+  start: Date,
+  end: Date
+): BillCompositionSection[] {
+  const expenseComposition = buildBillCompositionBuckets(sourceEntries, '支出', start, end);
+  const incomeComposition = buildBillCompositionBuckets(sourceEntries, '收入', start, end);
+
+  return [
+    {
+      incomeExpenseType: '支出',
+      title: '支出组成',
+      ...expenseComposition,
+    },
+    {
+      incomeExpenseType: '收入',
+      title: '入账组成',
+      ...incomeComposition,
+    },
+  ];
+}
+
+function getBillCompositionRangeLabel(range: BillCompositionRange) {
+  return BILL_COMPOSITION_RANGE_OPTIONS.find((option) => option.value === range)?.label ?? '近一月';
+}
+
+function getPiePoint(center: number, radius: number, angle: number) {
+  const radians = ((angle - 90) * Math.PI) / 180;
+
+  return {
+    x: center + radius * Math.cos(radians),
+    y: center + radius * Math.sin(radians),
+  };
+}
+
+/**
+ * 将角度区间转换为 SVG 扇形 Path。
+ *
+ * @param {number} center - 圆心坐标
+ * @param {number} radius - 扇形半径
+ * @param {number} startAngle - 起始角度
+ * @param {number} endAngle - 结束角度
+ * @returns {string} SVG Path 的 d 属性
+ * @example
+ *   getPieSlicePath(68, 58, 0, 90)
+ */
+function getPieSlicePath(center: number, radius: number, startAngle: number, endAngle: number) {
+  const start = getPiePoint(center, radius, endAngle);
+  const end = getPiePoint(center, radius, startAngle);
+  const largeArcFlag = endAngle - startAngle > 180 ? 1 : 0;
+
+  return [
+    `M ${center} ${center}`,
+    `L ${start.x} ${start.y}`,
+    `A ${radius} ${radius} 0 ${largeArcFlag} 0 ${end.x} ${end.y}`,
+    'Z',
+  ].join(' ');
+}
+
+/**
+ * 将分类占比转换为扇形图片段。
+ *
+ * @param {BillCompositionBucket[]} buckets - 已按金额降序排列的分类占比
+ * @returns {PieSegment[]} 可直接渲染为 SVG 的扇形片段
+ * @example
+ *   buildPieSegments([{ percent: 0.5 }, { percent: 0.5 }])
+ */
+function buildPieSegments(buckets: BillCompositionBucket[]): PieSegment[] {
+  let cursorAngle = 0;
+
+  return buckets.map((bucket, index) => {
+    const isLastSegment = index === buckets.length - 1;
+    const sweepAngle = isLastSegment ? 360 - cursorAngle : bucket.percent * 360;
+    const startAngle = cursorAngle;
+    const endAngle = cursorAngle + sweepAngle;
+
+    cursorAngle = endAngle;
+
+    return {
+      ...bucket,
+      startAngle,
+      endAngle,
+      isFullCircle: buckets.length === 1,
+    };
+  });
 }
 
 /**
@@ -421,6 +663,10 @@ export default function AccountingScreen() {
   const [billPickerYear, setBillPickerYear] = useState(() => new Date().getFullYear());
   const [billPickerMonth, setBillPickerMonth] = useState(() => new Date().getMonth() + 1);
   const [isBillPeriodModalVisible, setIsBillPeriodModalVisible] = useState(false);
+  const [selectedCompositionRange, setSelectedCompositionRange] =
+    useState<BillCompositionRange>('month');
+  const [compositionReferenceDate, setCompositionReferenceDate] = useState(() => new Date());
+  const [isBillCompositionModalVisible, setIsBillCompositionModalVisible] = useState(false);
   const [selectedEntryAction, setSelectedEntryAction] = useState<EntryActionTarget | null>(null);
   const [entryPendingDelete, setEntryPendingDelete] = useState<EntryActionTarget | null>(null);
   const [monthlyBudgetRecord, setMonthlyBudgetRecord] = useState<AccountingMonthlyBudgetRecord>(() => ({
@@ -519,6 +765,19 @@ export default function AccountingScreen() {
   const monthlyBalance = monthlySummary.income - monthlySummary.expense;
   const monthlySummaryText = `${billQueryScope === 'year' ? '年收入' : '月收入'}: ¥${monthlySummary.income.toFixed(2)}  `;
   const monthlyBalanceText = `${billQueryScope === 'year' ? '年支出' : '月支出'}: ¥${monthlySummary.expense.toFixed(2)}`;
+  const billCompositionDateRange = useMemo(
+    () => getBillCompositionDateRange(selectedCompositionRange, compositionReferenceDate),
+    [compositionReferenceDate, selectedCompositionRange]
+  );
+  const billCompositionSections = useMemo(
+    () => buildBillCompositionSections(
+      entries,
+      billCompositionDateRange.start,
+      billCompositionDateRange.end
+    ),
+    [billCompositionDateRange.end, billCompositionDateRange.start, entries]
+  );
+  const billCompositionRangeLabel = getBillCompositionRangeLabel(selectedCompositionRange);
   const entriesBalance = useMemo(() => calculateEntriesBalance(entries), [entries]);
   const displayedTotalAsset = totalAsset ?? entriesBalance;
   const assetYearBalance = useMemo(
@@ -851,6 +1110,15 @@ export default function AccountingScreen() {
     } finally {
       setIsLoadingSecurityTrend(false);
     }
+  };
+
+  const openBillCompositionModal = () => {
+    setCompositionReferenceDate(new Date());
+    setIsBillCompositionModalVisible(true);
+  };
+
+  const closeBillCompositionModal = () => {
+    setIsBillCompositionModalVisible(false);
   };
 
   const openBillPeriodModal = (scope: BillQueryScope) => {
@@ -1324,14 +1592,17 @@ export default function AccountingScreen() {
                     <MaterialIcons name="keyboard-arrow-down" size={18} color={palette.text} />
                   </Pressable>
 
-                  <View style={styles.headerActions}>
-                    <View style={styles.iconButton}>
-                      <MaterialIcons name="calendar-today" size={21} color={palette.text} />
-                    </View>
-                    <View style={styles.iconButton}>
-                      <MaterialIcons name="insert-chart-outlined" size={22} color={palette.text} />
-                    </View>
-                  </View>
+                  {/*
+                   * 渲染位置: 账单页顶部右侧
+                   * 展示内容: 扇形图统计入口，替换原先仅展示的日历和柱状图图标
+                   * 数据来源: openBillCompositionModal 弹层开关
+                   */}
+                  <Pressable
+                    accessibilityLabel="查看账单组成扇形图"
+                    style={styles.iconButton}
+                    onPress={openBillCompositionModal}>
+                    <MaterialIcons name="pie-chart" size={24} color={palette.text} />
+                  </Pressable>
                 </View>
 
                 {/*
@@ -1508,6 +1779,145 @@ export default function AccountingScreen() {
 
       <Modal
         transparent
+        visible={isBillCompositionModalVisible}
+        animationType="fade"
+        onRequestClose={closeBillCompositionModal}>
+        <View style={styles.billCompositionBackdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={closeBillCompositionModal} />
+          {/*
+           * 渲染位置: 账单页顶部扇形图入口点击后的统计弹层
+           * 展示内容: 昨日/近一月/近一年维度下的支出组成和入账组成
+           * 数据来源: entries 本地账单记录、selectedCompositionRange 时间维度
+           */}
+          <View style={styles.billCompositionCard}>
+            <View style={styles.billCompositionHeader}>
+              <View style={styles.billCompositionTitleGroup}>
+                <ThemedText style={styles.billCompositionTitle}>收支组成</ThemedText>
+                <ThemedText style={styles.billCompositionSubtitle}>
+                  {billCompositionRangeLabel}分类占比
+                </ThemedText>
+              </View>
+              <Pressable style={styles.billCompositionCloseButton} onPress={closeBillCompositionModal}>
+                <MaterialIcons name="close" size={20} color={palette.textMuted} />
+              </Pressable>
+            </View>
+
+            <View style={styles.billCompositionRangeRow}>
+              {BILL_COMPOSITION_RANGE_OPTIONS.map((option) => (
+                <Pressable
+                  key={option.value}
+                  onPress={() => setSelectedCompositionRange(option.value)}
+                  style={[
+                    styles.billCompositionRangeChip,
+                    selectedCompositionRange === option.value && styles.billCompositionRangeChipActive,
+                  ]}>
+                  <ThemedText
+                    style={[
+                      styles.billCompositionRangeText,
+                      selectedCompositionRange === option.value && styles.billCompositionRangeTextActive,
+                    ]}>
+                    {option.label}
+                  </ThemedText>
+                </Pressable>
+              ))}
+            </View>
+
+            <ScrollView
+              style={styles.billCompositionScroll}
+              contentContainerStyle={styles.billCompositionScrollContent}
+              showsVerticalScrollIndicator={false}>
+              {billCompositionSections.map((section) => {
+                // 格式化: 分类金额占比 → 转为 SVG 扇形角度 → 扇形图片段
+                // 说明: 支出和入账各自独立计算 100%，便于比较各自组成成分
+                const pieSegments = buildPieSegments(section.buckets);
+                const isIncomeSection = section.incomeExpenseType === '收入';
+
+                return (
+                  <View key={section.incomeExpenseType} style={styles.billCompositionSection}>
+                    <View style={styles.billCompositionSectionHeader}>
+                      <ThemedText style={styles.billCompositionSectionTitle}>{section.title}</ThemedText>
+                      <ThemedText
+                        style={[
+                          styles.billCompositionSectionTotal,
+                          isIncomeSection
+                            ? styles.billCompositionSectionTotalIncome
+                            : styles.billCompositionSectionTotalExpense,
+                        ]}>
+                        ¥{section.total.toFixed(2)}
+                      </ThemedText>
+                    </View>
+
+                    {section.buckets.length > 0 ? (
+                      <View style={styles.billCompositionChartRow}>
+                        <View style={styles.billCompositionPieWrap}>
+                          <Svg
+                            width={PIE_CHART_SIZE}
+                            height={PIE_CHART_SIZE}
+                            viewBox={`0 0 ${PIE_CHART_SIZE} ${PIE_CHART_SIZE}`}>
+                            {pieSegments.map((segment) => (
+                              segment.isFullCircle ? (
+                                <Circle
+                                  key={segment.id}
+                                  cx={PIE_CHART_CENTER}
+                                  cy={PIE_CHART_CENTER}
+                                  r={PIE_CHART_RADIUS}
+                                  fill={segment.color}
+                                />
+                              ) : (
+                                <Path
+                                  key={segment.id}
+                                  d={getPieSlicePath(
+                                    PIE_CHART_CENTER,
+                                    PIE_CHART_RADIUS,
+                                    segment.startAngle,
+                                    segment.endAngle
+                                  )}
+                                  fill={segment.color}
+                                  stroke={palette.surfaceElevated}
+                                  strokeWidth={1}
+                                />
+                              )
+                            ))}
+                          </Svg>
+                        </View>
+
+                        <View style={styles.billCompositionLegendList}>
+                          {section.buckets.map((bucket) => (
+                            <View key={bucket.id} style={styles.billCompositionLegendItem}>
+                              <View
+                                style={[
+                                  styles.billCompositionLegendDot,
+                                  { backgroundColor: bucket.color },
+                                ]}
+                              />
+                              <View style={styles.billCompositionLegendTextGroup}>
+                                <ThemedText style={styles.billCompositionLegendLabel}>{bucket.label}</ThemedText>
+                                <ThemedText style={styles.billCompositionLegendMeta}>
+                                  ¥{bucket.amount.toFixed(2)} · {(bucket.percent * 100).toFixed(1)}%
+                                </ThemedText>
+                              </View>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+                    ) : (
+                      <View style={styles.billCompositionEmpty}>
+                        <MaterialIcons name="pie-chart-outline" size={26} color={palette.textMuted} />
+                        <ThemedText style={styles.billCompositionEmptyText}>
+                          {billCompositionRangeLabel}暂无{isIncomeSection ? '入账' : '支出'}记录
+                        </ThemedText>
+                      </View>
+                    )}
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
         visible={selectedEntryAction !== null}
         animationType="fade"
         onRequestClose={closeEntryActionModal}>
@@ -1606,10 +2016,11 @@ export default function AccountingScreen() {
 
       <Modal transparent visible={isBudgetModalVisible} animationType="fade">
         <KeyboardAvoidingView
-          // [变更] 修改前: 预算金额弹层保持屏幕居中，键盘出现后可能覆盖输入与保存操作
-          // [变更] 修改后: 原生端使用键盘避让容器重新计算弹层可用高度
-          // [原因] 金额输入和操作按钮需要始终处于键盘上方
-          behavior={Platform.select({ android: 'height', ios: 'padding' })}
+          // [变更] 修改前: Android 使用 height 模式按键盘高度重算预算弹层布局
+          // [变更] 修改后: 仅 iOS 启用 padding 避让，Android 交给系统键盘窗口处理
+          // [原因] 避免预算输入框聚焦时弹层循环重排造成上下跳动闪烁
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          enabled={Platform.OS === 'ios'}
           style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <ThemedText style={styles.modalTitle}>设置本月预算</ThemedText>
@@ -1647,7 +2058,11 @@ export default function AccountingScreen() {
 
       <Modal transparent visible={isAssetModalVisible} animationType="fade" onRequestClose={closeAssetModal}>
         <KeyboardAvoidingView
-          behavior={Platform.select({ android: 'height', ios: 'padding' })}
+          // [变更] 修改前: Android 使用 height 模式按键盘高度重算资产弹层布局
+          // [变更] 修改后: 仅 iOS 启用 padding 避让，Android 交给系统键盘窗口处理
+          // [原因] 避免金额输入类弹层在聚焦时出现同类上下跳动
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          enabled={Platform.OS === 'ios'}
           style={styles.modalBackdrop}>
           <Pressable style={StyleSheet.absoluteFill} onPress={closeAssetModal} />
           {/*
@@ -1695,7 +2110,11 @@ export default function AccountingScreen() {
         animationType="fade"
         onRequestClose={closeAssetSearchModal}>
         <KeyboardAvoidingView
-          behavior={Platform.select({ android: 'height', ios: 'padding' })}
+          // [变更] 修改前: Android 使用 height 模式按键盘高度重算搜索弹层布局
+          // [变更] 修改后: 仅 iOS 启用 padding 避让，Android 交给系统键盘窗口处理
+          // [原因] 避免搜索输入聚焦时弹层高度变化导致闪烁
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          enabled={Platform.OS === 'ios'}
           style={styles.assetSearchModalBackdrop}>
           <Pressable style={StyleSheet.absoluteFill} onPress={closeAssetSearchModal} />
           {/*
