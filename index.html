@@ -3,8 +3,54 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Astesia — 你的全能生活助手</title>
+  <title>Astesia - AI 生活助手 | 记账、待办、天气、笔记一站式管理</title>
   <meta name="description" content="Astesia 是一款集天气、笔记、待办、记账、AI 助手、邮件、股票基金于一体的跨平台个人生活助手应用。">
+  <!-- [变更] 修改前: 首页仅提供基础 title 和 description
+       [变更] 修改后: 补充 canonical、社交分享和结构化数据等 SEO 标签
+       [原因] 帮助搜索引擎识别 Astesia 官网首页并提升收录质量 -->
+  <meta name="robots" content="index, follow">
+  <meta name="keywords" content="Astesia,AI 生活助手,AI 助手,记账 App,待办 App,天气助手,笔记 App,股票基金,跨平台生活应用">
+  <meta name="author" content="Astesia">
+  <meta name="theme-color" content="#6366f1">
+  <link rel="canonical" href="https://astesia.cc/">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Astesia">
+  <meta property="og:title" content="Astesia - AI 生活助手 | 记账、待办、天气、笔记一站式管理">
+  <meta property="og:description" content="Astesia 是一款集天气、笔记、待办、记账、AI 助手、邮件、股票基金于一体的跨平台个人生活助手应用。">
+  <meta property="og:url" content="https://astesia.cc/">
+  <meta property="og:image" content="https://astesia.cc/icons/icon-512.png">
+  <meta property="og:locale" content="zh_CN">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Astesia - AI 生活助手 | 记账、待办、天气、笔记一站式管理">
+  <meta name="twitter:description" content="用 Astesia 管理天气、笔记、待办、记账、AI 助手、邮件和股票基金，跨平台同步你的高效生活。">
+  <meta name="twitter:image" content="https://astesia.cc/icons/icon-512.png">
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Astesia",
+      "alternateName": "Astesia AI 生活助手",
+      "applicationCategory": "ProductivityApplication",
+      "operatingSystem": "Android, iOS, Web, PWA",
+      "url": "https://astesia.cc/",
+      "downloadUrl": "https://astesia.cc/downloads/astesia-1.0.0-v4.apk",
+      "description": "Astesia 是一款集天气、笔记、待办、记账、AI 助手、邮件、股票基金于一体的跨平台个人生活助手应用。",
+      "image": "https://astesia.cc/icons/icon-512.png",
+      "softwareVersion": "1.0.0",
+      "author": {
+        "@type": "Organization",
+        "name": "Astesia"
+      },
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "CNY"
+      }
+    }
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -182,7 +228,10 @@
           AI 能读懂你屏幕上的内容，随时为你解答、总结、提供建议。
         </p>
         <div class="flex flex-wrap items-center gap-4">
-          <a href="https://github.com/walarknights/Astesia" target="_blank" rel="noopener" class="btn-primary px-7 py-3.5 rounded-xl font-semibold text-white flex items-center gap-2">
+          <!-- [变更] 修改前: Hero 主按钮跳转 GitHub
+               [变更] 修改后: 指向本站托管的 Android 正式签名 APK
+               [原因] 避免 Expo artifact 跨境下载过慢并降低链接过期风险 -->
+          <a href="/downloads/astesia-1.0.0-v4.apk" target="_blank" rel="noopener" aria-label="下载 Astesia Android 正式签名 APK" class="btn-primary px-7 py-3.5 rounded-xl font-semibold text-white flex items-center gap-2">
             <span class="material-symbols-rounded text-xl">rocket_launch</span>
             立即体验
           </a>
@@ -809,16 +858,19 @@
         <span class="gradient-text">更有条理了吗？</span>
       </h2>
       <p class="text-slate-400 text-lg mb-10 max-w-xl mx-auto">
-        开源、免费、跨平台。立即在 GitHub 上获取 Astesia，开启你的高效生活。
+        开源、免费、跨平台。下载 Android 正式包，或在 GitHub 查看源码，开启你的高效生活。
       </p>
       <div class="flex flex-wrap items-center justify-center gap-4">
-        <a href="https://github.com/walarknights/Astesia" target="_blank" rel="noopener" class="btn-primary px-8 py-4 rounded-xl font-semibold text-white flex items-center gap-2 text-lg">
-          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.3-1.7-1.3-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.79 1.2 1.79 1.2 1.04 1.79 2.73 1.27 3.4.97.11-.75.41-1.27.74-1.56-2.55-.29-5.23-1.28-5.23-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.69 5.41-5.25 5.69.42.36.79 1.08.79 2.18v3.23c0 .31.21.68.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>
-          查看源码
-        </a>
-        <a href="https://github.com/walarknights/Astesia" target="_blank" rel="noopener" class="btn-ghost px-8 py-4 rounded-xl font-medium flex items-center gap-2 text-lg text-slate-200">
+        <!-- [变更] 修改前: 下载体验按钮跳转 GitHub
+             [变更] 修改后: 下载体验作为主按钮并指向本站托管的 Android 正式签名 APK
+             [原因] 推广页主操作应直接下载应用，避免用户误点源码入口和 Expo artifact 慢速链路 -->
+        <a href="/downloads/astesia-1.0.0-v4.apk" target="_blank" rel="noopener" aria-label="下载 Astesia Android 正式签名 APK" class="btn-primary px-8 py-4 rounded-xl font-semibold text-white flex items-center gap-2 text-lg">
           <span class="material-symbols-rounded">download</span>
           下载体验
+        </a>
+        <a href="https://github.com/walarknights/Astesia" target="_blank" rel="noopener" class="btn-ghost px-8 py-4 rounded-xl font-medium flex items-center gap-2 text-lg text-slate-200">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.3-1.7-1.3-1.7-1.06-.72.08-.71.08-.71 1.17.08 1.79 1.2 1.79 1.2 1.04 1.79 2.73 1.27 3.4.97.11-.75.41-1.27.74-1.56-2.55-.29-5.23-1.28-5.23-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.69 5.41-5.25 5.69.42.36.79 1.08.79 2.18v3.23c0 .31.21.68.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>
+          查看源码
         </a>
       </div>
     </div>

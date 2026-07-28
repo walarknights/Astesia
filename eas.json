@@ -24,6 +24,17 @@
         "EXPO_PUBLIC_AI_API_HOST": "https://astesia.cc",
         "EXPO_PUBLIC_AKSHARE_API_HOST": "https://astesia.cc"
       }
+    },
+    "production-apk": {
+      "distribution": "internal",
+      "autoIncrement": true,
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_AI_API_HOST": "https://astesia.cc",
+        "EXPO_PUBLIC_AKSHARE_API_HOST": "https://astesia.cc"
+      }
     }
   },
   "submit": {
