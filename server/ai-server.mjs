@@ -3674,7 +3674,7 @@ function escapeHtml(value) {
 async function readConversations(userId) {
   const pool = getDatabasePool();
   const { rows } = await pool.query(`
-    SELECT id, title, messages, created_at, updated_at, title_generated_at
+    SELECT id, title, messages, branches, active_branch_id, created_at, updated_at, title_generated_at
     FROM ai_conversations
     WHERE user_id = $1
     ORDER BY updated_at DESC
@@ -3691,15 +3691,19 @@ async function upsertConversation(userId, conversation) {
       user_id,
       title,
       messages,
+      branches,
+      active_branch_id,
       created_at,
       updated_at,
       title_generated_at
     )
-    VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz, $6::timestamptz, $7::timestamptz)
+    VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7::timestamptz, $8::timestamptz, $9::timestamptz)
     ON CONFLICT (id) DO UPDATE SET
       user_id = EXCLUDED.user_id,
       title = EXCLUDED.title,
       messages = EXCLUDED.messages,
+      branches = EXCLUDED.branches,
+      active_branch_id = EXCLUDED.active_branch_id,
       created_at = LEAST(ai_conversations.created_at, EXCLUDED.created_at),
       updated_at = EXCLUDED.updated_at,
       title_generated_at = EXCLUDED.title_generated_at
@@ -3708,12 +3712,14 @@ async function upsertConversation(userId, conversation) {
       OR ai_conversations.user_id IS NULL
     )
       AND EXCLUDED.updated_at >= ai_conversations.updated_at
-    RETURNING id, title, messages, created_at, updated_at, title_generated_at
+    RETURNING id, title, messages, branches, active_branch_id, created_at, updated_at, title_generated_at
   `, [
     conversation.id,
     userId,
     conversation.title,
     JSON.stringify(conversation.messages),
+    conversation.branches ? JSON.stringify(conversation.branches) : null,
+    conversation.activeBranchId ?? null,
     conversation.createdAt,
     conversation.updatedAt,
     conversation.titleGeneratedAt ?? null,
@@ -3735,7 +3741,7 @@ async function upsertConversation(userId, conversation) {
 async function readConversationById(userId, conversationId) {
   const pool = getDatabasePool();
   const { rows } = await pool.query(`
-    SELECT id, title, messages, created_at, updated_at, title_generated_at
+    SELECT id, title, messages, branches, active_branch_id, created_at, updated_at, title_generated_at
     FROM ai_conversations
     WHERE id = $1
       AND user_id = $2
@@ -3762,6 +3768,8 @@ function normalizeConversationRow(row) {
     id: row.id,
     title: row.title,
     messages: row.messages,
+    branches: row.branches,
+    activeBranchId: row.active_branch_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     titleGeneratedAt: row.title_generated_at,
@@ -3776,26 +3784,61 @@ function normalizeConversationPayload(value) {
   const messages = Array.isArray(value.messages)
     ? value.messages.filter(isStoredMessage)
     : [];
+  const now = new Date().toISOString();
+  // 格式化: 客户端分支数组 → 逐项校验并统一时间 → 可安全写入 JSONB 的会话分支
+  // 说明: 分支快照与当前 messages 同步保存，旧客户端不传 branches 时继续走原有单线会话
+  const branches = Array.isArray(value.branches)
+    ? value.branches
+        .map((branch) => normalizeStoredConversationBranch(branch, now))
+        .filter(Boolean)
+    : [];
+  const activeBranch = branches.find((branch) => branch.id === value.activeBranchId)
+    ?? branches[branches.length - 1];
+  const activeMessages = activeBranch?.messages ?? messages;
 
   if (
     typeof value.id !== 'string'
     || typeof value.title !== 'string'
-    || messages.length === 0
+    || activeMessages.length === 0
   ) {
     return null;
   }
 
-  const now = new Date().toISOString();
-
   return {
     id: value.id,
     title: sanitizeConversationTitle(value.title),
-    messages,
+    messages: activeMessages,
     createdAt: normalizeIsoString(value.createdAt, now),
     updatedAt: normalizeIsoString(value.updatedAt, now),
     titleGeneratedAt: typeof value.titleGeneratedAt === 'string' || value.titleGeneratedAt instanceof Date
       ? normalizeIsoString(value.titleGeneratedAt, now)
       : undefined,
+    branches: branches.length > 0 ? branches : undefined,
+    activeBranchId: activeBranch?.id,
+  };
+}
+
+function normalizeStoredConversationBranch(value, fallbackTime) {
+  if (
+    !value
+    || typeof value !== 'object'
+    || typeof value.id !== 'string'
+    || !Array.isArray(value.messages)
+  ) {
+    return null;
+  }
+
+  const messages = value.messages.filter(isStoredMessage);
+
+  if (messages.length === 0) {
+    return null;
+  }
+
+  return {
+    id: value.id,
+    messages,
+    createdAt: normalizeIsoString(value.createdAt, fallbackTime),
+    updatedAt: normalizeIsoString(value.updatedAt, fallbackTime),
   };
 }
 

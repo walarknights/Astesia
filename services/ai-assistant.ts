@@ -17,6 +17,13 @@ export type AiAssistantMessage = {
   createdAt: string;
 };
 
+export type AiAssistantConversationBranch = {
+  id: string;
+  messages: AiAssistantMessage[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AiAssistantConversation = {
   id: string;
   title: string;
@@ -24,6 +31,8 @@ export type AiAssistantConversation = {
   createdAt: string;
   updatedAt: string;
   titleGeneratedAt?: string;
+  branches?: AiAssistantConversationBranch[];
+  activeBranchId?: string;
 };
 
 export type AiScreenKnowledge = {
@@ -236,6 +245,20 @@ function isAssistantConversation(value: unknown): value is AiAssistantConversati
   );
 }
 
+function isAssistantConversationBranch(value: unknown): value is AiAssistantConversationBranch {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const branch = value as Partial<AiAssistantConversationBranch>;
+  return (
+    typeof branch.id === 'string'
+    && typeof branch.createdAt === 'string'
+    && typeof branch.updatedAt === 'string'
+    && Array.isArray(branch.messages)
+  );
+}
+
 export async function loadAiAssistantMessages() {
   try {
     const storageKey = await getAiAssistantMessagesStorageKey();
@@ -405,14 +428,42 @@ function normalizeConversation(value: AiAssistantConversation): AiAssistantConve
   const messages = Array.isArray(value.messages)
     ? value.messages.filter(isAssistantMessage)
     : [AI_ASSISTANT_WELCOME_MESSAGE];
+  // 格式化: 远端或本地分支快照 → 过滤无效消息并按更新时间排序 → 可直接切换的完整消息分支
+  // 说明: 旧会话没有 branches 字段时继续使用原 messages，保证历史数据向后兼容
+  const branches = Array.isArray(value.branches)
+    ? value.branches
+        .filter(isAssistantConversationBranch)
+        .map(normalizeConversationBranch)
+        .filter((branch) => branch.messages.length > 0)
+        .sort((currentBranch, nextBranch) => (
+          new Date(currentBranch.createdAt).getTime() - new Date(nextBranch.createdAt).getTime()
+        ))
+    : [];
+  const activeBranch = branches.find((branch) => branch.id === value.activeBranchId)
+    ?? branches[branches.length - 1];
+  const normalizedMessages = activeBranch?.messages
+    ?? (messages.length > 0 ? messages : [AI_ASSISTANT_WELCOME_MESSAGE]);
 
   return {
     ...value,
     title: normalizeAiConversationTitle(value.title),
-    messages: messages.length > 0 ? messages : [AI_ASSISTANT_WELCOME_MESSAGE],
+    messages: normalizedMessages,
     createdAt: normalizeIsoString(value.createdAt),
     updatedAt: normalizeIsoString(value.updatedAt),
     titleGeneratedAt: typeof value.titleGeneratedAt === 'string' ? value.titleGeneratedAt : undefined,
+    branches: branches.length > 0 ? branches : undefined,
+    activeBranchId: activeBranch?.id,
+  };
+}
+
+function normalizeConversationBranch(
+  value: AiAssistantConversationBranch
+): AiAssistantConversationBranch {
+  return {
+    id: value.id,
+    messages: value.messages.filter(isAssistantMessage),
+    createdAt: normalizeIsoString(value.createdAt),
+    updatedAt: normalizeIsoString(value.updatedAt),
   };
 }
 

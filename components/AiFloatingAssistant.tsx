@@ -45,6 +45,7 @@ import {
   requestAiModels,
   saveAiAssistantConversation,
   type AiAssistantConversation,
+  type AiAssistantConversationBranch,
   type AiAssistantMessage,
   type AiAssistantStreamStatus,
   type AiModel,
@@ -88,6 +89,11 @@ type ScreenKnowledgeOverride = {
   snapshot: AiScreenKnowledgeSnapshot;
 };
 
+type MessageBranchNavigation = {
+  branches: AiAssistantConversationBranch[];
+  currentIndex: number;
+};
+
 export function AiFloatingAssistant() {
   const pathname = usePathname();
   const routeParams = useGlobalSearchParams();
@@ -118,6 +124,9 @@ export function AiFloatingAssistant() {
   const [activeConversationActionId, setActiveConversationActionId] = useState<string | null>(null);
   const [conversationTitleDraft, setConversationTitleDraft] = useState('');
   const [isConversationTitleEditing, setIsConversationTitleEditing] = useState(false);
+  const [activeUserMessageId, setActiveUserMessageId] = useState<string | null>(null);
+  const [editingUserMessageId, setEditingUserMessageId] = useState<string | null>(null);
+  const [userMessageEditDraft, setUserMessageEditDraft] = useState('');
   const [isTitleSummarizing, setIsTitleSummarizing] = useState(false);
   const [conversationSyncError, setConversationSyncError] = useState<string | null>(null);
   const [isKnowledgeExpanded, setIsKnowledgeExpanded] = useState(false);
@@ -553,11 +562,13 @@ export function AiFloatingAssistant() {
       const nextMessages = typeof updater === 'function'
         ? updater(currentMessages)
         : updater;
-      const nextConversation = {
-        ...currentConversationRef.current,
-        messages: nextMessages,
-        updatedAt: new Date().toISOString(),
-      };
+      // [变更] 修改前: 更新消息时只覆盖会话顶层 messages
+      // [变更] 修改后: 若当前位于分支中，同时更新激活分支快照与顶层 messages 镜像
+      // [原因] 流式回复和后续追问必须持续写入当前分支，不能覆盖其他历史分支
+      const nextConversation = updateActiveConversationMessages(
+        currentConversationRef.current,
+        nextMessages
+      );
 
       messagesRef.current = nextMessages;
       currentConversationRef.current = nextConversation;
@@ -730,6 +741,9 @@ export function AiFloatingAssistant() {
     // [原因] 多轮对话需要保留旧会话，同时让新会话拥有独立 id 与标题
     setDraftMessage('');
     setPendingImageAttachments([]);
+    setActiveUserMessageId(null);
+    setEditingUserMessageId(null);
+    setUserMessageEditDraft('');
     setIsConversationDrawerVisible(false);
     autoScrollEnabledRef.current = true;
     syncConversationToStorage(nextConversation, true);
@@ -749,6 +763,9 @@ export function AiFloatingAssistant() {
     setMessages(conversation.messages);
     setDraftMessage('');
     setPendingImageAttachments([]);
+    setActiveUserMessageId(null);
+    setEditingUserMessageId(null);
+    setUserMessageEditDraft('');
     setIsConversationDrawerVisible(false);
     scrollMessagesToEnd(false);
   }, [scrollMessagesToEnd]);
@@ -807,10 +824,15 @@ export function AiFloatingAssistant() {
     try {
       const title = await requestAiConversationTitle(nextSummaryMessages);
       const now = new Date().toISOString();
+      // [变更] 修改前: 标题总结只替换顶层 messages，分支快照可能仍停留在空回复占位状态
+      // [变更] 修改后: 标题更新前先把最终回复同步进当前激活分支
+      // [原因] 编辑首条消息并自动总结标题时，也必须保证分支与顶层消息完全一致
+      const conversationWithMessages = conversationMessages
+        ? updateActiveConversationMessages(targetConversation, conversationMessages)
+        : targetConversation;
       const nextConversation = {
-        ...targetConversation,
+        ...conversationWithMessages,
         title,
-        messages: conversationMessages ?? targetConversation.messages,
         titleGeneratedAt: now,
         updatedAt: now,
       };
@@ -955,10 +977,14 @@ export function AiFloatingAssistant() {
   }, [isSending]);
 
   const handleMessageListContentChange = useCallback(() => {
+    if (activeUserMessageId || editingUserMessageId) {
+      return;
+    }
+
     if (autoScrollEnabledRef.current) {
       scrollMessagesToEnd();
     }
-  }, [scrollMessagesToEnd]);
+  }, [activeUserMessageId, editingUserMessageId, scrollMessagesToEnd]);
 
   useEffect(() => {
     if (isDrawerVisible && !isHistoryLoading) {
@@ -972,27 +998,29 @@ export function AiFloatingAssistant() {
     activeAiRequestAbortControllerRef.current?.abort();
   }, []);
 
-  const sendMessage = useCallback(async () => {
-    if (isSending) {
-      return;
-    }
-
-    const nextMessage = draftMessage.trim();
-
-    if (!nextMessage) {
+  const runAssistantReply = useCallback(async ({
+    userMessage,
+    assistantMessage,
+    requestMessages,
+    pendingMessages,
+    initialConversation,
+    shouldAutoSummarizeTitle,
+    shouldClearComposer,
+  }: {
+    userMessage: AiAssistantMessage;
+    assistantMessage: AiAssistantMessage;
+    requestMessages: AiAssistantMessage[];
+    pendingMessages: AiAssistantMessage[];
+    initialConversation?: AiAssistantConversation;
+    shouldAutoSummarizeTitle: boolean;
+    shouldClearComposer: boolean;
+  }) => {
+    if (activeAiRequestAbortControllerRef.current) {
       return;
     }
 
     const abortController = new AbortController();
-    const userMessage = createAiAssistantMessage('user', nextMessage);
-    const assistantMessage = createAiAssistantMessage('assistant', '');
-    const requestMessages = [...messagesRef.current, userMessage];
-    const pendingMessages = [...requestMessages, assistantMessage];
     const activeConversationId = currentConversationRef.current.id;
-    const shouldAutoSummarizeTitle = (
-      countUserMessages(requestMessages) === 1
-      && isDefaultAiConversationTitle(currentConversationRef.current.title)
-    );
 
     activeAiRequestAbortControllerRef.current = abortController;
     setIsSending(true);
@@ -1031,9 +1059,26 @@ export function AiFloatingAssistant() {
       // [变更] 修改后: 用户消息只保留输入框文本，附件继续停留在独立附件 UI 中
       // [原因] 屏幕截图当前还未接入多模态发送，不能伪装成用户输入内容
       autoScrollEnabledRef.current = true;
-      updateMessages(pendingMessages);
-      setDraftMessage('');
-      setPendingImageAttachments([]);
+      if (initialConversation) {
+        // [新增] 编辑历史用户消息时先激活新分支，再复用统一的流式回复流程
+        // [原因] 原分支必须完整保留，后续 chunk 只能写入刚创建的分支
+        currentConversationRef.current = initialConversation;
+        messagesRef.current = initialConversation.messages;
+        setCurrentConversation(initialConversation);
+        setMessages(initialConversation.messages);
+        syncConversationToStorage(initialConversation);
+      } else {
+        updateMessages(pendingMessages);
+      }
+
+      if (shouldClearComposer) {
+        setDraftMessage('');
+        setPendingImageAttachments([]);
+      }
+
+      setActiveUserMessageId(null);
+      setEditingUserMessageId(null);
+      setUserMessageEditDraft('');
       scrollMessagesToEnd();
 
       // [变更] 修改前: AI 请求只上传消息内容，不携带当前会话 id
@@ -1101,8 +1146,6 @@ export function AiFloatingAssistant() {
       setStreamStatus('thinking');
     }
   }, [
-    draftMessage,
-    isSending,
     activeScreenKnowledge,
     refreshScreenKnowledge,
     scrollMessagesToEnd,
@@ -1110,7 +1153,140 @@ export function AiFloatingAssistant() {
     shouldIncludeScreenKnowledge,
     isWebSearchEnabled,
     summarizeConversationTitle,
+    syncConversationToStorage,
     updateMessages,
+  ]);
+
+  const sendMessage = useCallback(() => {
+    if (isSending) {
+      return;
+    }
+
+    const nextMessage = draftMessage.trim();
+
+    if (!nextMessage) {
+      return;
+    }
+
+    const userMessage = createAiAssistantMessage('user', nextMessage);
+    const assistantMessage = createAiAssistantMessage('assistant', '');
+    const requestMessages = [...messagesRef.current, userMessage];
+    const pendingMessages = [...requestMessages, assistantMessage];
+    const shouldAutoSummarizeTitle = (
+      countUserMessages(requestMessages) === 1
+      && isDefaultAiConversationTitle(currentConversationRef.current.title)
+    );
+
+    void runAssistantReply({
+      userMessage,
+      assistantMessage,
+      requestMessages,
+      pendingMessages,
+      shouldAutoSummarizeTitle,
+      shouldClearComposer: true,
+    });
+  }, [draftMessage, isSending, runAssistantReply]);
+
+  const startEditingUserMessage = useCallback((message: AiAssistantMessage) => {
+    if (isSending || message.role !== 'user') {
+      return;
+    }
+
+    // [变更] 修改前: 展开编辑框后仍允许消息列表因内容高度变化自动滚到底部
+    // [变更] 修改后: 进入消息编辑态时暂停自动滚底，保持用户当前点击的消息位置稳定
+    // [原因] 编辑卡片变高和键盘状态变化叠加时，会造成抽屉内容上下反复跳动
+    autoScrollEnabledRef.current = false;
+    setActiveUserMessageId(message.id);
+    setEditingUserMessageId(message.id);
+    setUserMessageEditDraft(message.content);
+  }, [isSending]);
+
+  const cancelEditingUserMessage = useCallback(() => {
+    autoScrollEnabledRef.current = false;
+    setEditingUserMessageId(null);
+    setUserMessageEditDraft('');
+  }, []);
+
+  const switchMessageBranch = useCallback((messageIndex: number, offset: -1 | 1) => {
+    if (isSending) {
+      return;
+    }
+
+    const branchNavigation = getMessageBranchNavigation(
+      currentConversationRef.current,
+      messagesRef.current,
+      messageIndex
+    );
+    const nextBranch = branchNavigation?.branches[branchNavigation.currentIndex + offset];
+
+    if (!nextBranch) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const nextConversation = {
+      ...currentConversationRef.current,
+      messages: nextBranch.messages,
+      activeBranchId: nextBranch.id,
+      updatedAt: now,
+    };
+
+    currentConversationRef.current = nextConversation;
+    messagesRef.current = nextBranch.messages;
+    setCurrentConversation(nextConversation);
+    setMessages(nextBranch.messages);
+    setActiveUserMessageId(nextBranch.messages[messageIndex]?.id ?? null);
+    setEditingUserMessageId(null);
+    setUserMessageEditDraft('');
+    autoScrollEnabledRef.current = true;
+    syncConversationToStorage(nextConversation);
+  }, [isSending, syncConversationToStorage]);
+
+  const submitUserMessageEdit = useCallback(() => {
+    if (isSending || !editingUserMessageId) {
+      return;
+    }
+
+    const nextContent = userMessageEditDraft.trim();
+    const sourceMessages = messagesRef.current;
+    const messageIndex = sourceMessages.findIndex((message) => message.id === editingUserMessageId);
+    const sourceMessage = sourceMessages[messageIndex];
+
+    if (!nextContent || !sourceMessage || sourceMessage.role !== 'user') {
+      return;
+    }
+
+    const editedUserMessage = createAiAssistantMessage('user', nextContent);
+    const assistantMessage = createAiAssistantMessage('assistant', '');
+    const requestMessages = [
+      ...sourceMessages.slice(0, messageIndex),
+      editedUserMessage,
+    ];
+    const pendingMessages = [...requestMessages, assistantMessage];
+    const branchedConversation = createEditedMessageBranch(
+      currentConversationRef.current,
+      sourceMessages,
+      pendingMessages
+    );
+    const shouldAutoSummarizeTitle = (
+      countUserMessages(requestMessages) === 1
+      && isDefaultAiConversationTitle(branchedConversation.title)
+    );
+
+    void runAssistantReply({
+      userMessage: editedUserMessage,
+      assistantMessage,
+      requestMessages,
+      pendingMessages,
+      initialConversation: branchedConversation,
+      shouldAutoSummarizeTitle,
+      shouldClearComposer: false,
+    });
+  }, [
+    editingUserMessageId,
+    isSending,
+    runAssistantReply,
+    userMessageEditDraft,
   ]);
 
   const handleSendActionPress = useCallback(() => {
@@ -1180,10 +1356,11 @@ export function AiFloatingAssistant() {
         <View style={styles.modalRoot}>
           <Pressable accessibilityLabel="关闭 AI 助手遮罩" style={styles.backdrop} onPress={() => closeDrawer()} />
           <KeyboardAvoidingView
-            // [变更] 修改前: AI 抽屉仅在 iOS 避让键盘，Android 底部输入框可能被覆盖
-            // [变更] 修改后: Android 同步缩短抽屉高度，让消息区为底部输入框释放可视空间
-            // [原因] AI 助手是全局入口，也需要覆盖所有页面上的键盘输入场景
-            behavior={Platform.select({ android: 'height', ios: 'padding' })}
+            // [变更] 修改前: Android 也通过 KeyboardAvoidingView 按键盘高度压缩主抽屉
+            // [变更] 修改后: 主抽屉仅在 iOS 使用 padding 避让，Android 保持全屏覆盖交给系统键盘处理
+            // [原因] Android Modal 已会参与软键盘 resize，重复压缩会导致抽屉上移并露出底部页面
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            enabled={Platform.OS === 'ios'}
             pointerEvents="box-none"
             style={styles.keyboardAvoider}>
             <Animated.View style={drawerStyle}>
@@ -1473,41 +1650,179 @@ export function AiFloatingAssistant() {
                     <ThemedText style={styles.loadingText}>正在读取历史对话...</ThemedText>
                   </View>
                 ) : (
-                  messages.map((message, index) => (
-                    <View
-                      key={message.id}
-                      style={[
-                        styles.messageBubble,
-                        message.role === 'user' && styles.userBubble,
-                        message.role === 'system' && styles.systemBubble,
-                      ]}>
-                      {/*
-                       * 渲染位置: AI 对话消息气泡内部
-                       * 展示内容: 用户纯文本消息、AI 的 Markdown 回复或系统提示文案
-                       * 数据来源: messages 状态中的单条 message
-                       */}
-                      {message.role === 'assistant' && message.content.trim() ? (
-                        <Markdown rules={markdownRules} style={markdownStyles}>
-                          {message.content}
-                        </Markdown>
-                      ) : (
-                        <ThemedText
-                          style={[
-                            styles.messageText,
-                            message.role === 'user' && styles.userMessageText,
-                            message.role === 'system' && styles.systemMessageText,
-                          ]}>
-                          {message.content}
-                        </ThemedText>
-                      )}
-                      {message.role === 'assistant' && !message.content.trim() && isSending && index === messages.length - 1 ? (
-                        <View style={styles.streamingState}>
-                          <ActivityIndicator color={AppPalette.brandLight} size="small" />
-                          <ThemedText style={styles.loadingText}>{streamingStatusLabel}</ThemedText>
-                        </View>
-                      ) : null}
-                    </View>
-                  ))
+                  messages.map((message, index) => {
+                    const branchNavigation = message.role === 'user'
+                      ? getMessageBranchNavigation(currentConversation, messages, index)
+                      : null;
+                    const isMessageEditing = editingUserMessageId === message.id;
+                    const shouldShowMessageActions = (
+                      message.role === 'user'
+                      && !isMessageEditing
+                      && (
+                        activeUserMessageId === message.id
+                        || (branchNavigation?.branches.length ?? 0) > 1
+                      )
+                    );
+
+                    return (
+                      <View
+                        key={message.id}
+                        style={[
+                          styles.messageGroup,
+                          message.role === 'user' && styles.userMessageGroup,
+                        ]}>
+                        {/*
+                         * 渲染位置: 用户消息气泡上方
+                         * 展示内容: 当前分支序号、左右切换按钮和消息编辑入口
+                         * 数据来源: currentConversation.branches、activeUserMessageId 与当前消息索引
+                         */}
+                        {shouldShowMessageActions ? (
+                          <View style={styles.messageActionBar}>
+                            {branchNavigation ? (
+                              <View style={styles.messageBranchControls}>
+                                <Pressable
+                                  accessibilityLabel="切换到上一条消息分支"
+                                  disabled={isSending || branchNavigation.currentIndex <= 0}
+                                  onPress={() => switchMessageBranch(index, -1)}
+                                  style={styles.messageActionButton}>
+                                  <MaterialIcons
+                                    name="chevron-left"
+                                    size={20}
+                                    color={branchNavigation.currentIndex <= 0 ? AppPalette.textSubtle : AppPalette.textMuted}
+                                  />
+                                </Pressable>
+                                <ThemedText style={styles.messageBranchText}>
+                                  {`${branchNavigation.currentIndex + 1} / ${branchNavigation.branches.length}`}
+                                </ThemedText>
+                                <Pressable
+                                  accessibilityLabel="切换到下一条消息分支"
+                                  disabled={
+                                    isSending
+                                    || branchNavigation.currentIndex >= branchNavigation.branches.length - 1
+                                  }
+                                  onPress={() => switchMessageBranch(index, 1)}
+                                  style={styles.messageActionButton}>
+                                  <MaterialIcons
+                                    name="chevron-right"
+                                    size={20}
+                                    color={
+                                      branchNavigation.currentIndex >= branchNavigation.branches.length - 1
+                                        ? AppPalette.textSubtle
+                                        : AppPalette.textMuted
+                                    }
+                                  />
+                                </Pressable>
+                              </View>
+                            ) : null}
+                            <Pressable
+                              accessibilityLabel="修改这条用户消息并创建新分支"
+                              disabled={isSending}
+                              onPress={() => startEditingUserMessage(message)}
+                              style={styles.messageActionButton}>
+                              <MaterialIcons name="edit" size={18} color={AppPalette.textMuted} />
+                            </Pressable>
+                          </View>
+                        ) : null}
+
+                        {/*
+                         * 渲染位置: 被编辑的用户消息原气泡位置
+                         * 展示内容: 消息文本输入框，以及取消和发送修改按钮
+                         * 数据来源: userMessageEditDraft 与 editingUserMessageId 状态
+                         */}
+                        {isMessageEditing ? (
+                          <View style={styles.messageEditor}>
+                            {/*
+                             * [变更] 修改前: 编辑框挂载后 autoFocus 立即拉起键盘
+                             * [变更] 修改后: 等用户主动点输入框后再聚焦
+                             * [原因] 避免“展开编辑卡片”和“键盘避让”同时触发布局变化，引发抽屉跳动
+                             */}
+                            <TextInput
+                              multiline
+                              cursorColor={AppPalette.brandLight}
+                              onChangeText={setUserMessageEditDraft}
+                              placeholder="修改消息内容"
+                              placeholderTextColor={AppPalette.textSubtle}
+                              selectionColor={AppPalette.brandLight}
+                              style={styles.messageEditorInput}
+                              textAlignVertical="top"
+                              value={userMessageEditDraft}
+                            />
+                            <View style={styles.messageEditorActions}>
+                              <Pressable
+                                accessibilityLabel="取消修改消息"
+                                onPress={cancelEditingUserMessage}
+                                style={[styles.messageEditorButton, styles.messageEditorCancelButton]}>
+                                <ThemedText style={styles.messageEditorCancelText}>取消</ThemedText>
+                              </Pressable>
+                              <Pressable
+                                accessibilityLabel="发送修改并创建新分支"
+                                disabled={!userMessageEditDraft.trim()}
+                                onPress={submitUserMessageEdit}
+                                style={[
+                                  styles.messageEditorButton,
+                                  !userMessageEditDraft.trim() && styles.messageEditorButtonDisabled,
+                                ]}>
+                                <ThemedText style={styles.messageEditorSubmitText}>发送</ThemedText>
+                              </Pressable>
+                            </View>
+                          </View>
+                        ) : message.role === 'user' ? (
+                          <Pressable
+                            accessibilityHint="轻点显示消息编辑与分支操作"
+                            accessibilityLabel={`用户消息：${message.content}`}
+                            accessibilityRole="button"
+                            disabled={isSending}
+                            onPress={() => {
+                              autoScrollEnabledRef.current = false;
+                              setActiveUserMessageId((currentMessageId) => (
+                                currentMessageId === message.id ? null : message.id
+                              ));
+                              setEditingUserMessageId(null);
+                              setUserMessageEditDraft('');
+                            }}
+                            style={[styles.messageBubble, styles.userBubble]}>
+                            <ThemedText style={[styles.messageText, styles.userMessageText]}>
+                              {message.content}
+                            </ThemedText>
+                          </Pressable>
+                        ) : (
+                          <View
+                            style={[
+                              styles.messageBubble,
+                              message.role === 'system' && styles.systemBubble,
+                            ]}>
+                            {/*
+                             * 渲染位置: AI 对话消息气泡内部
+                             * 展示内容: AI 的 Markdown 回复或系统提示文案
+                             * 数据来源: messages 状态中的单条 message
+                             */}
+                            {message.role === 'assistant' && message.content.trim() ? (
+                              <Markdown rules={markdownRules} style={markdownStyles}>
+                                {message.content}
+                              </Markdown>
+                            ) : (
+                              <ThemedText
+                                style={[
+                                  styles.messageText,
+                                  message.role === 'system' && styles.systemMessageText,
+                                ]}>
+                                {message.content}
+                              </ThemedText>
+                            )}
+                            {message.role === 'assistant'
+                              && !message.content.trim()
+                              && isSending
+                              && index === messages.length - 1 ? (
+                                <View style={styles.streamingState}>
+                                  <ActivityIndicator color={AppPalette.brandLight} size="small" />
+                                  <ThemedText style={styles.loadingText}>{streamingStatusLabel}</ThemedText>
+                                </View>
+                              ) : null}
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })
                 )}
               </ScrollView>
 
@@ -1960,6 +2275,165 @@ function upsertAiConversationList(
 
 function countUserMessages(messages: AiAssistantMessage[]) {
   return messages.filter((message) => message.role === 'user' && message.content.trim().length > 0).length;
+}
+
+/**
+ * 更新会话当前分支的消息快照，并保持顶层 messages 与激活分支一致。
+ *
+ * @param conversation - 当前 AI 会话
+ * @param messages - 当前分支更新后的完整消息
+ * @returns 可直接渲染和持久化的最新会话
+ * @example
+ *   updateActiveConversationMessages(conversation, nextMessages)
+ */
+function updateActiveConversationMessages(
+  conversation: AiAssistantConversation,
+  messages: AiAssistantMessage[]
+): AiAssistantConversation {
+  const now = new Date().toISOString();
+
+  if (!conversation.activeBranchId || !conversation.branches?.length) {
+    return {
+      ...conversation,
+      messages,
+      updatedAt: now,
+    };
+  }
+
+  const branches = conversation.branches.map((branch) => (
+    branch.id === conversation.activeBranchId
+      ? { ...branch, messages, updatedAt: now }
+      : branch
+  ));
+
+  return {
+    ...conversation,
+    messages,
+    branches,
+    updatedAt: now,
+  };
+}
+
+/**
+ * 为修改后的用户消息创建新分支，同时保留修改前的完整对话。
+ *
+ * @param conversation - 当前 AI 会话
+ * @param sourceMessages - 修改前的当前分支消息
+ * @param nextMessages - 从修改位置截断并等待重新生成的消息
+ * @returns 已激活新分支的 AI 会话
+ * @example
+ *   createEditedMessageBranch(conversation, messages, editedMessages)
+ */
+function createEditedMessageBranch(
+  conversation: AiAssistantConversation,
+  sourceMessages: AiAssistantMessage[],
+  nextMessages: AiAssistantMessage[]
+): AiAssistantConversation {
+  const now = new Date().toISOString();
+  const conversationWithLatestSource = updateActiveConversationMessages(conversation, sourceMessages);
+  let branches = conversationWithLatestSource.branches
+    ? [...conversationWithLatestSource.branches]
+    : [];
+
+  if (
+    !conversationWithLatestSource.activeBranchId
+    || !branches.some((branch) => branch.id === conversationWithLatestSource.activeBranchId)
+  ) {
+    branches.push({
+      id: createAssistantBranchId(),
+      messages: sourceMessages,
+      createdAt: conversation.createdAt,
+      updatedAt: now,
+    });
+  }
+
+  const nextBranch: AiAssistantConversationBranch = {
+    id: createAssistantBranchId(),
+    messages: nextMessages,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  branches.push(nextBranch);
+
+  return {
+    ...conversationWithLatestSource,
+    messages: nextMessages,
+    branches,
+    activeBranchId: nextBranch.id,
+    updatedAt: now,
+  };
+}
+
+/**
+ * 计算某条用户消息在当前分叉点可切换的分支。
+ *
+ * @param conversation - 当前 AI 会话
+ * @param messages - 当前激活分支消息
+ * @param messageIndex - 用户消息在当前分支中的索引
+ * @returns 分支列表及当前分支位置；没有分叉时返回 null
+ * @example
+ *   getMessageBranchNavigation(conversation, messages, 2)
+ */
+function getMessageBranchNavigation(
+  conversation: AiAssistantConversation,
+  messages: AiAssistantMessage[],
+  messageIndex: number
+): MessageBranchNavigation | null {
+  const targetMessage = messages[messageIndex];
+
+  if (targetMessage?.role !== 'user' || !conversation.branches?.length) {
+    return null;
+  }
+
+  const prefixMessageIds = messages.slice(0, messageIndex).map((message) => message.id);
+  const branchByUserMessageId = new Map<string, AiAssistantConversationBranch>();
+
+  for (const branch of conversation.branches) {
+    const branchMessage = branch.messages[messageIndex];
+    const hasSamePrefix = prefixMessageIds.every((
+      messageId,
+      prefixIndex
+    ) => branch.messages[prefixIndex]?.id === messageId);
+
+    if (branchMessage?.role !== 'user' || !hasSamePrefix) {
+      continue;
+    }
+
+    const storedBranch = branchByUserMessageId.get(branchMessage.id);
+    const shouldPreferBranch = (
+      !storedBranch
+      || branch.id === conversation.activeBranchId
+      || (
+        storedBranch.id !== conversation.activeBranchId
+        && new Date(branch.updatedAt).getTime() > new Date(storedBranch.updatedAt).getTime()
+      )
+    );
+
+    if (shouldPreferBranch) {
+      branchByUserMessageId.set(branchMessage.id, branch);
+    }
+  }
+
+  const branches = Array.from(branchByUserMessageId.values());
+  const currentIndex = branches.findIndex((
+    branch
+  ) => branch.messages[messageIndex]?.id === targetMessage.id);
+
+  return branches.length > 1 && currentIndex >= 0
+    ? { branches, currentIndex }
+    : null;
+}
+
+/**
+ * 创建客户端会话分支 ID。
+ *
+ * @returns 当前账号会话内唯一的分支标识
+ * @example
+ *   createAssistantBranchId()
+ */
+function createAssistantBranchId() {
+  return `branch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 /**
@@ -2621,6 +3095,92 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingTop: 8,
     paddingBottom: 16,
+  },
+  messageGroup: {
+    width: '100%',
+    alignItems: 'flex-start',
+    gap: 6,
+  },
+  userMessageGroup: {
+    alignItems: 'flex-end',
+  },
+  messageActionBar: {
+    minHeight: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 8,
+    paddingHorizontal: 2,
+  },
+  messageBranchControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  messageActionButton: {
+    width: 30,
+    height: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+  },
+  messageBranchText: {
+    minWidth: 38,
+    color: AppPalette.textMuted,
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: 'center',
+  },
+  messageEditor: {
+    width: '88%',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: AppPalette.borderStrong,
+    backgroundColor: AppPalette.surfaceElevated,
+    padding: 10,
+  },
+  messageEditorInput: {
+    minHeight: 72,
+    maxHeight: 180,
+    borderRadius: 12,
+    backgroundColor: AppPalette.surface,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: AppPalette.text,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  messageEditorActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+    marginTop: 10,
+  },
+  messageEditorButton: {
+    minWidth: 60,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 17,
+    backgroundColor: AppPalette.brand,
+    paddingHorizontal: 14,
+  },
+  messageEditorCancelButton: {
+    borderWidth: 1,
+    borderColor: AppPalette.borderStrong,
+    backgroundColor: 'transparent',
+  },
+  messageEditorButtonDisabled: {
+    opacity: 0.45,
+  },
+  messageEditorCancelText: {
+    color: AppPalette.textMuted,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  messageEditorSubmitText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
   messageBubble: {
     alignSelf: 'flex-start',
