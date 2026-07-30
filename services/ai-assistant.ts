@@ -3,6 +3,7 @@ import { fetch as expoFetch } from 'expo/fetch';
 import {
   AI_ASSISTANT_CONVERSATIONS_STORAGE_KEY,
   AI_ASSISTANT_MESSAGES_STORAGE_KEY,
+  AI_ASSISTANT_SETTINGS_STORAGE_KEY,
 } from '@/services/storage-keys';
 import { resolveAstesiaApiHost } from '@/services/api-host';
 import { storage } from '@/services/storage';
@@ -65,6 +66,10 @@ export type AiModelPricingResult = {
   unit: 'million_tokens';
   models: AiModelPricing[];
   errorMessage: string | null;
+};
+
+export type AiAssistantSettings = {
+  mermaidEnabled: boolean;
 };
 
 type ChatCompletionResponse = {
@@ -150,11 +155,15 @@ export type AiAssistantReplyStreamOptions = {
   onStatusChange?: (status: AiAssistantStreamStatus) => void;
   conversationId?: string;
   webSearchEnabled?: boolean;
+  mermaidEnabled?: boolean;
 };
 
 export const DEFAULT_AI_MODEL_ID = 'gemini-3.1-pro-preview';
 export const DEFAULT_AI_CONVERSATION_TITLE = '对话标题';
 export const MAX_AI_CONVERSATION_TITLE_LENGTH = 12;
+export const DEFAULT_AI_ASSISTANT_SETTINGS: AiAssistantSettings = {
+  mermaidEnabled: true,
+};
 
 export const AI_ASSISTANT_WELCOME_MESSAGE: AiAssistantMessage = {
   id: 'assistant-welcome',
@@ -259,6 +268,21 @@ function isAssistantConversationBranch(value: unknown): value is AiAssistantConv
   );
 }
 
+function normalizeAiAssistantSettings(value: unknown): AiAssistantSettings {
+  if (!value || typeof value !== 'object') {
+    return DEFAULT_AI_ASSISTANT_SETTINGS;
+  }
+
+  const settings = value as Partial<AiAssistantSettings>;
+
+  return {
+    ...DEFAULT_AI_ASSISTANT_SETTINGS,
+    mermaidEnabled: typeof settings.mermaidEnabled === 'boolean'
+      ? settings.mermaidEnabled
+      : DEFAULT_AI_ASSISTANT_SETTINGS.mermaidEnabled,
+  };
+}
+
 export async function loadAiAssistantMessages() {
   try {
     const storageKey = await getAiAssistantMessagesStorageKey();
@@ -288,6 +312,27 @@ export async function saveAiAssistantMessages(messages: AiAssistantMessage[]) {
 export async function clearAiAssistantMessages() {
   await saveAiAssistantMessages([AI_ASSISTANT_WELCOME_MESSAGE]);
   return [AI_ASSISTANT_WELCOME_MESSAGE];
+}
+
+export async function loadAiAssistantSettings() {
+  try {
+    const rawSettings = await storage.getItem(AI_ASSISTANT_SETTINGS_STORAGE_KEY);
+
+    if (!rawSettings) {
+      return DEFAULT_AI_ASSISTANT_SETTINGS;
+    }
+
+    return normalizeAiAssistantSettings(JSON.parse(rawSettings));
+  } catch {
+    return DEFAULT_AI_ASSISTANT_SETTINGS;
+  }
+}
+
+export async function saveAiAssistantSettings(settings: AiAssistantSettings) {
+  const normalizedSettings = normalizeAiAssistantSettings(settings);
+
+  await storage.setItem(AI_ASSISTANT_SETTINGS_STORAGE_KEY, JSON.stringify(normalizedSettings));
+  return normalizedSettings;
 }
 
 export async function loadAiAssistantConversations() {
@@ -798,15 +843,16 @@ export async function requestAiAssistantReply(
     [AI_STREAM_PROTOCOL_HEADER]: AI_STREAM_PROTOCOL_VERSION,
   });
 
-  // [变更] 修改前: 每次请求都会无条件透传 screenKnowledge
-  // [变更] 修改后: 除了按需透传 screenKnowledge，还会把当前 conversationId 一起发给服务端
-  // [原因] 服务端需要基于会话维度归档 usage 和扣费记录，避免多轮对话的计费明细丢失上下文
+  // [变更] 修改前: 每次请求只透传对话、模型、联网搜索和屏幕知识
+  // [变更] 修改后: 额外透传 Mermaid 开关，让服务端按用户配置决定是否引导模型生成图表
+  // [原因] AI 配置需要约束本轮生成行为，而不只是影响前端展示
   const requestBody = JSON.stringify({
     model,
     ...(options?.conversationId ? { conversationId: options.conversationId } : {}),
     messages: messages.map(({ role, content }) => ({ role, content })),
     ...(screenKnowledge ? { screenKnowledge } : {}),
     ...(options?.webSearchEnabled ? { webSearch: true } : {}),
+    mermaid: options?.mermaidEnabled !== false,
   });
 
   try {

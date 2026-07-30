@@ -38,11 +38,13 @@ import {
   createAiAssistantMessage,
   deleteAiAssistantConversation,
   isDefaultAiConversationTitle,
+  loadAiAssistantSettings,
   loadAiAssistantConversations,
   normalizeAiConversationTitle,
   requestAiAssistantReply,
   requestAiConversationTitle,
   requestAiModels,
+  saveAiAssistantSettings,
   saveAiAssistantConversation,
   type AiAssistantConversation,
   type AiAssistantConversationBranch,
@@ -120,6 +122,8 @@ export function AiFloatingAssistant() {
   const [isWebSearchAvailable, setIsWebSearchAvailable] = useState(false);
   const [isWebSearchEnabled, setIsWebSearchEnabled] = useState(false);
   const [isModelSheetVisible, setIsModelSheetVisible] = useState(false);
+  const [isAiConfigSheetVisible, setIsAiConfigSheetVisible] = useState(false);
+  const [isMermaidEnabled, setIsMermaidEnabled] = useState(true);
   const [isConversationDrawerVisible, setIsConversationDrawerVisible] = useState(false);
   const [activeConversationActionId, setActiveConversationActionId] = useState<string | null>(null);
   const [conversationTitleDraft, setConversationTitleDraft] = useState('');
@@ -251,6 +255,29 @@ export function AiFloatingAssistant() {
   useEffect(() => {
     void loadModels();
   }, [loadModels]);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadSettings = async () => {
+      const settings = await loadAiAssistantSettings();
+
+      if (active) {
+        setIsMermaidEnabled(settings.mermaidEnabled);
+      }
+    };
+
+    void loadSettings();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // [变更] 修改前: AI 回复中的 mermaid 代码块始终渲染为图表
+  // [变更] 修改后: Markdown 渲染规则跟随 AI 配置中的 Mermaid 开关动态创建
+  // [原因] 用户关闭图表能力后，历史和新回复里的 mermaid 块都应按普通代码展示
+  const markdownRules = useMemo(() => createMarkdownRules(isMermaidEnabled), [isMermaidEnabled]);
 
   const selectedModelLabel = useMemo(
     () => formatModelLabel(models.find((model) => model.id === selectedModel)?.label ?? selectedModel),
@@ -955,10 +982,6 @@ export function AiFloatingAssistant() {
     appendSystemMessage(`已选择文件：${result.assets[0].name}。文件解析与上传到 AI 暂未接入。`);
   }, [appendSystemMessage]);
 
-  const showPendingFeature = useCallback((featureName: string) => {
-    Alert.alert(featureName, '该功能暂时搁置，后续接入。');
-  }, []);
-
   const handleMessageListScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     const currentOffsetY = contentOffset.y;
@@ -1086,6 +1109,7 @@ export function AiFloatingAssistant() {
       // [原因] 服务端需要按用户 + 会话归档 token 消耗与扣费记录，前端也需要能主动终止长回复
       const assistantReply = await requestAiAssistantReply(requestMessages, requestScreenKnowledge, selectedModel, {
         conversationId: activeConversationId,
+        mermaidEnabled: isMermaidEnabled,
         signal: abortController.signal,
         webSearchEnabled: isWebSearchEnabled,
         onStatusChange: setStreamStatus,
@@ -1151,6 +1175,7 @@ export function AiFloatingAssistant() {
     scrollMessagesToEnd,
     selectedModel,
     shouldIncludeScreenKnowledge,
+    isMermaidEnabled,
     isWebSearchEnabled,
     summarizeConversationTitle,
     syncConversationToStorage,
@@ -1312,6 +1337,26 @@ export function AiFloatingAssistant() {
 
     setIsWebSearchEnabled((currentValue) => !currentValue);
   }, [isWebSearchAvailable]);
+
+  const toggleMermaid = useCallback(() => {
+    setIsMermaidEnabled((currentValue) => {
+      const nextValue = !currentValue;
+
+      void saveAiAssistantSettings({ mermaidEnabled: nextValue }).catch((error) => {
+        if (!isMountedRef.current) {
+          return;
+        }
+
+        setIsMermaidEnabled(currentValue);
+        Alert.alert(
+          '保存配置失败',
+          error instanceof Error ? error.message : 'Mermaid 图表配置保存失败，请稍后重试。'
+        );
+      });
+
+      return nextValue;
+    });
+  }, []);
 
   const drawerStyle = useMemo(
     () => [
@@ -1857,8 +1902,12 @@ export function AiFloatingAssistant() {
                         color={isWebSearchEnabled ? '#FFFFFF' : AppPalette.textMuted}
                       />
                     </Pressable>
-                    <Pressable accessibilityLabel="AI 配置" onPress={() => showPendingFeature('AI 配置')} style={styles.toolButton}>
-                      <MaterialIcons name="add" size={22} color={AppPalette.textMuted} />
+                    <Pressable
+                      accessibilityLabel="打开 AI 配置"
+                      accessibilityRole="button"
+                      onPress={() => setIsAiConfigSheetVisible(true)}
+                      style={styles.toolButton}>
+                      <MaterialIcons name="settings" size={22} color={AppPalette.textMuted} />
                     </Pressable>
                   </View>
                   {/*
@@ -2158,6 +2207,57 @@ export function AiFloatingAssistant() {
               </View>
             </View>
           </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={isAiConfigSheetVisible}
+        onRequestClose={() => setIsAiConfigSheetVisible(false)}>
+        <View style={styles.modelSheetBackdrop}>
+          <Pressable
+            accessibilityLabel="关闭 AI 配置弹层"
+            onPress={() => setIsAiConfigSheetVisible(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View style={styles.aiConfigSheet}>
+            <View style={styles.aiConfigHeader}>
+              <ThemedText style={styles.modelSheetTitle}>AI 配置</ThemedText>
+              <Pressable
+                accessibilityLabel="关闭 AI 配置"
+                accessibilityRole="button"
+                onPress={() => setIsAiConfigSheetVisible(false)}
+                style={styles.aiConfigCloseButton}>
+                <MaterialIcons name="close" size={20} color={AppPalette.textMuted} />
+              </Pressable>
+            </View>
+            {/*
+             * 渲染位置: AI 配置弹层内容区
+             * 展示内容: Mermaid 图表功能说明、当前启用状态和切换开关
+             * 数据来源: isMermaidEnabled 状态与本地 AI 设置缓存
+             */}
+            <Pressable
+              accessibilityHint="开启后 AI 可以生成流程图、时序图等 Mermaid 图表"
+              accessibilityLabel={isMermaidEnabled ? '关闭 Mermaid 图表功能' : '开启 Mermaid 图表功能'}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: isMermaidEnabled }}
+              onPress={toggleMermaid}
+              style={styles.aiConfigOption}>
+              <View style={styles.aiConfigOptionIcon}>
+                <MaterialIcons name="account-tree" size={22} color={AppPalette.brandLight} />
+              </View>
+              <View style={styles.aiConfigOptionTextBox}>
+                <ThemedText style={styles.aiConfigOptionTitle}>Mermaid 图表</ThemedText>
+                <ThemedText style={styles.aiConfigOptionDescription}>
+                  开启后 AI 可生成流程图、结构图、时序图；关闭后会按普通文字或代码块回答。
+                </ThemedText>
+              </View>
+              <View style={[styles.aiConfigSwitch, isMermaidEnabled && styles.aiConfigSwitchActive]}>
+                <View style={[styles.aiConfigSwitchThumb, isMermaidEnabled && styles.aiConfigSwitchThumbActive]} />
+              </View>
+            </Pressable>
+          </View>
         </View>
       </Modal>
 
@@ -2468,36 +2568,41 @@ type MarkdownFenceNode = ASTNode & {
   sourceInfo?: string;
 };
 
-const markdownRules: RenderRules = {
-  fence: (node, _children, _parent, styles, inheritedStyles = {}) => {
-    const language = String((node as MarkdownFenceNode).sourceInfo || '').trim().toLowerCase();
-    // 格式化: Markdown fence 文本 → 去除解析器附加的末尾换行 → 可渲染代码或 Mermaid 源码
-    // 说明: 避免普通代码块和图表底部多出空行
-    const content = node.content.endsWith('\n')
-      ? node.content.slice(0, -1)
-      : node.content;
+function createMarkdownRules(isMermaidEnabled: boolean): RenderRules {
+  return {
+    fence: (node, _children, _parent, styles, inheritedStyles = {}) => {
+      const language = String((node as MarkdownFenceNode).sourceInfo || '').trim().toLowerCase();
+      // 格式化: Markdown fence 文本 → 去除解析器附加的末尾换行 → 可渲染代码或 Mermaid 源码
+      // 说明: 避免普通代码块和图表底部多出空行
+      const content = node.content.endsWith('\n')
+        ? node.content.slice(0, -1)
+        : node.content;
 
-    if (language === 'mermaid') {
+      // [变更] 修改前: mermaid fence 始终渲染为图表
+      // [变更] 修改后: 仅在用户开启 Mermaid 图表功能时渲染，否则继续走普通代码块展示
+      // [原因] AI 配置开关需要同时控制历史内容展示和新回复展示
+      if (isMermaidEnabled && language === 'mermaid') {
+        /*
+         * 渲染位置: AI Markdown 回复中的 mermaid 代码块
+         * 展示内容: 流程图、时序图等可视化图表
+         * 数据来源: Markdown AST 节点中的 Mermaid 源码
+         */
+        return <MermaidDiagram key={node.key} chart={content} />;
+      }
+
       /*
-       * 渲染位置: AI Markdown 回复中的 mermaid 代码块
-       * 展示内容: 流程图、时序图等可视化图表
-       * 数据来源: Markdown AST 节点中的 Mermaid 源码
+       * 渲染位置: AI Markdown 回复中的普通围栏代码块
+       * 展示内容: 保留原格式的代码文本
+       * 数据来源: Markdown AST 节点内容
        */
-      return <MermaidDiagram key={node.key} chart={content} />;
-    }
-
-    /*
-     * 渲染位置: AI Markdown 回复中的普通围栏代码块
-     * 展示内容: 保留原格式的代码文本
-     * 数据来源: Markdown AST 节点内容
-     */
-    return (
-      <ThemedText key={node.key} style={[inheritedStyles, styles.fence]}>
-        {content}
-      </ThemedText>
-    );
-  },
-};
+      return (
+        <ThemedText key={node.key} style={[inheritedStyles, styles.fence]}>
+          {content}
+        </ThemedText>
+      );
+    },
+  };
+}
 
 const markdownStyles = {
   body: {
@@ -3296,6 +3401,83 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     opacity: 0.45,
+  },
+  aiConfigSheet: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceElevated,
+    padding: 16,
+  },
+  aiConfigHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  aiConfigCloseButton: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 16,
+    backgroundColor: AppPalette.surfaceSoft,
+  },
+  aiConfigOption: {
+    minHeight: 92,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: AppPalette.border,
+    backgroundColor: AppPalette.surfaceSoft,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  aiConfigOptionIcon: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: 'rgba(22, 100, 255, 0.12)',
+  },
+  aiConfigOptionTextBox: {
+    flex: 1,
+    minWidth: 0,
+  },
+  aiConfigOptionTitle: {
+    color: AppPalette.text,
+    fontSize: 15,
+    fontWeight: '800',
+    lineHeight: 20,
+  },
+  aiConfigOptionDescription: {
+    marginTop: 4,
+    color: AppPalette.textMuted,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  aiConfigSwitch: {
+    width: 46,
+    height: 26,
+    justifyContent: 'center',
+    borderRadius: 13,
+    backgroundColor: '#CBD5E1',
+    paddingHorizontal: 3,
+  },
+  aiConfigSwitchActive: {
+    backgroundColor: AppPalette.brand,
+  },
+  aiConfigSwitchThumb: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+  },
+  aiConfigSwitchThumbActive: {
+    transform: [{ translateX: 20 }],
   },
   modelSheetBackdrop: {
     flex: 1,

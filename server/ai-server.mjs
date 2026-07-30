@@ -726,6 +726,7 @@ app.post('/api/ai/chat', async (c) => {
   const modelPricing = resolveModelPricing(model);
   const usageRequestId = createAiUsageRequestId(aiUser.userId, conversationId);
   const webSearchRequested = body?.webSearch === true;
+  const mermaidEnabled = body?.mermaid !== false;
   const webSearchMode = webSearchRequested
     ? resolveWebSearchMode()
     : '';
@@ -760,16 +761,18 @@ app.post('/api/ai/chat', async (c) => {
     return c.json({ error: `缺少 ${chatUpstream.apiKeyName}，请先在后端环境变量中配置。` }, 500);
   }
 
-  // [变更] 修改前: 后端总是把“当前屏幕知识库”注入系统提示词
-  // [变更] 修改后: 只有前端显式传入 screenKnowledge 时才追加相关约束和上下文
-  // [原因] 用户需要自己决定本轮对话是否使用当前屏幕知识
+  // [变更] 修改前: Mermaid 图表能力始终写入系统提示词
+  // [变更] 修改后: 根据前端 AI 配置开关决定鼓励生成图表或明确禁用 Mermaid 代码块
+  // [原因] 用户需要能自行选择本轮 AI 回复是否启用图表能力
   const chatInstructions = [
     '你是 Astesia App 内的移动端 AI 助手。',
     screenKnowledge
       ? '回答需要简洁、友好，并在用户开启时结合当前屏幕知识库。'
       : '回答需要简洁、友好。',
     screenKnowledge ? `当前屏幕知识库：${screenKnowledge}` : null,
-    '当流程、结构或时序用图表达更清晰时，可以输出带 mermaid 语言标记的 Markdown 代码块。',
+    mermaidEnabled
+      ? '当流程、结构或时序用图表达更清晰时，可以输出带 mermaid 语言标记的 Markdown 代码块。'
+      : '不要输出 mermaid 语言标记的 Markdown 代码块；如需表达流程、结构或时序，请改用普通 Markdown 列表或文字说明。',
     webSearchRequested
       ? [
           '涉及实时信息时优先使用已提供的联网搜索工具；答案必须用 Markdown 链接标明实际使用的来源。',
