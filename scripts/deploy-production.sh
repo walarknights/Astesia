@@ -14,6 +14,8 @@ REMOTE_APP_DIR="${REMOTE_APP_DIR:-/root/Astesia}"
 REMOTE_EXPO_WEB_DIR="${REMOTE_EXPO_WEB_DIR:-/var/www/astesia-app}"
 REMOTE_ADMIN_WEB_DIR="${REMOTE_ADMIN_WEB_DIR:-/var/www/astesia-admin}"
 PM2_PROCESS="${PM2_PROCESS:-astesia-ai}"
+DEPLOY_RUNTIME="${DEPLOY_RUNTIME:-compose}"
+COMPOSE_SERVICES="${COMPOSE_SERVICES:-backend web}"
 
 RUN_CHECKS="${RUN_CHECKS:-1}"
 DEPLOY_BACKEND="${DEPLOY_BACKEND:-1}"
@@ -50,6 +52,20 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "缺少命令：$1"
 }
 
+validate_deploy_runtime() {
+  case "$DEPLOY_RUNTIME" in
+    compose|docker-compose|pm2) ;;
+    *) die "DEPLOY_RUNTIME 仅支持 compose、docker-compose 或 pm2，当前值：$DEPLOY_RUNTIME" ;;
+  esac
+}
+
+is_compose_runtime() {
+  case "$DEPLOY_RUNTIME" in
+    compose|docker-compose) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 validate_public_base_url() {
   PUBLIC_BASE_URL="${PUBLIC_BASE_URL%/}"
 
@@ -60,6 +76,23 @@ validate_public_base_url() {
 
 ssh_remote() {
   ssh "${SSH_OPTS[@]}" "$DEPLOY_TARGET" "$@"
+}
+
+run_remote_compose() {
+  local compose_args="$1"
+
+  ssh_remote "
+    set -e
+    cd '$REMOTE_APP_DIR'
+    if docker compose version >/dev/null 2>&1; then
+      docker compose $compose_args
+    elif command -v docker-compose >/dev/null 2>&1; then
+      docker-compose $compose_args
+    else
+      echo '远端缺少 docker compose 或 docker-compose' >&2
+      exit 1
+    fi
+  "
 }
 
 prepare_local_tools() {
@@ -129,6 +162,29 @@ build_admin_web() {
 
 prepare_remote() {
   log "检查远端环境：$DEPLOY_TARGET"
+
+  if is_compose_runtime; then
+    ssh_remote "
+      set -e
+      command -v docker >/dev/null
+      if docker compose version >/dev/null 2>&1; then
+        :
+      elif command -v docker-compose >/dev/null 2>&1; then
+        :
+      else
+        echo '远端缺少 docker compose 或 docker-compose' >&2
+        exit 1
+      fi
+      test -d '$REMOTE_APP_DIR'
+      mkdir -p '$REMOTE_APP_DIR/server'
+      mkdir -p '$REMOTE_APP_DIR/app'
+      mkdir -p '$REMOTE_APP_DIR/services'
+      mkdir -p '$REMOTE_EXPO_WEB_DIR'
+      mkdir -p '$REMOTE_ADMIN_WEB_DIR'
+    "
+    return
+  fi
+
   ssh_remote "
     set -e
     command -v pm2 >/dev/null
@@ -177,11 +233,17 @@ sync_backend_and_app_source() {
     --exclude 'dist' \
     --exclude '.deploy' \
     -e "$RSYNC_RSH" \
+    "$ROOT_DIR/.dockerignore" \
     "$ROOT_DIR/app" \
+    "$ROOT_DIR/admin-web" \
     "$ROOT_DIR/components" \
     "$ROOT_DIR/constants" \
+    "$ROOT_DIR/docker" \
+    "$ROOT_DIR/docker-compose.yml" \
     "$ROOT_DIR/hooks" \
+    "$ROOT_DIR/index.html" \
     "$ROOT_DIR/services" \
+    "$ROOT_DIR/scripts" \
     "$ROOT_DIR/styles" \
     "$ROOT_DIR/assets" \
     "$ROOT_DIR/public" \
@@ -223,6 +285,11 @@ run_remote_install_if_needed() {
     return
   fi
 
+  if is_compose_runtime; then
+    warn "Compose 运行时使用镜像内依赖，已跳过远端 pnpm install：REMOTE_INSTALL=$REMOTE_INSTALL"
+    return
+  fi
+
   log "远端安装生产依赖"
   ssh_remote "
     set -e
@@ -236,6 +303,13 @@ run_remote_migrations_if_needed() {
     return
   fi
 
+  if is_compose_runtime; then
+    log "在 Docker Compose 后端容器中执行数据库迁移"
+    run_remote_compose "build backend"
+    run_remote_compose "run --rm --no-deps backend node server/migrate-postgres.mjs"
+    return
+  fi
+
   log "执行远端数据库迁移"
   ssh_remote "
     set -e
@@ -246,6 +320,13 @@ run_remote_migrations_if_needed() {
 
 restart_backend() {
   if ! is_enabled "$DEPLOY_BACKEND"; then
+    return
+  fi
+
+  if is_compose_runtime; then
+    log "重建并启动 Docker Compose 服务：$COMPOSE_SERVICES"
+    run_remote_compose "up -d --build $COMPOSE_SERVICES"
+    run_remote_compose "ps"
     return
   fi
 
@@ -279,7 +360,9 @@ main() {
   cd "$ROOT_DIR"
 
   validate_public_base_url
+  validate_deploy_runtime
   log "部署目标：$DEPLOY_TARGET"
+  log "部署运行时：$DEPLOY_RUNTIME"
   log "后端目录：$REMOTE_APP_DIR"
   log "Expo Web 目录：$REMOTE_EXPO_WEB_DIR"
 
