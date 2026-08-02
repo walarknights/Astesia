@@ -14,19 +14,22 @@
   <meta name="theme-color" content="#6366f1">
   <link rel="canonical" href="https://astesia.cc/">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="icon" href="/icons/icon-192.png" type="image/png">
-  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <!-- [变更] 修改前: 图标链接直接指向旧 /icons 文件，浏览器可能继续命中 Expo 默认图标缓存
+       [变更] 修改后: 使用 Astesia 图标资源并追加版本参数
+       [原因] 强制推广页标签页、收藏和移动端图标刷新为 Astesia 品牌图标 -->
+  <link rel="icon" href="/icons/icon-192.png?v=20260802" type="image/png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png?v=20260802">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Astesia">
   <meta property="og:title" content="Astesia - AI 生活助手 | 记账、待办、天气、笔记一站式管理">
   <meta property="og:description" content="Astesia 是一款集天气、笔记、待办、记账、AI 助手、邮件、股票基金于一体的跨平台个人生活助手应用。">
   <meta property="og:url" content="https://astesia.cc/">
-  <meta property="og:image" content="https://astesia.cc/icons/icon-512.png">
+  <meta property="og:image" content="https://astesia.cc/icons/icon-512.png?v=20260802">
   <meta property="og:locale" content="zh_CN">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Astesia - AI 生活助手 | 记账、待办、天气、笔记一站式管理">
   <meta name="twitter:description" content="用 Astesia 管理天气、笔记、待办、记账、AI 助手、邮件和股票基金，跨平台同步你的高效生活。">
-  <meta name="twitter:image" content="https://astesia.cc/icons/icon-512.png">
+  <meta name="twitter:image" content="https://astesia.cc/icons/icon-512.png?v=20260802">
   <script type="application/ld+json">
     {
       "@context": "https://schema.org",
@@ -38,7 +41,7 @@
       "url": "https://astesia.cc/",
       "downloadUrl": "https://astesia.cc/downloads/astesia-1.0.0-v5.apk",
       "description": "Astesia 是一款集天气、笔记、待办、记账、AI 助手、邮件、股票基金于一体的跨平台个人生活助手应用。",
-      "image": "https://astesia.cc/icons/icon-512.png",
+      "image": "https://astesia.cc/icons/icon-512.png?v=20260802",
       "softwareVersion": "1.0.0",
       "author": {
         "@type": "Organization",

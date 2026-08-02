@@ -1,12 +1,15 @@
-const STATIC_CACHE_NAME = 'astesia-static-v2';
-const RUNTIME_CACHE_NAME = 'astesia-runtime-v2';
+// [变更] 修改前: 使用 v2 缓存继续复用旧图标响应
+// [变更] 修改后: 升级到 v3 缓存以重新拉取站点图标资源
+// [原因] 推广页图标已从 Expo 默认图标替换为 Astesia 图标，需要让旧缓存失效
+const STATIC_CACHE_NAME = 'astesia-static-v3';
+const RUNTIME_CACHE_NAME = 'astesia-runtime-v3';
 const OFFLINE_PAGE_URL = '/offline.html';
 const STATIC_ASSET_URLS = [
   OFFLINE_PAGE_URL,
   '/manifest.webmanifest',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-  '/icons/apple-touch-icon.png',
+  '/icons/icon-192.png?v=20260802',
+  '/icons/icon-512.png?v=20260802',
+  '/icons/apple-touch-icon.png?v=20260802',
 ];
 
 self.addEventListener('install', (event) => {

@@ -43,6 +43,17 @@ yarn-error.*
 # uploaded runtime files
 server/uploads/
 
+# static binary assets
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.avif
+*.ico
+*.svg
+*.apk
+
 # typescript
 *.tsbuildinfo
 
