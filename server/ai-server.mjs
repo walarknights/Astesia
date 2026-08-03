@@ -1135,8 +1135,7 @@ function pruneExpiredWeatherRateLimitBuckets(now) {
 }
 
 function getRequiredQWeatherApiKey() {
-  const apiKey = getEnvValue('QWEATHER_KEY')
-    || getEnvValue('EXPO_PUBLIC_QWEATHER_KEY');
+  const apiKey = getEnvValue('QWEATHER_KEY');
 
   if (!apiKey) {
     throw new RequestValidationError('天气服务尚未配置。', 503);
@@ -1147,15 +1146,11 @@ function getRequiredQWeatherApiKey() {
 
 function createQWeatherUpstreamUrl(resource, query) {
   const weatherHost = getRequiredQWeatherHost(
-    getEnvValue('QWEATHER_API_HOST')
-      || getEnvValue('EXPO_PUBLIC_QWEATHER_API_HOST')
-      || getEnvValue('EXPO_PUBLIC_QWEATHER_WEATHER_HOST'),
+    getEnvValue('QWEATHER_API_HOST'),
     'QWEATHER_API_HOST'
   );
   const geoHost = getRequiredQWeatherHost(
-    getEnvValue('QWEATHER_GEO_HOST')
-      || getEnvValue('EXPO_PUBLIC_QWEATHER_GEO_HOST')
-      || weatherHost,
+    getEnvValue('QWEATHER_GEO_HOST') || weatherHost,
     'QWEATHER_GEO_HOST'
   );
   const getLocation = () => normalizeRequiredWeatherQuery(
