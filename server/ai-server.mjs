@@ -1,5 +1,5 @@
 import { Buffer } from 'node:buffer';
-import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { mkdir, unlink, writeFile } from 'node:fs/promises';
 
@@ -20,6 +20,8 @@ import pg from 'pg';
 import { z } from 'zod';
 
 import { createDatabaseSslConfig } from './database-config.mjs';
+import { createAuthTokenService } from './services/auth-token.mjs';
+import { createHealthService } from './services/health-service.mjs';
 import { PRIVACY_POLICY_CONTENT, PRIVACY_POLICY_TITLE } from './privacy-policy.mjs';
 
 loadLocalEnv();
@@ -38,16 +40,31 @@ const DEFAULT_CHAT_MAX_OUTPUT_TOKENS = 4096;
 const DEFAULT_AI_SERVER_HOST = '127.0.0.1';
 const AI_STREAM_PROTOCOL_HEADER = 'x-ai-stream-protocol';
 const AI_STREAM_PROTOCOL_VERSION = 'ui-message-v1';
-const AI_STREAM_TOTAL_TIMEOUT_MS = 120_000;
+// 超时层级: totalMs(整次调用) >= stepMs(单步 LLM 调用) >= toolMs(单次工具执行)
+// 工具循环串行执行，totalMs = maxChatSteps × (stepMs + toolMs) + maxRetries × stepMs，在每次请求内推导（见 streamText 调用处）
 const AI_STREAM_STEP_TIMEOUT_MS = 60_000;
 const AI_STREAM_CHUNK_TIMEOUT_MS = 30_000;
 const AI_WEB_SEARCH_TIMEOUT_MS = 12_000;
+const AI_STREAM_MAX_RETRIES = 1;
 const AI_WEB_SEARCH_MAX_RESULTS = 5;
 const AI_WEB_SEARCH_MODE_SEARXNG = 'searxng';
 const AI_WEB_SEARCH_MODE_TAVILY = 'tavily';
 const QWEATHER_REQUEST_TIMEOUT_MS = 12_000;
 const WEATHER_RATE_LIMIT_WINDOW_MS = 60_000;
 const WEATHER_RATE_LIMIT_MAX_REQUESTS = 120;
+// 默认内置敏感词表；可用环境变量 AI_SENSITIVE_WORDS（逗号/换行分隔）整体覆盖
+const DEFAULT_AI_SENSITIVE_WORDS = Object.freeze(['赌博', '诈骗', '毒品', '代开发票', '裸聊']);
+const AI_MESSAGE_MAX_LENGTH = normalizeBoundedPositiveInteger(
+  getEnvValue('AI_MESSAGE_MAX_LENGTH'),
+  8000,
+  100_000
+);
+const AI_CHAT_MAX_MESSAGES = normalizeBoundedPositiveInteger(
+  getEnvValue('AI_CHAT_MAX_MESSAGES'),
+  50,
+  200
+);
+const AI_SENSITIVE_WORDS = resolveSensitiveWords(getEnvValue('AI_SENSITIVE_WORDS'));
 const MIGRATIONS_DIR_URL = new URL('./migrations/', import.meta.url);
 const CHAT_MAX_OUTPUT_TOKENS = normalizePositiveInteger(
   getEnvValue('AI_CHAT_MAX_OUTPUT_TOKENS'),
@@ -110,6 +127,12 @@ const AUTH_TOKEN_SECRET_PLACEHOLDERS = Object.freeze([
   'replace_with_a_long_random_secret',
 ]);
 const AUTH_TOKEN_SECRET = resolveAuthTokenSecret();
+const authTokenService = createAuthTokenService({
+  secret: AUTH_TOKEN_SECRET,
+  issuer: AUTH_TOKEN_ISSUER,
+  ttlSeconds: AUTH_TOKEN_TTL_SECONDS,
+  normalizeUserId: (value) => normalizeAiUserId(value),
+});
 const AUTH_AVATAR_STORAGE_DIR = new URL('./uploads/avatars/', import.meta.url);
 const AUTH_AVATAR_ROUTE_PREFIX = '/api/auth/avatars';
 const AUTH_AVATAR_MAX_BYTES = 2 * 1024 * 1024;
@@ -212,7 +235,19 @@ app.use('*', cors({
   ],
 }));
 
+// [变更] 新增: 敏感词过滤 + 输入长度限制中间件
+// [原因] 要求拦截恶意内容，并限制单条消息长度，防止内容滥用和恶意消耗上游成本
+const aiContentGuardMiddleware = createAiContentGuardMiddleware();
+app.use('/api/ai/chat', aiContentGuardMiddleware);
+app.use('/api/ai/conversations/summarize-title', aiContentGuardMiddleware);
+app.use('/api/ai/conversations/:id', aiContentGuardMiddleware);
+
 app.get('/livez', (c) => c.json({ ok: true }));
+const handleReadinessRequest = createHealthService({
+  getLatestMigrationVersion,
+  getDatabasePool,
+});
+
 app.get('/readyz', handleReadinessRequest);
 app.get('/health', handleReadinessRequest);
 
@@ -311,7 +346,7 @@ app.post('/api/auth/register', async (c) => {
   const body = await c.req.json().catch(() => null);
   const email = normalizeAuthEmail(body?.email);
   const verificationCode = normalizeVerificationCode(body?.verificationCode);
-  const password = normalizeAuthPassword(body?.password);
+  const password = authTokenService.normalizeAuthPassword(body?.password);
   const displayName = body?.displayName;
 
   if (!email) {
@@ -894,23 +929,28 @@ app.post('/api/ai/chat', async (c) => {
   let result;
 
   try {
-    // [变更] 修改前: 手写 fetch、SSE 上游解析和 chunk 转发
-    // [变更] 修改后: 使用 Vercel AI SDK 统一模型流、工具循环、usage 和 UI Message Stream
-    // [原因] 降低多模型流协议差异，并让联网搜索与断线结算共享同一生命周期
+    // [变更] 修改前: totalMs 固定 120s，合法的多步联网搜索（最多 4 步）可能被整体截断
+    // [变更] 修改后: totalMs = maxChatSteps × (stepMs + toolMs) + maxRetries × stepMs
+    // [原因] 工具循环串行执行（模型调用 → 工具执行 → 下一模型调用），总超时需覆盖全部步的
+    // 最坏耗时，并为每步留一次重试预算（maxRetries=1，重试请求按独立步预算计时）
+    const chatTotalTimeoutMs = maxChatSteps
+      * (AI_STREAM_STEP_TIMEOUT_MS + AI_WEB_SEARCH_TIMEOUT_MS)
+      + AI_STREAM_MAX_RETRIES * AI_STREAM_STEP_TIMEOUT_MS;
     result = streamText({
       model: createAiSdkChatModel(chatUpstream, model),
       instructions: chatInstructions,
       messages: chatMessages,
       abortSignal: c.req.raw.signal,
       maxOutputTokens: CHAT_MAX_OUTPUT_TOKENS,
-      maxRetries: 1,
+      maxRetries: AI_STREAM_MAX_RETRIES,
       stopWhen: isStepCount(maxChatSteps),
       telemetry: {
         isEnabled: false,
       },
       timeout: {
-        totalMs: AI_STREAM_TOTAL_TIMEOUT_MS,
+        totalMs: chatTotalTimeoutMs,
         stepMs: AI_STREAM_STEP_TIMEOUT_MS,
+        firstChunkMs: AI_STREAM_CHUNK_TIMEOUT_MS,
         chunkMs: AI_STREAM_CHUNK_TIMEOUT_MS,
         toolMs: AI_WEB_SEARCH_TIMEOUT_MS,
       },
@@ -921,6 +961,22 @@ app.post('/api/ai/chat', async (c) => {
       onError: async ({ error }) => {
         completionError = translateUpstreamErrorMessage(getRuntimeErrorMessage(error));
         await releaseReservedBalance().catch(() => null);
+      },
+      // [变更] 新增: 记录每一步 LLM 调用的 usage，避免只依赖 onEnd 的最终聚合结果
+      // [原因] 分步用量写入 ai_usage_step_records，用于用量审计与分步成本分析
+      onStepEnd: async (event) => {
+        await recordAiUsageStep({
+          requestId: usageRequestId,
+          userId: aiUser.userId,
+          conversationId,
+          provider: chatUpstream.providerName,
+          model,
+          stepNumber: event.stepNumber,
+          usage: normalizeAiSdkUsage(event.usage),
+          pricing: modelPricing,
+        }).catch((error) => {
+          console.error('[AI] 记录分步用量失败:', getRuntimeErrorMessage(error));
+        });
       },
       onEnd: settleUsage,
     });
@@ -956,31 +1012,6 @@ function getDatabasePool() {
   }
 
   return databasePool;
-}
-
-async function handleReadinessRequest(c) {
-  try {
-    const latestMigrationVersion = getLatestMigrationVersion();
-    const pool = getDatabasePool();
-
-    await pool.query('SELECT 1');
-    const { rows } = await pool.query(
-      'SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1) AS applied',
-      [latestMigrationVersion]
-    );
-
-    if (rows[0]?.applied !== true) {
-      throw new Error('latest migration is not applied');
-    }
-
-    return c.json({
-      ok: true,
-      latestMigration: latestMigrationVersion,
-    });
-  } catch (error) {
-    console.error('[health] readiness check failed:', error);
-    return c.json({ ok: false }, 503);
-  }
 }
 
 function getLatestMigrationVersion() {
@@ -1283,7 +1314,7 @@ function resolveRequiredAiUser(c) {
     throw new AiAuthenticationError('缺少登录 token，请重新登录后再继续使用 AI 对话。');
   }
 
-  const tokenUserId = extractUserIdFromBearerToken(bearerToken);
+  const tokenUserId = authTokenService.extractUserIdFromBearerToken(bearerToken);
 
   if (!tokenUserId) {
     throw new AiAuthenticationError('登录 token 已失效，请重新登录后再继续使用 AI 对话。');
@@ -1322,14 +1353,6 @@ function normalizeAiUserId(value) {
     : '';
 }
 
-function encodeBase64Url(value) {
-  return Buffer.from(value, 'utf8')
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
-}
-
 function getBearerToken(value) {
   if (typeof value !== 'string') {
     return '';
@@ -1337,54 +1360,6 @@ function getBearerToken(value) {
 
   const match = value.match(/^Bearer\s+(.+)$/i);
   return match?.[1]?.trim() ?? '';
-}
-
-function extractUserIdFromBearerToken(token) {
-  if (!token || token.split('.').length < 2) {
-    return '';
-  }
-
-  try {
-    const [headerSegment, payloadSegment, signatureSegment = ''] = token.split('.');
-    const payload = JSON.parse(decodeBase64Url(payloadSegment));
-
-    if (payload?.iss !== AUTH_TOKEN_ISSUER) {
-      return '';
-    }
-
-    const expectedSignature = createAuthTokenSignature(`${headerSegment}.${payloadSegment}`);
-
-    if (!safeEqualSignature(signatureSegment, expectedSignature)) {
-      return '';
-    }
-
-    const expiresAt = normalizeFiniteNumber(payload?.exp, 0);
-
-    if (expiresAt <= Math.floor(Date.now() / 1000)) {
-      return '';
-    }
-
-    for (const key of ['userId', 'user_id', 'uid', 'sub']) {
-      const normalizedUserId = normalizeAiUserId(String(payload?.[key] ?? ''));
-
-      if (normalizedUserId) {
-        return normalizedUserId;
-      }
-    }
-  } catch {
-    return '';
-  }
-
-  return '';
-}
-
-function decodeBase64Url(value) {
-  const normalizedValue = value.replace(/-/g, '+').replace(/_/g, '/');
-  const padding = normalizedValue.length % 4 === 0
-    ? ''
-    : '='.repeat(4 - (normalizedValue.length % 4));
-
-  return Buffer.from(`${normalizedValue}${padding}`, 'base64').toString('utf8');
 }
 
 function normalizePositiveInteger(value, fallbackValue) {
@@ -1709,6 +1684,70 @@ function serializeUsageMetrics(usage) {
     reasoningTokens: usage.reasoningTokens,
     totalTokens: usage.totalTokens,
   };
+}
+
+async function recordAiUsageStep({
+  requestId,
+  userId,
+  conversationId,
+  provider,
+  model,
+  stepNumber,
+  usage,
+  pricing,
+}) {
+  if (!usage) {
+    return;
+  }
+
+  const cachedPromptTokens = Math.min(usage.cachedPromptTokens, usage.promptTokens);
+  const uncachedPromptTokens = Math.max(usage.promptTokens - cachedPromptTokens, 0);
+  const inputCostUsd = roundUsdAmount(
+    (
+      (uncachedPromptTokens * pricing.inputPerMillionUsd)
+      + (cachedPromptTokens * pricing.cachedInputPerMillionUsd)
+    ) / 1_000_000
+  );
+  const outputCostUsd = roundUsdAmount(
+    (usage.completionTokens * pricing.outputPerMillionUsd) / 1_000_000
+  );
+  const pool = getDatabasePool();
+
+  await pool.query(`
+    INSERT INTO ai_usage_step_records (
+      request_id,
+      user_id,
+      conversation_id,
+      provider,
+      model,
+      step_number,
+      prompt_tokens,
+      cached_prompt_tokens,
+      completion_tokens,
+      reasoning_tokens,
+      total_tokens,
+      input_cost_usd,
+      output_cost_usd,
+      total_cost_usd,
+      currency
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'USD')
+  `, [
+    requestId,
+    userId,
+    conversationId || null,
+    provider,
+    model,
+    stepNumber,
+    usage.promptTokens,
+    usage.cachedPromptTokens,
+    usage.completionTokens,
+    usage.reasoningTokens,
+    usage.totalTokens,
+    inputCostUsd,
+    outputCostUsd,
+    roundUsdAmount(inputCostUsd + outputCostUsd),
+  ]);
 }
 
 async function ensureAiWalletExists(queryable, userId) {
@@ -2855,7 +2894,7 @@ async function createEmailVerificationCode(email, purpose) {
   const client = await pool.connect();
   const verificationCode = String(normalizeNonNegativeInteger(Math.floor(Math.random() * 1_000_000), 0))
     .padStart(6, '0');
-  const codeHash = createPasswordHash(verificationCode);
+  const codeHash = authTokenService.createPasswordHash(verificationCode);
   const expiresAt = new Date(Date.now() + AUTH_VERIFICATION_CODE_TTL_MS).toISOString();
 
   try {
@@ -3068,11 +3107,11 @@ async function registerAuthUser({
     throw new RequestValidationError('验证码已过期，请重新获取。');
   }
 
-  if (!verifyPasswordHash(verificationCode, verificationRecord.codeHash)) {
+  if (!authTokenService.verifyPasswordHash(verificationCode, verificationRecord.codeHash)) {
     throw new RequestValidationError('验证码不正确，请重新输入。');
   }
 
-  const passwordHash = createPasswordHash(password);
+  const passwordHash = authTokenService.createPasswordHash(password);
   const normalizedDisplayName = sanitizeDisplayName(displayName, email);
 
   const { rows } = await pool.query(`
@@ -3118,7 +3157,7 @@ async function registerAuthUser({
 async function loginAuthUser({ email, password }) {
   const user = await readAuthUserByEmail(email);
 
-  if (!user || !verifyPasswordHash(password, user.passwordHash)) {
+  if (!user || !authTokenService.verifyPasswordHash(password, user.passwordHash)) {
     throw new RequestValidationError('邮箱或密码不正确。', 401);
   }
 
@@ -3193,7 +3232,7 @@ async function updateAuthUserProfile({
     const isPasswordChanging = Boolean(normalizedNewPassword);
 
     if ((isEmailChanging || isPasswordChanging)
-      && (!normalizedCurrentPassword || !verifyPasswordHash(normalizedCurrentPassword, currentUser.passwordHash))) {
+      && (!normalizedCurrentPassword || !authTokenService.verifyPasswordHash(normalizedCurrentPassword, currentUser.passwordHash))) {
       throw new RequestValidationError('当前密码不正确。', 401);
     }
 
@@ -3243,7 +3282,7 @@ async function updateAuthUserProfile({
     `, [
       normalizedUserId,
       normalizedEmail,
-      isPasswordChanging ? createPasswordHash(normalizedNewPassword) : currentUser.passwordHash,
+      isPasswordChanging ? authTokenService.createPasswordHash(normalizedNewPassword) : currentUser.passwordHash,
       normalizedDisplayName,
       nextAvatarUrl,
     ]);
@@ -3398,7 +3437,7 @@ function buildAuthSuccessResponse(user) {
   }
 
   return {
-    token: createAuthToken(user),
+    token: authTokenService.createAuthToken(user),
     user: {
       userId: user.userId,
       name: user.name,
@@ -3409,25 +3448,6 @@ function buildAuthSuccessResponse(user) {
       avatarUrl: user.avatarUrl,
     },
   };
-}
-
-function createAuthToken(user) {
-  const header = encodeBase64Url(JSON.stringify({
-    alg: 'HS256',
-    typ: 'JWT',
-  }));
-  const payload = encodeBase64Url(JSON.stringify({
-    userId: user.userId,
-    email: user.email,
-    role: user.role,
-    planName: user.planName,
-    iss: AUTH_TOKEN_ISSUER,
-    iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + AUTH_TOKEN_TTL_SECONDS,
-  }));
-  const unsignedToken = `${header}.${payload}`;
-
-  return `${unsignedToken}.${createAuthTokenSignature(unsignedToken)}`;
 }
 
 function normalizeAuthEmail(value) {
@@ -3464,60 +3484,6 @@ function normalizeVerificationCode(value) {
 
   const normalizedValue = value.trim();
   return /^\d{6}$/.test(normalizedValue) ? normalizedValue : '';
-}
-
-function normalizeAuthPassword(value) {
-  if (typeof value !== 'string') {
-    return '';
-  }
-
-  const normalizedValue = value.trim();
-  return normalizedValue.length >= 6 ? normalizedValue : '';
-}
-
-function createPasswordHash(value) {
-  const salt = randomBytes(16).toString('hex');
-  const hash = scryptSync(value, salt, 64).toString('hex');
-  return `${salt}:${hash}`;
-}
-
-function createAuthTokenSignature(value) {
-  return createHmac('sha256', AUTH_TOKEN_SECRET)
-    .update(value)
-    .digest('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
-}
-
-function safeEqualSignature(currentSignature, expectedSignature) {
-  if (typeof currentSignature !== 'string' || !currentSignature || !expectedSignature) {
-    return false;
-  }
-
-  const currentBuffer = Buffer.from(currentSignature);
-  const expectedBuffer = Buffer.from(expectedSignature);
-
-  return currentBuffer.length === expectedBuffer.length
-    && timingSafeEqual(currentBuffer, expectedBuffer);
-}
-
-function verifyPasswordHash(value, storedHash) {
-  if (typeof storedHash !== 'string' || !storedHash.includes(':')) {
-    return false;
-  }
-
-  const [salt, hash] = storedHash.split(':');
-
-  if (!salt || !hash) {
-    return false;
-  }
-
-  const calculatedHash = scryptSync(value, salt, 64);
-  const expectedHash = Buffer.from(hash, 'hex');
-
-  return expectedHash.length === calculatedHash.length
-    && timingSafeEqual(expectedHash, calculatedHash);
 }
 
 function sanitizeDisplayName(value, fallbackEmail = '') {
@@ -3929,6 +3895,101 @@ function isChatMessage(value) {
     && typeof value.content === 'string'
     && value.content.trim().length > 0
   );
+}
+
+function createAiContentGuardMiddleware() {
+  const sensitivePattern = createSensitiveWordPattern(AI_SENSITIVE_WORDS);
+
+  return async (c, next) => {
+    if (c.req.method !== 'POST' && c.req.method !== 'PUT') {
+      return next();
+    }
+
+    if (!(c.req.header('content-type') ?? '').includes('application/json')) {
+      return next();
+    }
+
+    let body;
+
+    try {
+      body = await c.req.json();
+    } catch {
+      return next();
+    }
+
+    const { texts, count } = extractGuardMessageTexts(body);
+
+    if (count > AI_CHAT_MAX_MESSAGES) {
+      return c.json({ error: `单次请求最多发送 ${AI_CHAT_MAX_MESSAGES} 条消息。` }, 400);
+    }
+
+    for (const text of texts) {
+      if (Array.from(text).length > AI_MESSAGE_MAX_LENGTH) {
+        return c.json({ error: `单条消息不能超过 ${AI_MESSAGE_MAX_LENGTH} 个字符。` }, 400);
+      }
+    }
+
+    if (sensitivePattern) {
+      for (const text of texts) {
+        if (sensitivePattern.test(text)) {
+          return c.json({ error: '消息包含敏感内容，已被拦截。' }, 400);
+        }
+      }
+    }
+
+    return next();
+  };
+}
+
+function extractGuardMessageTexts(body) {
+  const messages = Array.isArray(body?.messages)
+    ? body.messages
+    : Array.isArray(body?.conversation?.messages)
+      ? body.conversation.messages
+      : null;
+
+  if (!messages) {
+    return { texts: [], count: 0 };
+  }
+
+  const texts = [];
+
+  for (const message of messages) {
+    if (
+      message
+      && typeof message === 'object'
+      && typeof message.content === 'string'
+      && message.content.trim()
+    ) {
+      texts.push(message.content);
+    }
+  }
+
+  return { texts, count: messages.length };
+}
+
+function resolveSensitiveWords(value) {
+  const configuredWords = typeof value === 'string' && value.trim()
+    ? value.split(/[,，\n]/).map((word) => word.trim()).filter(Boolean)
+    : [];
+
+  return configuredWords.length > 0 ? configuredWords : DEFAULT_AI_SENSITIVE_WORDS;
+}
+
+function createSensitiveWordPattern(words) {
+  if (words.length === 0) {
+    return null;
+  }
+
+  const escapedWords = words
+    .map(escapeRegExp)
+    .sort((left, right) => right.length - left.length);
+
+  return new RegExp(escapedWords.join('|'), 'i');
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function normalizeScreenKnowledge(value) {

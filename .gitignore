@@ -43,6 +43,9 @@ yarn-error.*
 # uploaded runtime files
 server/uploads/
 
+# backup scripts
+scripts/backup-*.sh
+
 # static binary assets
 *.png
 *.jpg
