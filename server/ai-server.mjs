@@ -816,17 +816,42 @@ app.post('/api/ai/chat', async (c) => {
       : null,
   ].filter(Boolean).join('\n');
   const chatMessages = userMessages;
+  const billingMessages = [
+    { role: 'system', content: chatInstructions },
+    ...chatMessages,
+  ];
+  const requestedMaxOutputTokens = resolveRequestedMaxOutputTokens(body);
 
-  // [变更] 修改前: 聊天请求不会校验用户余额，返回多少 token 就被动承担多少上游成本
-  // [变更] 修改后: 先按“保守输入估算 + 最大输出上限”预留本次请求余额，再在流式结束后按真实 usage 结算
-  // [原因] 需要支持按登录用户扣费，同时避免并发请求把余额透支
+  // 根据当前余额动态限制输出长度，避免用户不设置上限时产生超出余额的上游成本。
+  // 预留仍会使用同一个 effectiveMaxOutputTokens，实际请求和计费预留保持一致。
+  let effectiveMaxOutputTokens;
+
+  try {
+    const wallet = await getWalletSnapshot(getDatabasePool(), aiUser.userId);
+    const activeReservedUsd = await readActiveReservedUsd(getDatabasePool(), aiUser.userId);
+
+    effectiveMaxOutputTokens = calculateAffordableMaxOutputTokens({
+      balanceUsd: Math.max(wallet.balanceUsd - activeReservedUsd, 0),
+      messages: billingMessages,
+      modelPricing,
+      configuredMaxOutputTokens: CHAT_MAX_OUTPUT_TOKENS,
+      requestedMaxOutputTokens,
+      maxSteps: maxChatSteps,
+    });
+  } catch (error) {
+    return c.json({ error: getRuntimeErrorMessage(error) }, 500);
+  }
+
+  if (effectiveMaxOutputTokens < 1) {
+    return c.json({
+      error: '当前余额不足以承担本次请求的输入成本，请先充值后再试。',
+    }, 402);
+  }
+
   const reserveUsd = estimateAiRequestReserveUsd(
-    [
-      { role: 'system', content: chatInstructions },
-      ...chatMessages,
-    ],
+    billingMessages,
     modelPricing,
-    CHAT_MAX_OUTPUT_TOKENS,
+    effectiveMaxOutputTokens,
     maxChatSteps
   );
 
@@ -941,7 +966,7 @@ app.post('/api/ai/chat', async (c) => {
       instructions: chatInstructions,
       messages: chatMessages,
       abortSignal: c.req.raw.signal,
-      maxOutputTokens: CHAT_MAX_OUTPUT_TOKENS,
+      maxOutputTokens: effectiveMaxOutputTokens,
       maxRetries: AI_STREAM_MAX_RETRIES,
       stopWhen: isStepCount(maxChatSteps),
       telemetry: {
@@ -1557,6 +1582,57 @@ function normalizeModelPricingEntry(value) {
 
 function resolveModelPricing(model) {
   return modelPricingMap.get(model) ?? null;
+}
+
+function resolveRequestedMaxOutputTokens(body) {
+  const requestedValue = body?.max_tokens ?? body?.maxTokens ?? body?.maxOutputTokens;
+  const numericValue = Number(requestedValue);
+
+  return Number.isInteger(numericValue) && numericValue > 0
+    ? numericValue
+    : null;
+}
+
+function calculateAffordableMaxOutputTokens({
+  balanceUsd,
+  messages,
+  modelPricing,
+  configuredMaxOutputTokens,
+  requestedMaxOutputTokens = null,
+  maxSteps = 1,
+}) {
+  const normalizedBalanceUsd = Math.max(normalizeNonNegativeNumber(balanceUsd, 0), 0);
+  const normalizedMaxSteps = Math.max(normalizePositiveInteger(maxSteps, 1), 1);
+  const configuredLimit = normalizePositiveInteger(configuredMaxOutputTokens, DEFAULT_CHAT_MAX_OUTPUT_TOKENS);
+  const requestedLimit = requestedMaxOutputTokens === null
+    ? configuredLimit
+    : Math.min(requestedMaxOutputTokens, configuredLimit);
+  const promptTokenEstimate = estimateMessageTokenCount(messages);
+  const safetyFactor = 1.15;
+  const inputCostUsd = (
+    promptTokenEstimate
+    * normalizedMaxSteps
+    * modelPricing.inputPerMillionUsd
+    * safetyFactor
+  ) / 1_000_000;
+  const availableOutputUsd = normalizedBalanceUsd - inputCostUsd;
+  const outputCostPerTokenUsd = (
+    normalizedMaxSteps
+    * modelPricing.outputPerMillionUsd
+    * safetyFactor
+  ) / 1_000_000;
+
+  if (availableOutputUsd <= 0 || outputCostPerTokenUsd <= 0) {
+    return 0;
+  }
+
+  return Math.max(
+    Math.min(
+      requestedLimit,
+      Math.floor(availableOutputUsd / outputCostPerTokenUsd)
+    ),
+    0
+  );
 }
 
 function estimateAiRequestReserveUsd(
