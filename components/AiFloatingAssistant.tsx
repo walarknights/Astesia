@@ -2,7 +2,7 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { useGlobalSearchParams, usePathname } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Markdown, { type ASTNode, type RenderRules } from 'react-native-markdown-display';
 import {
   ActivityIndicator,
@@ -1842,9 +1842,11 @@ export function AiFloatingAssistant() {
                              * 数据来源: messages 状态中的单条 message
                              */}
                             {message.role === 'assistant' && message.content.trim() ? (
-                              <Markdown rules={markdownRules} style={markdownStyles}>
-                                {message.content}
-                              </Markdown>
+                              <StreamingMarkdownBlocks
+                                content={message.content}
+                                rules={markdownRules}
+                                style={markdownStyles}
+                              />
                             ) : (
                               <ThemedText
                                 style={[
@@ -2567,6 +2569,69 @@ function waitForScreenSettled() {
 type MarkdownFenceNode = ASTNode & {
   sourceInfo?: string;
 };
+
+type StreamingMarkdownBlocksProps = {
+  content: string;
+  rules: RenderRules;
+  style: typeof markdownStyles;
+};
+
+/**
+ * 流式 Markdown 渲染：已经以空行结束的块保持原组件实例，只重新解析最后一个块。
+ * 围栏代码块内部忽略空行，避免 Mermaid/代码块在生成中途被拆开。
+ */
+const StreamingMarkdownBlocks = memo(function StreamingMarkdownBlocks({
+  content,
+  rules,
+  style,
+}: StreamingMarkdownBlocksProps) {
+  const blocks = splitMarkdownBlocks(content);
+
+  return (
+    <View>
+      {blocks.map((block, index) => (
+        <Markdown
+          key={index === blocks.length - 1 ? 'streaming-block' : `markdown-block-${index}`}
+          rules={rules}
+          style={style}>
+          {block}
+        </Markdown>
+      ))}
+    </View>
+  );
+});
+
+function splitMarkdownBlocks(content: string): string[] {
+  const lines = content.split(/\r?\n/);
+  const blocks: string[] = [];
+  let current: string[] = [];
+  let fenced = false;
+
+  const appendBlock = () => {
+    const block = current.join('\n').trim();
+    if (block) {
+      blocks.push(block);
+    }
+    current = [];
+  };
+
+  for (const line of lines) {
+    const fenceMatch = /^\s*(```|~~~)/.exec(line);
+    if (fenceMatch) {
+      fenced = !fenced;
+    }
+
+    if (!fenced && line.trim() === '') {
+      appendBlock();
+      continue;
+    }
+
+    current.push(line);
+  }
+
+  appendBlock();
+  return blocks;
+}
 
 function createMarkdownRules(isMermaidEnabled: boolean): RenderRules {
   return {
